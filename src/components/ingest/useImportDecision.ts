@@ -46,9 +46,16 @@ export function useImportDecision(open: boolean, path: string | null) {
   }, [open, path]);
 
   const plan: SplitPlan | null = decision?.kind === "split" && splitConfirmed ? decision.plan : null;
+  const gate = wizardGate(decision, splitConfirmed);
   return {
     decision,
-    gate: wizardGate(decision, splitConfirmed),
+    gate,
+    /** The first step shows a refusal or the split notice instead of the speaker-count picker. */
+    showNotice: gate === "refuse" || gate === "splitNotice",
+    /** The first step shows the usual speaker-count picker (disabled while probing). */
+    showCount: gate === "ready" || gate === "probing",
+    /** The split notice is up, waiting for the user to agree to the split. */
+    splitAwaitingConfirm: gate === "splitNotice" && decision?.kind === "split" ? decision.plan : null,
     plan,
     confirmSplit: () => setSplitConfirmed(true),
     splitProgress,

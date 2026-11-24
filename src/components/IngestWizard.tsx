@@ -91,6 +91,9 @@ export function IngestWizard() {
   const {
     decision,
     gate,
+    showNotice,
+    showCount,
+    splitAwaitingConfirm,
     plan,
     confirmSplit,
     splitProgress,
@@ -381,11 +384,11 @@ export function IngestWizard() {
         </div>
 
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4">
-          {step === "count" && (gate === "refuse" || gate === "splitNotice") && (
+          {step === "count" && showNotice && (
             <ImportGateNotice decision={decision} path={ingestAudioPath} language={language} />
           )}
 
-          {step === "count" && (gate === "ready" || gate === "probing") && (
+          {step === "count" && showCount && (
             <>
               {plan && (
                 <p className="text-[12px] font-medium text-foreground">
@@ -656,7 +659,7 @@ export function IngestWizard() {
             <div className="flex items-start gap-2 rounded-md bg-danger px-3 py-2.5 text-[12px] text-danger-foreground">
               <Mic className="mt-0.5 size-4 shrink-0" />
               {/* A split failure already says which part failed. */}
-              <span>{splitFailed ? (wizardError ?? "—") : t("ingest.failed", { error: wizardError ?? "—" })}</span>
+              <span>{errorText(splitFailed, wizardError, t)}</span>
             </div>
           )}
         </div>
@@ -669,13 +672,13 @@ export function IngestWizard() {
           >
             {t("ingest.cancel")}
           </button>
-          {step === "count" && gate === "splitNotice" && decision?.kind === "split" && (
+          {step === "count" && splitAwaitingConfirm && (
             <Button size="sm" className="h-8 gap-1.5" onClick={confirmSplit}>
               <Check className="size-3.5" />
-              {t("ingest.split.confirm", { n: decision.plan.parts })}
+              {t("ingest.split.confirm", { n: splitAwaitingConfirm.parts })}
             </Button>
           )}
-          {step === "count" && (gate === "ready" || gate === "probing") && (
+          {step === "count" && showCount && (
             <Button
               size="sm"
               className="h-8 gap-1.5"
@@ -796,4 +799,11 @@ function diarizeLabel(dz: DiarizeProgress | null, t: ReturnType<typeof useI18n>[
     default:
       return t("speakers.voiceRunning");
   }
+}
+
+/** The error step's text: a split upload's failure already names its part and
+ *  reads as a sentence; any other failure goes inside the generic wrapper. */
+function errorText(splitFailed: boolean, error: string | null, t: ReturnType<typeof useI18n>["t"]): string {
+  if (splitFailed) return error ?? "—";
+  return t("ingest.failed", { error: error ?? "—" });
 }

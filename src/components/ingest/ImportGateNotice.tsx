@@ -10,11 +10,11 @@ export function ImportGateNotice({
   decision,
   path,
   language,
-}: {
+}: Readonly<{
   decision: ImportDecision | null;
   path: string | null;
   language: AppLanguage;
-}) {
+}>) {
   const { t } = useI18n();
   if (decision?.kind === "refuse") {
     return (
