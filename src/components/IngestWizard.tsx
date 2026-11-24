@@ -6,15 +6,9 @@ import { speakerDotClass } from "../lib/speakerColors";
 import { hasProviderKey } from "../lib/ai/settings";
 import { runAnalysis } from "../lib/analysis/engine";
 import { loadHistoryEntry, saveUploadToHistory } from "../lib/history/history";
-import { STT_BY_ID } from "../lib/transcription/providers";
-import {
-  decideImport,
-  formatLongDuration,
-  partTitle,
-  wizardGate,
-  type ImportDecision,
-  type SplitPlan,
-} from "../lib/replay/split";
+import { partTitle, type SplitPlan } from "../lib/replay/split";
+import { useImportDecision } from "./ingest/useImportDecision";
+import { ImportGateNotice } from "./ingest/ImportGateNotice";
 import { fileNameOf } from "../lib/replay/ingest";
 import * as ipc from "../lib/ipc/commands";
 import { log } from "../lib/log";
@@ -94,43 +88,16 @@ export function IngestWizard() {
   const failedRef = useRef<"transcribing" | "diarizing" | "analyzing" | null>(null);
   const ingestAudioPath = useStore((s) => s.ingestAudioPath);
   const language = useStore((s) => s.settings.language);
-  // What the picked file's metadata says to do (null while probing), and
-  // whether the user agreed to the split it calls for.
-  const [decision, setDecision] = useState<ImportDecision | null>(null);
-  const [splitConfirmed, setSplitConfirmed] = useState(false);
-  const [splitProgress, setSplitProgress] = useState<{ k: number; n: number } | null>(null);
-  const [splitFailed, setSplitFailed] = useState(false);
-  const plan: SplitPlan | null = decision?.kind === "split" && splitConfirmed ? decision.plan : null;
-  const gate = wizardGate(decision, splitConfirmed);
-
-  // Probe the picked file BEFORE any heavy work: its duration decides whether
-  // hosted transcription needs it split, and an uncompressible file over the
-  // upload limit is refused here instead of after the upload starts.
-  useEffect(() => {
-    if (!open || !ingestAudioPath) return;
-    let alive = true;
-    setDecision(null);
-    setSplitConfirmed(false);
-    setSplitProgress(null);
-    setSplitFailed(false);
-    const { settings } = useStore.getState();
-    const hosted = STT_BY_ID[settings.transcriptionProvider]?.credential === "cloudSession";
-    ipc
-      .probeUploadAudio({ path: ingestAudioPath })
-      .catch((e: unknown) => {
-        log.warn("ingest: probe failed", { error: String(e) });
-        return null;
-      })
-      .then((probe) => {
-        if (!alive) return;
-        const next = decideImport(probe, hosted);
-        log.info("ingest: probed", { durationMs: probe?.durationMs ?? null, decision: next.kind });
-        setDecision(next);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [open, ingestAudioPath]);
+  const {
+    decision,
+    gate,
+    plan,
+    confirmSplit,
+    splitProgress,
+    setSplitProgress,
+    splitFailed,
+    setSplitFailed,
+  } = useImportDecision(open, ingestAudioPath);
 
   // Diarization staged progress (Rust `diarize://progress` events).
   useEffect(() => {
@@ -414,27 +381,8 @@ export function IngestWizard() {
         </div>
 
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4">
-          {step === "count" && gate === "refuse" && decision?.kind === "refuse" && (
-            <div className="flex items-start gap-2 rounded-md bg-danger px-3 py-2.5 text-[12px] text-danger-foreground">
-              <Mic className="mt-0.5 size-4 shrink-0" />
-              <span>{t(decision.key)}</span>
-            </div>
-          )}
-
-          {step === "count" && gate === "splitNotice" && decision?.kind === "split" && (
-            <div className="flex flex-col gap-1.5 rounded-md border px-3 py-2.5">
-              <span className="text-sm font-medium text-foreground">
-                {t("ingest.split.title", { n: decision.plan.parts })}
-              </span>
-              <p className="text-[12px] leading-relaxed text-muted-foreground">
-                {t("ingest.split.body", {
-                  n: decision.plan.parts,
-                  duration: formatLongDuration(decision.durationSeconds, language),
-                  partDuration: formatLongDuration(decision.plan.partSeconds, language),
-                  name: ingestAudioPath ? fileNameOf(ingestAudioPath) : "",
-                })}
-              </p>
-            </div>
+          {step === "count" && (gate === "refuse" || gate === "splitNotice") && (
+            <ImportGateNotice decision={decision} path={ingestAudioPath} language={language} />
           )}
 
           {step === "count" && (gate === "ready" || gate === "probing") && (
@@ -722,7 +670,7 @@ export function IngestWizard() {
             {t("ingest.cancel")}
           </button>
           {step === "count" && gate === "splitNotice" && decision?.kind === "split" && (
-            <Button size="sm" className="h-8 gap-1.5" onClick={() => setSplitConfirmed(true)}>
+            <Button size="sm" className="h-8 gap-1.5" onClick={confirmSplit}>
               <Check className="size-3.5" />
               {t("ingest.split.confirm", { n: decision.plan.parts })}
             </Button>
