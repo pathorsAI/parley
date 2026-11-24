@@ -23,6 +23,17 @@ public struct AudioFileDecoder: Sendable {
     /// mid-import, so the file streams through in ~4 s slices instead.
     private static let chunkSeconds = 4.0
 
+    /// How long `source` runs, in seconds, read from the container without
+    /// decoding a sample. `nil` when the file will not open or declares no
+    /// length — the caller then behaves as if it did not know, which it does
+    /// not.
+    public static func durationSeconds(of source: URL) -> Double? {
+        guard let file = try? AVAudioFile(forReading: source) else { return nil }
+        let rate = file.fileFormat.sampleRate
+        guard file.length > 0, rate > 0 else { return nil }
+        return Double(file.length) / rate
+    }
+
     /// Decode any AVAudioFile-readable audio file into 16 kHz mono Ogg/Opus at
     /// `destination`, and return the decoded duration in milliseconds.
     ///
@@ -34,6 +45,73 @@ public struct AudioFileDecoder: Sendable {
         destination: URL,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) throws -> UInt64 {
+        let durations = try encodeToOggOpusParts(
+            source: source, parts: 1, destination: { _ in destination }, onProgress: onProgress)
+        return durations[0]
+    }
+
+    private static func decoderError(_ error: Error) -> AudioFileDecoderError {
+        error as? AudioFileDecoderError ?? .unreadable(error.localizedDescription)
+    }
+
+    /// One part's Ogg stream while it is being written.
+    private final class PartWriter {
+        let url: URL
+        let handle: FileHandle
+        var encoder: OggOpusEncoder!
+        var writeFailure: Error?
+        var frames: UInt64 = 0
+
+        init(url: URL) throws {
+            guard FileManager.default.createFile(atPath: url.path, contents: nil),
+                let handle = try? FileHandle(forWritingTo: url)
+            else {
+                throw AudioFileDecoderError.unreadable("cannot write to \(url.lastPathComponent)")
+            }
+            self.url = url
+            self.handle = handle
+            do {
+                encoder = try OggOpusEncoder { [unowned self] page in
+                    guard self.writeFailure == nil else { return }
+                    do { try self.handle.write(contentsOf: page) } catch { self.writeFailure = error }
+                }
+            } catch {
+                try? handle.close()
+                try? FileManager.default.removeItem(at: url)
+                throw AudioFileDecoderError.unreadable(error.localizedDescription)
+            }
+        }
+
+        /// Flush the stream and close the file. Throws the first write failure.
+        func finish() throws {
+            encoder.finalize()
+            try? handle.close()
+            if let writeFailure {
+                throw AudioFileDecoderError.unreadable(writeFailure.localizedDescription)
+            }
+        }
+    }
+
+    /// Decode `source` into `parts` consecutive 16 kHz mono Ogg/Opus files of
+    /// equal length (`ImportSplit.partRanges` over the expected output), each
+    /// a complete stream of its own at `destination(index)`, and return each
+    /// part's decoded duration in milliseconds.
+    ///
+    /// The cut happens at sample offsets inside the same chunked pass a single
+    /// file uses, so memory stays bounded however many parts there are. The
+    /// last part takes whatever the source really yields past the final cut,
+    /// so a container that misstates its length shortens or lengthens the
+    /// last part rather than losing audio. A source shorter than its declared
+    /// length can therefore come back with fewer parts than asked for.
+    ///
+    /// On any failure every part written so far is removed.
+    public static func encodeToOggOpusParts(
+        source: URL,
+        parts requestedParts: Int,
+        destination: (Int) -> URL,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) throws -> [UInt64] {
+        let parts = max(1, requestedParts)
         // Everything that can fail without side effects happens before the
         // destination exists, so a rejected file never leaves a stray artifact.
         let file: AVAudioFile
@@ -60,36 +138,32 @@ public struct AudioFileDecoder: Sendable {
                 "cannot convert \(sourceFormat) to 16 kHz mono")
         }
 
+        // Where each part ends, in output samples. The last part is open-ended.
+        let expectedSamples = Int64(
+            (Double(sourceFrames) * outputFormat.sampleRate / sourceFormat.sampleRate).rounded())
+        var cuts = ImportSplit.partEnds(totalSamples: expectedSamples, parts: parts)
+        cuts[cuts.count - 1] = .max
+
         let fm = FileManager.default
-        guard fm.createFile(atPath: destination.path, contents: nil),
-            let handle = try? FileHandle(forWritingTo: destination)
-        else {
-            throw AudioFileDecoderError.unreadable(
-                "cannot write to \(destination.lastPathComponent)")
-        }
+        var finished: [PartWriter] = []
+        var current: PartWriter?
 
-        var writeFailure: Error?
-        let encoder: OggOpusEncoder
-        do {
-            encoder = try OggOpusEncoder { page in
-                guard writeFailure == nil else { return }
-                do { try handle.write(contentsOf: page) } catch { writeFailure = error }
-            }
-        } catch {
-            try? handle.close()
-            try? fm.removeItem(at: destination)
-            throw AudioFileDecoderError.unreadable(error.localizedDescription)
-        }
-
-        /// Close the stream out and take the half-written file with it — a
-        /// partial Ogg at `destination` would look like a real recording to
-        /// every later stage.
+        /// Close every stream out and take the files with them — a partial Ogg
+        /// would look like a real recording to every later stage.
         func abort(_ reason: AudioFileDecoderError) -> AudioFileDecoderError {
-            encoder.finalize()
-            try? handle.close()
-            try? fm.removeItem(at: destination)
+            if let current {
+                current.encoder.finalize()
+                try? current.handle.close()
+                try? fm.removeItem(at: current.url)
+            }
+            current = nil
+            for part in finished { try? fm.removeItem(at: part.url) }
             return reason
         }
+
+        // The first part is opened up front so an unwritable destination fails
+        // before any decoding is spent on it.
+        current = try PartWriter(url: destination(0))
 
         guard
             let inputBuffer = AVAudioPCMBuffer(
@@ -137,7 +211,7 @@ public struct AudioFileDecoder: Sendable {
             return inputBuffer
         }
 
-        var decodedFrames: UInt64 = 0
+        var decodedFrames: Int64 = 0
         var draining = true
         while draining {
             outputBuffer.frameLength = 0
@@ -152,14 +226,41 @@ public struct AudioFileDecoder: Sendable {
                 throw abort(
                     .unreadable(convertError?.localizedDescription ?? "conversion failed"))
             }
-            if let writeFailure {
-                throw abort(.unreadable(writeFailure.localizedDescription))
-            }
 
             let produced = Int(outputBuffer.frameLength)
             if produced > 0, let pcm = outputBuffer.int16ChannelData?[0] {
-                encoder.append(Array(UnsafeBufferPointer(start: pcm, count: produced)))
-                decodedFrames += UInt64(produced)
+                var offset = 0
+                while offset < produced {
+                    if current == nil {
+                        do {
+                            current = try PartWriter(url: destination(finished.count))
+                        } catch {
+                            throw abort(Self.decoderError(error))
+                        }
+                    }
+                    guard let writer = current else { break }
+                    let cut = cuts[finished.count]
+                    let take = Int(min(Int64(produced - offset), cut - decodedFrames))
+                    writer.encoder.append(
+                        Array(UnsafeBufferPointer(start: pcm + offset, count: take)))
+                    if let failure = writer.writeFailure {
+                        throw abort(.unreadable(failure.localizedDescription))
+                    }
+                    writer.frames += UInt64(take)
+                    decodedFrames += Int64(take)
+                    offset += take
+                    if decodedFrames >= cut {
+                        // This part is full: close its stream; the next one
+                        // opens only when there is audio to put in it.
+                        do { try writer.finish() } catch {
+                            current = nil
+                            finished.append(writer)
+                            throw abort(Self.decoderError(error))
+                        }
+                        finished.append(writer)
+                        current = nil
+                    }
+                }
             }
             // `.inputRanDry` cannot happen (the block never returns .noDataNow),
             // but treat it as a stop anyway so a surprise can't spin forever.
@@ -170,18 +271,22 @@ public struct AudioFileDecoder: Sendable {
 
         guard decodedFrames > 0 else { throw abort(.empty) }
 
-        encoder.finalize()
-        if let writeFailure {
-            try? handle.close()
-            try? fm.removeItem(at: destination)
-            throw AudioFileDecoderError.unreadable(writeFailure.localizedDescription)
+        if let writer = current {
+            do { try writer.finish() } catch {
+                current = nil
+                finished.append(writer)
+                throw abort(Self.decoderError(error))
+            }
+            finished.append(writer)
+            current = nil
         }
-        try? handle.close()
         onProgress?(1.0)
 
         // Reported from what was actually encoded, not from the source's
         // declared length: a truncated file should own up to how much of it
         // really decoded.
-        return UInt64((Double(decodedFrames) * 1000 / Double(OggOpusEncoder.sampleRate)).rounded())
+        return finished.map {
+            UInt64((Double($0.frames) * 1000 / Double(OggOpusEncoder.sampleRate)).rounded())
+        }
     }
 }

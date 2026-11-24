@@ -36,6 +36,42 @@
         }
       }
     },
+    "%lld hr" : {
+      "comment" : "A duration in the import split confirmation",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld hr"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 小時"
+          }
+        }
+      }
+    },
+    "%lld hr %lld min" : {
+      "comment" : "A duration in the import split confirmation",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld hr %lld min"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$lld 小時 %2$lld 分"
+          }
+        }
+      }
+    },
     "%lld hr ago" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -49,6 +85,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld 小時前"
+          }
+        }
+      }
+    },
+    "%lld min" : {
+      "comment" : "A duration in the import split confirmation",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld min"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 分"
           }
         }
       }
@@ -3050,6 +3104,40 @@
         }
       }
     },
+    "Imported “%@” as %lld recordings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imported “%@” as %lld recordings"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已匯入「%1$@」，分成 %2$lld 筆錄音"
+          }
+        }
+      }
+    },
+    "Imported “%@” as %lld recordings, shared to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Imported “%@” as %lld recordings, shared to “%@”"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已匯入「%1$@」，分成 %2$lld 筆錄音並分享到「%3$@」"
+          }
+        }
+      }
+    },
     "In Keyboards → Add New Keyboard, pick Parley Voice." : {
       "localizations" : {
         "en" : {
@@ -3164,6 +3252,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "即時轉成文字，標出誰在說話。"
+          }
+        }
+      }
+    },
+    "It's %@, and cloud transcription takes up to 6 hours at a time. Parley will split it into %lld equal parts of about %@ each and save each as its own recording: “%@”, “%@”…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It's %@, and cloud transcription takes up to 6 hours at a time. Parley will split it into %lld equal parts of about %@ each and save each as its own recording: “%@”, “%@”…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "長度 %1$@，雲端轉錄一次最多 6 小時。Parley 會把它平均分成 %2$lld 段，每段約 %3$@，各存成一筆錄音：「%4$@」、「%5$@」…"
           }
         }
       }
@@ -5177,6 +5282,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Parley 在語音輸入結束前被關掉了，再點一下麥克風重試。"
+          }
+        }
+      }
+    },
+    "Part %lld of %lld" : {
+      "comment" : "Import progress while a long file is uploaded in parts",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Part %lld of %lld"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 %1$lld/%2$lld 段"
+          }
+        }
+      }
+    },
+    "Part %lld of %lld failed: %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Part %lld of %lld failed: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "第 %1$lld/%2$lld 段失敗：%3$@"
           }
         }
       }
@@ -8437,6 +8577,23 @@
         }
       }
     },
+    "This file is long, so it will be uploaded in %lld parts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This file is long, so it will be uploaded in %lld parts"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這個檔案比較長，會分成 %lld 段上傳"
+          }
+        }
+      }
+    },
     "This permanently removes your Parley account, personal recordings, transcripts, folders, and usage data. Organizations you still own have to be transferred or deleted first." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8755,6 +8912,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未命名錄音"
+          }
+        }
+      }
+    },
+    "Upload in %lld parts" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Upload in %lld parts"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "分成 %lld 段上傳"
           }
         }
       }
