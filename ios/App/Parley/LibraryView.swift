@@ -40,6 +40,9 @@ struct LibraryView: View {
     /// and the empty state — drives the same single in-flight import.
     @StateObject private var importer = RecordingImporter()
     @State private var importing = false
+    /// A picked file long enough to need splitting, while the library asks
+    /// whether to go ahead.
+    @State private var confirmingSplit: RecordingImporter.Picked?
     /// What the last finished import landed, shown above the list until the
     /// user moves on. Failures go to `error` instead, with everything else.
     @State private var notice: String?
@@ -144,6 +147,7 @@ struct LibraryView: View {
                 }
             }
             .sheet(item: $moving) { rec in folderPicker(for: rec) }
+            .modifier(splitConfirmation)
             // Attached once here, not per row: every row's swipe and context
             // menu only sets the state, and this one dialog answers for all of
             // them.
@@ -180,6 +184,9 @@ struct LibraryView: View {
                 prompt: section == .meetings
                     ? Text("Search titles and snippets") : Text("Search voice typing"))
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
+            #if DEBUG
+                .task { await runDemoImport() }
+            #endif
             // A recording renamed or filed from another tab (the record
             // screen's filing card): reload, so the row shows the new name.
             .onChange(of: app.libraryRevision) { _, _ in Task { await load() } }
@@ -641,7 +648,7 @@ struct LibraryView: View {
         switch importer.stage {
         case .decoding(let fraction):
             VStack(alignment: .leading, spacing: 8) {
-                Text(verbatim: importer.stage.label)
+                Text(verbatim: importer.statusLabel)
                     .font(.parley.caption)
                     .foregroundStyle(Color(.secondaryLabel))
                 // No tint named: the bar inherits the app's, which is the
@@ -651,7 +658,7 @@ struct LibraryView: View {
         case .transcribing, .filing:
             HStack(spacing: 10) {
                 ProgressView()
-                Text(verbatim: importer.stage.label)
+                Text(verbatim: importer.statusLabel)
                     .font(.parley.caption)
                     .foregroundStyle(Color(.secondaryLabel))
             }
@@ -1141,11 +1148,34 @@ struct LibraryView: View {
     private func runImport(_ result: Result<[URL], Error>) async {
         notice = nil
         error = nil
-        let completion = await importer.run(result, app: app)
+        switch await importer.prepare(result, app: app) {
+        case .cancelled:
+            break
+        case .failed(let message):
+            error = message
+        case .ready(let picked):
+            // Long enough to need more than one hosted transcription: say so,
+            // and how it will be cut, before any decoding starts.
+            if picked.parts > 1 {
+                confirmingSplit = picked
+            } else {
+                await startImport(picked)
+            }
+        }
+    }
+
+    private func startImport(_ picked: RecordingImporter.Picked) async {
+        notice = nil
+        error = nil
+        let completion = await importer.run(picked, app: app)
         switch completion {
         case .cancelled:
             break
         case .failed(let message):
+            error = message
+        case .partFailed(let message):
+            // The parts before the failed one are filed — show them, then the error.
+            await load()
             error = message
         case .landed(let title, let sharedToOrgName):
             await load()
@@ -1153,7 +1183,54 @@ struct LibraryView: View {
                 sharedToOrgName.map { org in
                     String(localized: "Imported “\(title)” and shared to “\(org)”")
                 } ?? String(localized: "Imported “\(title)”")
+        case .landedParts(let name, let count, let sharedToOrgName):
+            await load()
+            notice =
+                sharedToOrgName.map { org in
+                    String(localized: "Imported “\(name)” as \(count) recordings, shared to “\(org)”")
+                } ?? String(localized: "Imported “\(name)” as \(count) recordings")
         }
+    }
+
+    /// The question a long import asks before it is cut into parts. A
+    /// modifier of its own so the body's chain stays type-checkable.
+    private var splitConfirmation: SplitConfirmation {
+        SplitConfirmation(
+            picked: $confirmingSplit,
+            title: { splitTitle($0) },
+            message: { splitMessage($0) },
+            confirm: { picked in Task { await startImport(picked) } })
+    }
+
+    #if DEBUG
+        /// `-ParleyDemoImport <path>`: the import door, fed a file without the picker.
+        private func runDemoImport() async {
+            guard let path = ScreenshotDemo.importPath, !ScreenshotDemo.didRunImport else { return }
+            ScreenshotDemo.didRunImport = true
+            await runImport(.success([URL(fileURLWithPath: path)]))
+            if ScreenshotDemo.importConfirms, let picked = confirmingSplit {
+                try? await Task.sleep(for: .seconds(2))
+                confirmingSplit = nil
+                await startImport(picked)
+            }
+        }
+    #endif
+
+    private func splitTitle(_ picked: RecordingImporter.Picked) -> String {
+        String(localized: "This file is long, so it will be uploaded in \(picked.parts) parts")
+    }
+
+    private func splitMessage(_ picked: RecordingImporter.Picked) -> String {
+        let total = picked.durationSeconds ?? 0
+        let count = picked.parts
+        let duration = RecordingImporter.durationText(total)
+        let partDuration = RecordingImporter.durationText(total / Double(count))
+        let first = picked.title(part: 1, of: count)
+        let second = picked.title(part: 2, of: count)
+        return String(
+            localized:
+                "It's \(duration), and cloud transcription takes up to 6 hours at a time. Parley will split it into \(count) equal parts of about \(partDuration) each and save each as its own recording: “\(first)”, “\(second)”…"
+        )
     }
 
     private func load() async {
@@ -1920,3 +1997,29 @@ private struct RecordingCard: View {
             .environmentObject(TabRouter())
     }
 #endif
+
+/// `LibraryView`'s split confirmation: the same `.confirmationDialog` style
+/// the library uses for its other questions, with a plain (not destructive)
+/// confirm button — splitting loses nothing.
+private struct SplitConfirmation: ViewModifier {
+    @Binding var picked: RecordingImporter.Picked?
+    let title: (RecordingImporter.Picked) -> String
+    let message: (RecordingImporter.Picked) -> String
+    let confirm: (RecordingImporter.Picked) -> Void
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            picked.map { Text(verbatim: title($0)) } ?? Text(verbatim: ""),
+            isPresented: Binding(
+                get: { picked != nil },
+                set: { if !$0 { picked = nil } }),
+            titleVisibility: .visible,
+            presenting: picked
+        ) { picked in
+            Button(String(localized: "Upload in \(picked.parts) parts")) { confirm(picked) }
+            Button("Cancel", role: .cancel) {}
+        } message: { picked in
+            Text(verbatim: message(picked))
+        }
+    }
+}

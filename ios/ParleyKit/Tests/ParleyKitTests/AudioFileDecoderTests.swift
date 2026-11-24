@@ -141,4 +141,43 @@ final class AudioFileDecoderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(values.first ?? 1, 0)
         XCTAssertEqual(values.last ?? 0, 1.0, accuracy: 1e-9)
     }
+    func testDurationIsReadWithoutDecoding() throws {
+        let source = try makeWAV("probe.wav", sampleRate: 44_100, channels: 2, seconds: 3.0)
+        XCTAssertEqual(try XCTUnwrap(AudioFileDecoder.durationSeconds(of: source)), 3.0, accuracy: 0.01)
+
+        let junk = dir.appendingPathComponent("junk.m4a")
+        try Data("not audio".utf8).write(to: junk)
+        XCTAssertNil(AudioFileDecoder.durationSeconds(of: junk))
+    }
+
+    func testSplitsIntoEqualCompleteOggParts() throws {
+        // 10 s at 44.1 kHz stereo crosses several 4 s converter turns, so the
+        // cuts land mid-chunk rather than on a chunk edge.
+        let source = try makeWAV("split.wav", sampleRate: 44_100, channels: 2, seconds: 10.0)
+        let log = ProgressLog()
+
+        let durations = try AudioFileDecoder.encodeToOggOpusParts(
+            source: source, parts: 3,
+            destination: { self.destination("part-\($0).ogg") },
+            onProgress: { log.record($0) })
+
+        XCTAssertEqual(durations.count, 3)
+        XCTAssertEqual(Double(durations.reduce(0, +)), 10_000, accuracy: 40)
+        for ms in durations { XCTAssertEqual(Double(ms), 10_000 / 3, accuracy: 25) }
+        for index in 0..<3 {
+            let data = try Data(contentsOf: destination("part-\(index).ogg"))
+            XCTAssertEqual(String(data: data.prefix(4), encoding: .ascii), "OggS")
+            XCTAssertNotNil(data.range(of: Data("OpusHead".utf8)), "part \(index) needs its own header")
+        }
+        XCTAssertEqual(log.all.last ?? 0, 1.0, accuracy: 1e-9)
+    }
+
+    func testSplitFailureLeavesNoParts() throws {
+        let source = try makeWAV("silent.wav", sampleRate: 44_100, channels: 1, seconds: 0)
+        XCTAssertThrowsError(
+            try AudioFileDecoder.encodeToOggOpusParts(
+                source: source, parts: 2, destination: { self.destination("p\($0).ogg") }))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination("p0.ogg").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination("p1.ogg").path))
+    }
 }

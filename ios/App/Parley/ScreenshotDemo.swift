@@ -160,6 +160,23 @@
         /// ladder had run out — through the real `endAfterLostConnection` —
         /// so the lost-connection delivery and its notice can be seen with no
         /// network to cut.
+        /// `-ParleyDemoImport <path>` feeds that file to the library's import
+        /// door once, as if it had been picked in Files — so the long-file
+        /// split confirmation and the per-part progress can be seen without
+        /// driving the document picker.
+        @MainActor static var didRunImport = false
+
+        /// `-ParleyDemoImportConfirm YES` also answers the split confirmation,
+        /// so the per-part progress can be watched without a tap.
+        static var importConfirms: Bool {
+            isActive && UserDefaults.standard.bool(forKey: "ParleyDemoImportConfirm")
+        }
+
+        static var importPath: String? {
+            guard isActive else { return nil }
+            return UserDefaults.standard.string(forKey: "ParleyDemoImport")
+        }
+
         static var loseConnectionAfter: Duration? {
             guard isActive else { return nil }
             let seconds = UserDefaults.standard.double(forKey: "ParleyDemoLoseConnectionAfter")

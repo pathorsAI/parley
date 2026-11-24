@@ -13,6 +13,12 @@ import SwiftUI
 /// durable queue a live meeting uses, so a network failure at the last step
 /// leaves the recording safe on the phone rather than lost.
 ///
+/// A file longer than one hosted transcription (6 h on the server) is cut
+/// into `ImportSplit.partCount` equal parts during that same decode, after the
+/// library has asked; each part then goes through transcription and filing
+/// on its own, in order, as its own recording titled `<name>（k/n）`. A part
+/// that fails stops the run there and leaves the parts before it filed.
+///
 /// One import at a time. Transcribing an hour of audio is minutes of waiting,
 /// and a second import stacked on top of the first would race for the same
 /// stage — so `run` refuses while one is in flight and the UI disables its
@@ -51,22 +57,74 @@ final class RecordingImporter: ObservableObject {
     /// error row, and a notice above the list.
     enum Completion: Equatable {
         case landed(title: String, sharedToOrgName: String?)
+        /// A split import: every one of `count` parts was filed.
+        case landedParts(name: String, count: Int, sharedToOrgName: String?)
         /// User-facing text, ready to show. Never a raw `localizedDescription`.
         case failed(String)
+        /// A split import stopped at a part after earlier parts were filed —
+        /// user-facing text naming the part, and the library has new rows.
+        case partFailed(String)
         /// Nothing was picked — no result to report either way.
         case cancelled
     }
 
+    /// A file the user picked, probed but not yet read. The library holds on
+    /// to it while it asks whether to split a long one.
+    struct Picked: Identifiable, Equatable {
+        let id = UUID()
+        let url: URL
+        /// The name the user recognises: the file's, minus the extension.
+        let name: String
+        /// From the container's metadata; nil when it would not say.
+        let durationSeconds: Double?
+
+        /// How many recordings this file becomes (`ImportSplit.partCount`).
+        var parts: Int { ImportSplit.partCount(durationSeconds: durationSeconds) }
+
+        /// The title part `index` (1-based) of `count` lands under — the
+        /// file's name, suffixed only when there is more than one part.
+        func title(part index: Int, of count: Int) -> String {
+            ImportSplit.partTitle(
+                name, part: index, of: count, chinese: RecordingImporter.isChinese)
+        }
+    }
+
+    /// What `prepare` found.
+    enum Preparation: Equatable {
+        case ready(Picked)
+        case failed(String)
+        case cancelled
+    }
+
+    /// Which part of a split import is in flight. Nil for an import of one.
+    struct PartProgress: Equatable {
+        let index: Int
+        let count: Int
+    }
+
     @Published private(set) var stage: Stage = .idle
+    @Published private(set) var part: PartProgress?
 
     var isRunning: Bool { stage != .idle }
 
-    /// Run one import end to end.
-    ///
-    /// Everything expensive — the copy, the decode, reading the encoded bytes —
-    /// happens off the main actor; only the stage transitions and the cloud
-    /// calls run here. Temp files are removed on every exit path.
-    func run(_ result: Result<[URL], Error>, app: AppState) async -> Completion {
+    /// What the library shows under the progress bar or spinner: the stage,
+    /// prefixed with "Part k of n" while a split import works through its
+    /// parts one at a time.
+    var statusLabel: String {
+        guard let part, !isDecoding else { return stage.label }
+        return Self.partLabel(part.index, of: part.count) + " · " + stage.label
+    }
+
+    private var isDecoding: Bool {
+        if case .decoding = stage { return true }
+        return false
+    }
+
+    /// Take what the picker returned, check it can be imported at all, and
+    /// read how long it runs — from the container's metadata, without
+    /// decoding, so the library can ask about splitting before anything
+    /// expensive starts.
+    func prepare(_ result: Result<[URL], Error>, app: AppState) async -> Preparation {
         guard !isRunning else { return .cancelled }
 
         let picked: URL
@@ -90,8 +148,22 @@ final class RecordingImporter: ObservableObject {
                         "Sign in under Settings → Account to transcribe an imported recording."))
         }
 
-        // The name the user recognises: the file's, minus the extension.
-        let title = picked.deletingPathExtension().lastPathComponent
+        let duration = await Self.probeDuration(picked)
+        return .ready(
+            Picked(
+                url: picked, name: picked.deletingPathExtension().lastPathComponent,
+                durationSeconds: duration))
+    }
+
+    /// Run one import end to end: one recording, or — for a file longer than
+    /// one hosted transcription — `picked.parts` equal recordings, each
+    /// transcribed and filed in turn.
+    ///
+    /// Everything expensive — the copy, the decode, reading the encoded bytes —
+    /// happens off the main actor; only the stage transitions and the cloud
+    /// calls run here. Temp files are removed on every exit path.
+    func run(_ picked: Picked, app: AppState) async -> Completion {
+        guard !isRunning else { return .cancelled }
 
         let workDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -101,18 +173,26 @@ final class RecordingImporter: ObservableObject {
         defer { try? FileManager.default.removeItem(at: workDirectory) }
 
         stage = .decoding(0)
-        defer { stage = .idle }
+        part = nil
+        defer {
+            stage = .idle
+            part = nil
+        }
 
         let progress: @Sendable (Double) -> Void = { [weak self] fraction in
             Task { @MainActor in self?.reportDecoding(fraction) }
         }
 
-        let ogg = workDirectory.appendingPathComponent("import.ogg")
-        let durationMs: UInt64
+        // One decode pass cuts every part, so the source is read exactly once.
+        let requested = picked.parts
+        let partURL: @Sendable (Int) -> URL = { index in
+            workDirectory.appendingPathComponent("import-\(index + 1).ogg")
+        }
+        let durations: [UInt64]
         do {
-            let local = try await Self.copyIn(picked: picked, workDirectory: workDirectory)
-            durationMs = try await Self.decode(
-                source: local, destination: ogg, onProgress: progress)
+            let local = try await Self.copyIn(picked: picked.url, workDirectory: workDirectory)
+            durations = try await Self.decode(
+                source: local, parts: requested, destination: partURL, onProgress: progress)
         } catch let error as AudioFileDecoderError {
             return .failed(Self.message(for: error))
         } catch {
@@ -121,29 +201,73 @@ final class RecordingImporter: ObservableObject {
             return .failed(Self.unreadableMessage)
         }
 
+        // A source shorter than its container claimed can yield fewer parts;
+        // the titles count what was really cut.
+        let count = durations.count
+        var lastOutcome: MeetingUploader.Outcome?
+        for (offset, durationMs) in durations.enumerated() {
+            let index = offset + 1
+            if count > 1 { part = PartProgress(index: index, count: count) }
+            let result = await transcribeAndFile(
+                ogg: partURL(offset),
+                durationMs: durationMs,
+                title: picked.title(part: index, of: count),
+                resumeKey: Self.resumeKey(for: picked.url, part: index, of: count),
+                app: app)
+            switch result {
+            case .success(let outcome):
+                lastOutcome = outcome
+            case .failure(let failure):
+                guard count > 1 else { return .failed(failure.message) }
+                let message = String(
+                    localized: "Part \(index) of \(count) failed: \(failure.message)")
+                // Parts already filed stay filed; the library reloads to show them.
+                return offset > 0 ? .partFailed(message) : .failed(message)
+            }
+        }
+
+        guard let lastOutcome else { return .failed(Self.unreadableMessage) }
+        if count > 1 {
+            return .landedParts(
+                name: picked.name, count: count, sharedToOrgName: lastOutcome.sharedToOrgName)
+        }
+        return .landed(title: lastOutcome.title, sharedToOrgName: lastOutcome.sharedToOrgName)
+    }
+
+    /// A step's user-facing failure text, carried through `Result`.
+    struct Failure: Error {
+        let message: String
+    }
+
+    /// Transcribe one encoded Ogg and file it as one recording — everything an
+    /// import of one did after decoding, now run once per part.
+    private func transcribeAndFile(
+        ogg: URL, durationMs: UInt64, title: String, resumeKey: String, app: AppState
+    ) async -> Result<MeetingUploader.Outcome, Failure> {
         // The same bar the live path holds a recording to, so importing a
         // two-second voice memo cannot sneak past what recording one cannot.
         guard Double(durationMs) >= MeetingUploader.minimumDurationMs else {
-            return .failed(Self.tooShortMessage)
+            return .failure(Failure(message: Self.tooShortMessage))
         }
 
         stage = .transcribing
         let transcript: BatchTranscriptionResult
         do {
             let bytes = try await Self.read(ogg)
-            transcript = try await Self.transcribe(
-                bytes, resumeKey: Self.resumeKey(for: picked), cloud: app.cloud)
+            transcript = try await Self.transcribe(bytes, resumeKey: resumeKey, cloud: app.cloud)
         } catch let error as CloudError {
-            return .failed(error.batchTranscriptionMessage)
+            return .failure(Failure(message: error.batchTranscriptionMessage))
         } catch let error as BatchTranscriptionError {
             // The job itself failed or never settled — a different story from
             // the HTTP call failing, and it carries its own localized wording.
-            return .failed(error.message)
+            return .failure(Failure(message: error.message))
         } catch {
-            return .failed(
-                String(
-                    localized:
-                        "Transcription didn't finish. Check your network and try the import again."))
+            return .failure(
+                Failure(
+                    message: String(
+                        localized:
+                            "Transcription didn't finish. Check your network and try the import again."
+                    )))
         }
 
         stage = .filing
@@ -157,24 +281,50 @@ final class RecordingImporter: ObservableObject {
                 defaultSave: app.defaultSave,
                 orgs: app.orgs)
             app.refreshUploadCounts()
-            guard let outcome else { return .failed(Self.tooShortMessage) }
-            return .landed(title: outcome.title, sharedToOrgName: outcome.sharedToOrgName)
+            guard let outcome else { return .failure(Failure(message: Self.tooShortMessage)) }
+            return .success(outcome)
         } catch let error as CloudError where error.status == 402 {
             app.refreshUploadCounts()
-            return .failed(
-                String(
-                    localized:
-                        "You're out of quota. The recording is safe on this phone and will sync once the quota resets."
-                ))
+            return .failure(
+                Failure(
+                    message: String(
+                        localized:
+                            "You're out of quota. The recording is safe on this phone and will sync once the quota resets."
+                    )))
         } catch {
             // Past `fileImported`'s persist step the audio and its transcript
             // are in the durable queue; the next foregrounding or network change retries them.
             app.refreshUploadCounts()
-            return .failed(
-                String(
-                    localized:
-                        "Sync failed for now. The recording is safe on this phone and will retry automatically."
-                ))
+            return .failure(
+                Failure(
+                    message: String(
+                        localized:
+                            "Sync failed for now. The recording is safe on this phone and will retry automatically."
+                    )))
+        }
+    }
+
+    // MARK: split wording
+
+    /// Whether the app is running in Chinese — decides the title suffix's
+    /// brackets, the same check the rest of the app makes.
+    nonisolated static var isChinese: Bool {
+        (Bundle.main.preferredLocalizations.first ?? "en").hasPrefix("zh")
+    }
+
+    /// "Part 2 of 3" / 「第 2/3 段」.
+    static func partLabel(_ index: Int, of count: Int) -> String {
+        String(localized: "Part \(index) of \(count)")
+    }
+
+    /// A length the way the split confirmation says it: 「7 小時 12 分」,
+    /// "7 hr 12 min".
+    static func durationText(_ seconds: Double) -> String {
+        let (hours, minutes) = ImportSplit.hoursAndMinutes(seconds)
+        switch (hours, minutes) {
+        case (0, let m): return String(localized: "\(m) min")
+        case (let h, 0): return String(localized: "\(h) hr")
+        case (let h, let m): return String(localized: "\(h) hr \(m) min")
         }
     }
 
@@ -217,11 +367,23 @@ final class RecordingImporter: ObservableObject {
     }
 
     private nonisolated static func decode(
-        source: URL, destination: URL, onProgress: @escaping @Sendable (Double) -> Void
-    ) async throws -> UInt64 {
+        source: URL, parts: Int, destination: @escaping @Sendable (Int) -> URL,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> [UInt64] {
         try await Task.detached(priority: .userInitiated) {
-            try AudioFileDecoder.encodeToOggOpus(
-                source: source, destination: destination, onProgress: onProgress)
+            try AudioFileDecoder.encodeToOggOpusParts(
+                source: source, parts: parts, destination: destination, onProgress: onProgress)
+        }.value
+    }
+
+    /// The picked file's length from its metadata, read under the picker's
+    /// security scope. Nil when the container will not say — the import then
+    /// goes ahead as one recording, as it always has.
+    private nonisolated static func probeDuration(_ picked: URL) async -> Double? {
+        await Task.detached(priority: .userInitiated) {
+            let scoped = picked.startAccessingSecurityScopedResource()
+            defer { if scoped { picked.stopAccessingSecurityScopedResource() } }
+            return AudioFileDecoder.durationSeconds(of: picked)
         }.value
     }
 
@@ -244,10 +406,12 @@ final class RecordingImporter: ObservableObject {
     }
 
     /// An import has no recording id until it is filed, so the job is keyed by
-    /// the file's name; the Ogg's byte count, checked by `BatchJobRecord`,
-    /// keeps a different file under the same name from inheriting it.
-    private nonisolated static func resumeKey(for picked: URL) -> String {
-        "import:" + picked.lastPathComponent
+    /// the file's name — and, for a split import, the part; the Ogg's byte
+    /// count, checked by `BatchJobRecord`, keeps a different file under the
+    /// same name from inheriting it.
+    private nonisolated static func resumeKey(for picked: URL, part: Int, of count: Int) -> String {
+        let key = "import:" + picked.lastPathComponent
+        return count > 1 ? key + "#\(part)/\(count)" : key
     }
 
     private nonisolated static func read(_ url: URL) async throws -> Data {
