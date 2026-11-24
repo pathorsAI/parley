@@ -50,12 +50,17 @@ pub struct HistoryRead {
     meta: serde_json::Value,
     #[serde(rename = "audioPath")]
     audio_path: Option<String>,
+    /// The recording's size on disk, so cloud sync can refuse one the cloud
+    /// would reject (over its 100 MB body limit) without reading it.
+    #[serde(rename = "audioBytes")]
+    audio_bytes: Option<u64>,
 }
 
 /// Save (or overwrite) a history entry. `meta_json` / `summary_json` are written
 /// verbatim. If `audio_source_path` is given it becomes `audio.ogg`:
-///   - `compress = true`  (upload): re-encode the source to Opus (fall back to a
-///     raw copy if compression fails for an odd codec).
+///   - `compress = true`  (upload): Opus at 16 kHz mono — the file already
+///     compressed for its transcription when there is one, else the source
+///     encoded now (see [`place_upload_audio`]).
 ///   - `compress = false` (live): the source is already an encoded temp `.ogg`,
 ///     so just move it into place.
 /// Returns the absolute entry directory.
@@ -98,13 +103,7 @@ fn write_entry(
         let src = PathBuf::from(src);
         let dest = dir.join("audio.ogg");
         if compress {
-            match crate::replay_audio::compress_for_upload(&src) {
-                Ok(tmp) => move_file(&tmp, &dest)?,
-                Err(e) => {
-                    log::warn!("history: compress failed ({e}); copying raw source");
-                    std::fs::copy(&src, &dest).map_err(|e| e.to_string())?;
-                }
-            }
+            place_upload_audio(&src, &dest)?;
         } else {
             move_file(&src, &dest)?;
         }
@@ -114,6 +113,32 @@ fn write_entry(
     std::fs::write(dir.join("meta.json"), meta_json).map_err(|e| e.to_string())?;
     log::info!("history: saved entry {}", dir.to_string_lossy());
     Ok(dir.to_string_lossy().into_owned())
+}
+
+/// Put an uploaded recording's audio at `dest` as Opus, cheapest way first:
+///   1. the file compressed for its transcription moments ago (replay.rs keeps
+///      it): moved into place, no second encode of the same source;
+///   2. a source that already is 16 kHz mono low-bitrate Opus (a split part,
+///      the app's own recording): copied as is — copied, never moved, since it
+///      may be the user's own file;
+///   3. otherwise compressed now, falling back to a raw copy for an odd codec.
+fn place_upload_audio(src: &Path, dest: &Path) -> Result<(), String> {
+    if let Some(tmp) = crate::replay_audio::take_compressed(src) {
+        log::info!("history: reusing the upload's compressed audio");
+        return move_file(&tmp, dest);
+    }
+    if crate::replay_audio::is_upload_ready(src) {
+        std::fs::copy(src, dest).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    match crate::replay_audio::compress_for_upload(src) {
+        Ok(tmp) => move_file(&tmp, dest),
+        Err(e) => {
+            log::warn!("history: compress failed ({e}); copying raw source");
+            std::fs::copy(src, dest).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+    }
 }
 
 /// Save an entry pulled from the cloud: when `audio_url` is given, fetch the
@@ -324,8 +349,16 @@ pub fn read_history_entry(app: AppHandle, id: String) -> Result<HistoryRead, Str
     let raw = std::fs::read_to_string(dir.join("meta.json")).map_err(|e| e.to_string())?;
     let meta: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
     let audio = dir.join("audio.ogg");
+    let audio_bytes = std::fs::metadata(&audio)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| m.len());
     let audio_path = audio.exists().then(|| audio.to_string_lossy().into_owned());
-    Ok(HistoryRead { meta, audio_path })
+    Ok(HistoryRead {
+        meta,
+        audio_path,
+        audio_bytes,
+    })
 }
 
 /// Rename an entry: patch `title` in both `meta.json` and `summary.json` (leaving

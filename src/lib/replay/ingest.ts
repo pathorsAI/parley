@@ -23,7 +23,7 @@ import { normalizeTranscriptText } from "../textNormalize";
 import { log } from "../log";
 import { recordUsage } from "../usage/log";
 import { sttCostUsd } from "../usage/pricing";
-import { translate } from "../../i18n/messages";
+import { translate, type TranslationKey } from "../../i18n/messages";
 import * as ipc from "../ipc/commands";
 
 /** Coarse progress stages surfaced to the UI while a recording is ingested. */
@@ -189,6 +189,24 @@ export async function pickImportFiles(settings: Settings): Promise<ImportPick | 
   return pick;
 }
 
+/** The opening words of replay.rs `UNCOMPRESSIBLE_TOO_LARGE`: the backend
+ *  refused to send a file it couldn't compress because it's over the hosted
+ *  upload limit. */
+const UNCOMPRESSIBLE_TOO_LARGE_MARKER = "can't be compressed for upload";
+
+/** The message key for a rejected cloud/BYOK `transcribe_file` we can show in
+ *  the user's language, or null to keep the backend's own message. */
+export function uploadFailureKey(message: string): TranslationKey | null {
+  return message.includes(UNCOMPRESSIBLE_TOO_LARGE_MARKER) ? "ingest.error.uncompressibleTooLarge" : null;
+}
+
+/** A non-local upload failure, translated when {@link uploadFailureKey} knows it. */
+function uploadError(settings: Settings, e: unknown): unknown {
+  const message = e instanceof Error ? e.message : String(e);
+  const key = uploadFailureKey(message);
+  return key ? new Error(translate(settings.language, key)) : e;
+}
+
 /** An on-device upload failure in the user's language when it is one we can
  *  explain (out of memory, model missing); anything else keeps its message. */
 function localUploadError(settings: Settings, e: unknown): Error {
@@ -249,7 +267,7 @@ export async function transcribeRecording(
     batchUrl: request.batchUrl ?? null,
     fresh: opts.fresh ?? false,
   }).catch((e: unknown) => {
-    throw usesLocalModel(provider) ? localUploadError(settings, e) : e;
+    throw usesLocalModel(provider) ? localUploadError(settings, e) : uploadError(settings, e);
   });
   log.info("ingest: transcription ok", {
     segments: result.segments.length,
@@ -317,7 +335,7 @@ function reportStage(opts: IngestOptions, p: IngestProgress): void {
 }
 
 /** Last path component of an absolute file path (handles / and \\). */
-function fileNameOf(path: string): string {
+export function fileNameOf(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
 }

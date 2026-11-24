@@ -78,6 +78,9 @@ export interface CacheSizes {
 export interface HistoryReadResult {
   meta: HistoryEntry;
   audioPath: string | null;
+  /** The recording's size on disk in bytes (null without one; absent from an
+   *  older backend). */
+  audioBytes?: number | null;
 }
 
 /** `read_transcript_file` (history.rs `TranscriptFile`). */
@@ -228,6 +231,19 @@ export const transcribeFile = (args: {
   fresh?: boolean;
 }) => invoke<TranscriptionResult>("transcribe_file", args);
 export const measureAudioSpeechRate = (args: { path: string }) => invoke<number>("measure_audio_speech_rate", args);
+/** A picked file's duration (container metadata, no decode; null when it
+ *  doesn't say), whether its codec can be compressed for upload, and its size. */
+export interface AudioProbe {
+  durationMs: number | null;
+  compressible: boolean;
+  bytes: number;
+}
+export const probeUploadAudio = (args: { path: string }) => invoke<AudioProbe>("probe_upload_audio", args);
+/** Compress a long recording into `parts` equal Opus temp files, in order. */
+export const splitUploadAudio = (args: { path: string; parts: number }) =>
+  invoke<string[]>("split_upload_audio", args);
+/** Delete the temp files {@link splitUploadAudio} made (nothing else). */
+export const discardUploadParts = (args: { paths: string[] }) => invoke<void>("discard_upload_parts", args);
 export const preparePlaybackFallback = (args: { audioPath: string }) =>
   invoke<string>("prepare_playback_fallback", args);
 

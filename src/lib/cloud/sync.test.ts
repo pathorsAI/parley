@@ -21,7 +21,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   convertFileSrc: (p: string) => `asset://${p}`,
   invoke: vi.fn(async (cmd: string, args: { id: string }) => {
     if (cmd !== "read_history_entry") throw new Error(`unexpected invoke ${cmd}`);
-    return { meta: { id: args.id }, audioPath: audioIds.has(args.id) ? `/a/${args.id}.ogg` : null };
+    const audio = audioIds.has(args.id);
+    return {
+      meta: { id: args.id },
+      audioPath: audio ? `/a/${args.id}.ogg` : null,
+      audioBytes: audio ? (audioBytes.get(args.id) ?? 4) : null,
+    };
   }),
 }));
 vi.mock("../tauriEvents", () => ({ isTauri: () => true }));
@@ -66,6 +71,8 @@ interface Row {
 }
 let localEntries: { id: string; createdAt: number; title: string }[] = [];
 const audioIds = new Set<string>();
+/** On-disk audio size per id (default 4 bytes). */
+const audioBytes = new Map<string, number>();
 let cloudRows: Row[] = [];
 /** undefined = an older server that doesn't report tombstones at all. */
 let tombstones: string[] | undefined;
@@ -110,6 +117,8 @@ const history = await import("../history/history");
 beforeEach(() => {
   backing.clear();
   audioIds.clear();
+  audioBytes.clear();
+  vi.mocked(fetch).mockClear();
   localEntries = [];
   cloudRows = [];
   tombstones = undefined;
@@ -151,6 +160,33 @@ describe("pushUnsyncedToCloud", () => {
     expect(await sync.pushUnsyncedToCloud()).toBe(1);
     expect(pushesOf("a")).toEqual(["PUT /recordings/a/audio", "POST /recordings/a"]);
     expect(readSyncIndex().a).toEqual({ cloudUpdatedAt: 1000, dirty: false });
+  });
+
+  it("audio over the cloud's 100 MB limit is never read or sent, and the skip is logged once", async () => {
+    const { log } = await import("../log");
+    vi.mocked(log.warn).mockClear();
+    localEntries = [local("big"), local("ok")];
+    audioIds.add("big");
+    audioIds.add("ok");
+    audioBytes.set("big", sync.CLOUD_AUDIO_LIMIT_BYTES + 1);
+    audioBytes.set("ok", sync.CLOUD_AUDIO_LIMIT_BYTES);
+    expect(await sync.pushUnsyncedToCloud()).toBe(1);
+    expect(pushesOf("big")).toEqual([]);
+    expect(pushesOf("ok")).toEqual(["PUT /recordings/ok/audio", "POST /recordings/ok"]);
+    // Only the in-limit recording was read through the asset channel.
+    expect(vi.mocked(fetch).mock.calls.map(([u]) => String(u))).toEqual(["asset:///a/ok.ogg"]);
+    expect(readSyncIndex().big).toBeUndefined();
+
+    // The next sweep (the next Library visit) skips it again without a PUT, and
+    // without logging the skip a second time.
+    cloudRows = [{ id: "ok", updatedAt: 1000 }];
+    calls = [];
+    expect(await sync.pushUnsyncedToCloud()).toBe(0);
+    expect(pushesOf("big")).toEqual([]);
+    const tooLarge = vi
+      .mocked(log.warn)
+      .mock.calls.filter(([msg]) => String(msg).includes("too large to sync"));
+    expect(tooLarge).toHaveLength(1);
   });
 
   it("a listed tombstone is flagged and never uploaded, on this sweep or the next", async () => {

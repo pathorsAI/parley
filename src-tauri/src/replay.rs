@@ -199,7 +199,8 @@ async fn transcribe_upload(
     upload: &Upload<'_>,
     adapter: Option<BatchFn>,
 ) -> Result<TranscriptionResult, String> {
-    let (upload_path, compressed_temp) = compress_upload(upload.path).await;
+    let hosted = matches!(upload.request().credential, Credential::CloudSession);
+    let (upload_path, compressed_temp) = compress_upload(upload.path, hosted).await?;
 
     // Measure the speaker's articulation rate acoustically over the audio we're
     // about to transcribe, so the post-call pace read is a real measurement — not
@@ -219,8 +220,19 @@ async fn transcribe_upload(
         r
     });
 
+    // A transcribed upload is saved to history next, which needs the very same
+    // Opus file: keep it for that save (history.rs) instead of encoding the
+    // source a second time. A failed one is just deleted.
     if let Some(temp) = compressed_temp {
-        let _ = tokio::fs::remove_file(&temp).await;
+        if result.is_ok() {
+            let source = std::path::PathBuf::from(upload.path);
+            let _ = tokio::task::spawn_blocking(move || {
+                crate::replay_audio::remember_compressed(&source, temp)
+            })
+            .await;
+        } else {
+            let _ = tokio::fs::remove_file(&temp).await;
+        }
     }
     result
 }
@@ -253,15 +265,44 @@ async fn run_adapter(
     .await
 }
 
+/// Parley Cloud's edge rejects any request body over 100 MB (with an HTML 413),
+/// so a hosted upload larger than this can only fail.
+pub(crate) const HOSTED_UPLOAD_LIMIT_BYTES: u64 = 100 * 1024 * 1024;
+
+/// Shown when a recording can't be compressed and is too big to send as is.
+/// The frontend recognizes it by its opening words (see
+/// `uploadFailureKey` in src/lib/replay/ingest.ts) and shows it translated.
+pub(crate) const UNCOMPRESSIBLE_TOO_LARGE: &str = "This file's format can't be compressed for upload and it's over 100 MB. Convert it to MP3 or M4A and upload again.";
+
+/// Whether an upload whose compression failed may still go up as the original
+/// file. A hosted upload over [`HOSTED_UPLOAD_LIMIT_BYTES`] can't (the edge would
+/// refuse it); BYOK vendors set their own limits, so they always try. An
+/// unknown size tries too — reading the file will report the real problem.
+fn raw_fallback_allowed(original_size: Option<u64>, hosted: bool) -> bool {
+    !hosted || original_size.is_none_or(|n| n <= HOSTED_UPLOAD_LIMIT_BYTES)
+}
+
 /// Try to compress the recording to a much smaller Opus/Ogg file before
-/// uploading. This is best-effort: any failure (unsupported codec, encode
-/// error, …) falls back to uploading the original file so it never blocks an
-/// upload. Returns the path to upload and, when a temp file was produced, that
-/// file so the caller can delete it afterward (even on error).
-async fn compress_upload(path: &str) -> (String, Option<std::path::PathBuf>) {
+/// uploading. This is best-effort: a failure (unsupported codec, encode error,
+/// …) falls back to uploading the original file, unless that file is too large
+/// for the hosted cloud to accept (see [`raw_fallback_allowed`]) — then the
+/// upload is refused up front with [`UNCOMPRESSIBLE_TOO_LARGE`]. Returns the
+/// path to upload and, when a temp file was produced, that file so the caller
+/// can delete it afterward (even on error).
+async fn compress_upload(
+    path: &str,
+    hosted: bool,
+) -> Result<(String, Option<std::path::PathBuf>), String> {
     let original_size = tokio::fs::metadata(path).await.map(|m| m.len()).ok();
     match compress_for_upload_blocking(path.to_string()).await {
-        Ok(temp) => {
+        Ok(None) => {
+            log::info!(
+                "replay: audio is already 16 kHz mono Opus, uploading as is bytes={:?}",
+                original_size
+            );
+            Ok((path.to_string(), None))
+        }
+        Ok(Some(temp)) => {
             let compressed_size = tokio::fs::metadata(&temp).await.map(|m| m.len()).ok();
             match (original_size, compressed_size) {
                 (Some(orig), Some(comp)) => log::info!(
@@ -276,11 +317,19 @@ async fn compress_upload(path: &str) -> (String, Option<std::path::PathBuf>) {
                 ),
                 _ => log::info!("replay: compressed audio (sizes unavailable)"),
             }
-            (temp.to_string_lossy().into_owned(), Some(temp))
+            Ok((temp.to_string_lossy().into_owned(), Some(temp)))
+        }
+        Err(e) if !raw_fallback_allowed(original_size, hosted) => {
+            log::warn!(
+                "replay: compression failed and original is over the hosted limit, not uploading origBytes={:?} error={}",
+                original_size,
+                e
+            );
+            Err(UNCOMPRESSIBLE_TOO_LARGE.to_string())
         }
         Err(e) => {
             log::warn!("replay: compression failed, uploading original error={}", e);
-            (path.to_string(), None)
+            Ok((path.to_string(), None))
         }
     }
 }
@@ -428,14 +477,67 @@ async fn write_cache(path: &std::path::Path, result: &TranscriptionResult) {
 }
 
 /// Run `compress_for_upload` off the async runtime (it does blocking file IO +
-/// CPU-bound decode/encode). Returns the temp output path on success.
-async fn compress_for_upload_blocking(path: String) -> Result<std::path::PathBuf, String> {
+/// CPU-bound decode/encode). Returns the temp output path on success, or `None`
+/// when the file already is what compression would produce (a split part, the
+/// app's own recording), which is uploaded as is.
+async fn compress_for_upload_blocking(path: String) -> Result<Option<std::path::PathBuf>, String> {
     tokio::task::spawn_blocking(move || {
-        crate::replay_audio::compress_for_upload(std::path::Path::new(&path))
+        let path = std::path::Path::new(&path);
+        if crate::replay_audio::is_upload_ready(path) {
+            return Ok(None);
+        }
+        crate::replay_audio::compress_for_upload(path)
+            .map(Some)
             .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("compression task panicked: {e}"))?
+}
+
+/// Read a picked file's duration, codec support and size from its headers (no
+/// decode), so the import wizard can decide about splitting or refuse an
+/// uncompressible oversized file before any heavy work starts.
+#[tauri::command]
+pub async fn probe_upload_audio(path: String) -> Result<crate::replay_audio::AudioProbe, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::replay_audio::probe_audio(std::path::Path::new(&path)).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("probe task panicked: {e}"))?
+}
+
+/// Compress a long recording into `parts` equal Opus files for hosted
+/// transcription, which takes at most 6 hours per upload. Streams, like every
+/// compression. Returns the part paths in order; the caller transcribes and
+/// saves each, then hands them to [`discard_upload_parts`].
+#[tauri::command]
+pub async fn split_upload_audio(path: String, parts: u32) -> Result<Vec<String>, String> {
+    tokio::task::spawn_blocking(move || {
+        let parts = crate::replay_audio::compress_for_upload_split(
+            std::path::Path::new(&path),
+            parts.clamp(1, 64) as usize,
+        )
+        .map_err(|e| e.to_string())?;
+        log::info!("replay: split upload into parts={}", parts.len());
+        Ok(parts
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect())
+    })
+    .await
+    .map_err(|e| format!("split task panicked: {e}"))?
+}
+
+/// Delete the temp part files [`split_upload_audio`] made. Anything that isn't
+/// one of those parts is left alone.
+#[tauri::command]
+pub async fn discard_upload_parts(paths: Vec<String>) {
+    let _ = tokio::task::spawn_blocking(move || {
+        for p in paths {
+            crate::replay_audio::discard_part(std::path::Path::new(&p));
+        }
+    })
+    .await;
 }
 
 /// Measure the articulation rate (syllables/sec) of a recording already on disk.
@@ -453,8 +555,9 @@ pub async fn measure_audio_speech_rate(path: String) -> f32 {
 /// task panic resolves to 0.0 so it can never block a transcription.
 async fn measure_speech_rate_blocking(path: String) -> f32 {
     tokio::task::spawn_blocking(move || {
-        match crate::replay_audio::decode_to_16k_mono(std::path::Path::new(&path)) {
-            Ok(pcm) => crate::audio::prosody::measure_speech_rate_hz(&pcm, 16_000),
+        // Streamed: a long recording is measured without holding its decode.
+        match crate::replay_audio::measure_speech_rate(std::path::Path::new(&path)) {
+            Ok(rate) => rate,
             Err(e) => {
                 log::warn!("replay: speech-rate measure failed error={e}");
                 0.0
@@ -582,6 +685,23 @@ mod tests {
             unsupported_batch_provider("whisperx"),
             "File transcription for 'whisperx' is not supported yet — switch to another transcription provider in Settings."
         );
+    }
+
+    #[test]
+    fn an_uncompressible_file_over_the_hosted_limit_is_not_sent_raw() {
+        let limit = HOSTED_UPLOAD_LIMIT_BYTES;
+        // Hosted: up to the limit the original still goes up; past it, no.
+        assert!(raw_fallback_allowed(Some(0), true));
+        assert!(raw_fallback_allowed(Some(limit), true));
+        assert!(!raw_fallback_allowed(Some(limit + 1), true));
+        assert!(!raw_fallback_allowed(Some(130_000_000), true));
+        // Unknown size: try, and let the read report the real error.
+        assert!(raw_fallback_allowed(None, true));
+        // BYOK vendors keep their own limits; we always try.
+        assert!(raw_fallback_allowed(Some(limit * 5), false));
+        // The frontend keys its translation off these opening words.
+        assert!(UNCOMPRESSIBLE_TOO_LARGE
+            .starts_with("This file's format can't be compressed for upload"));
     }
 
     #[test]

@@ -24,3 +24,14 @@ export const HOSTED_STT_MONTHLY_SECONDS = 40 * 60 * 60; // 40 hours
  *  unit: LLM usage debits credits by the actual backend cost. Authoritative value
  *  lives in the backend's `llmCreditsLimit`; mirrored here for display fallback. */
 export const HOSTED_LLM_MONTHLY_CREDITS = 10;
+
+/** The longest part an uploaded recording is sent to hosted transcription in.
+ *  The server caps one upload at 6 hours (STT_MAX_SESSION_SECONDS); parts stay
+ *  10 minutes under it so a container's slightly-off declared duration can't
+ *  push a part over. Longer files are split into equal parts (replay/split.ts). */
+export const HOSTED_MAX_PART_SECONDS = 5 * 3600 + 50 * 60;
+
+/** Parley Cloud's edge refuses a request body over this (replay.rs
+ *  `HOSTED_UPLOAD_LIMIT_BYTES`), so a file that can't be compressed and is
+ *  larger can never be transcribed by the hosted provider. */
+export const HOSTED_UPLOAD_LIMIT_BYTES = 100 * 1024 * 1024;

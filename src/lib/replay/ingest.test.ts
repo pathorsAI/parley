@@ -9,7 +9,7 @@ vi.mock("../log", () => ({
 
 import { useStore } from "../store";
 import type { Settings } from "../types";
-import { arbitrateImportPaths, assertUploadTranscribable } from "./ingest";
+import { arbitrateImportPaths, assertUploadTranscribable, uploadFailureKey } from "./ingest";
 import { STT_BY_ID, sttBatchUrl, sttRelayUrl } from "../transcription/providers";
 import { translate } from "../../i18n/messages";
 
@@ -128,5 +128,27 @@ describe("sttRelayUrl", () => {
     expect(sttRelayUrl("parley", "meeting")).toMatch(/^wss?:\/\/.+\/stt\/v2\/stream\?feature=meeting$/);
     expect(sttRelayUrl("parley", "voice_typing")).toMatch(/\/stt\/v2\/stream\?feature=voice_typing$/);
     expect(sttRelayUrl("soniox", "meeting")).toBeUndefined();
+  });
+});
+
+// replay.rs `UNCOMPRESSIBLE_TOO_LARGE` arrives as a rejected `transcribe_file`;
+// the upload surface shows it in the user's language.
+describe("uploadFailureKey", () => {
+  const backend =
+    "This file's format can't be compressed for upload and it's over 100 MB. Convert it to MP3 or M4A and upload again.";
+
+  it("recognizes the backend's uncompressible-and-too-large refusal", () => {
+    expect(uploadFailureKey(backend)).toBe("ingest.error.uncompressibleTooLarge");
+    expect(translate("en", "ingest.error.uncompressibleTooLarge")).toBe(backend);
+    expect(translate("zh-TW", "ingest.error.uncompressibleTooLarge")).toContain("100 MB");
+  });
+
+  it("leaves every other backend message alone", () => {
+    expect(uploadFailureKey("Hosted transcription failed (HTTP 500)")).toBeNull();
+    expect(
+      uploadFailureKey(
+        "This recording is too large for hosted transcription — split it into shorter files and upload them separately.",
+      ),
+    ).toBeNull();
   });
 });
