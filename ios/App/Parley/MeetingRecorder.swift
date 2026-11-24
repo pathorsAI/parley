@@ -277,8 +277,10 @@ final class MeetingRecorder: ObservableObject {
         let now = Date()
         clock = RecordingClock(startedAt: now)
         startedAt = now
-        meetingTitle = ""
-        meetingFolder = nil
+        // Not the title or the folder: the Record screen offers both before
+        // the meeting starts, and what was typed there is this meeting's.
+        // They are cleared once the last meeting has been saved under them
+        // (`upload`), and by a discard.
         segments = []
         // Whatever the last meeting left on screen belongs to the last meeting.
         settled = nil
@@ -857,11 +859,19 @@ final class MeetingRecorder: ObservableObject {
         guard let uploader else {
             phase = .idle
             status = nil
+            meetingTitle = ""
+            meetingFolder = nil
             return
         }
         self.uploader = nil
         phase = .uploading
-        defer { phase = .idle }
+        defer {
+            phase = .idle
+            // Saved under them (or kept on the phone under them): the next
+            // meeting starts unnamed and unfiled.
+            meetingTitle = ""
+            meetingFolder = nil
+        }
 
         let queued: MeetingUploader.Queued
         do {

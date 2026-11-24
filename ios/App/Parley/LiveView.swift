@@ -91,14 +91,11 @@ struct LiveView: View {
                 ToolbarItem(placement: .principal) {
                     Text(verbatim: "").accessibilityHidden(true)
                 }
-                if !showsMeeting {
-                    ToolbarItem(placement: .topBarTrailing) { copyButton }
-                }
             }
             // During a meeting the header row is the top of the screen, as the
             // title bar is the top of the desktop's meeting window; an empty
             // navigation bar above it would only push the transcript down.
-            .toolbar(showsMeeting ? .hidden : .automatic, for: .navigationBar)
+            .toolbar(.hidden, for: .navigationBar)
             // `parley://record`, from the lock screen. `.onAppear` covers the
             // cold launch, where the note was left before this view existed;
             // `.onReceive` covers a warm one, where it already does.
@@ -201,8 +198,26 @@ struct LiveView: View {
     /// what is left to say about it, and the record button.
     private var idleScreen: some View {
         VStack(spacing: 0) {
-            transcript(inPanel: false)
-            // Above the controls, not in the transcript: it is about the
+            // Before a meeting, the heading is the next one's: name it and
+            // pick its folder now, and the recording starts under them. With
+            // the last meeting's transcript still on screen (and its filing
+            // card under it) the heading would read as that meeting's, so the
+            // page keeps only the copy button for it.
+            if recorder.segments.isEmpty {
+                meetingHeading
+            } else {
+                HStack {
+                    Spacer()
+                    copyButton
+                        .font(.parley.body)
+                        .tint(Color(.label).opacity(0.8))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .padding(.horizontal, 8)
+            }
+            tabbedPanel
+            // Above the dock, not in the transcript: it is about the
             // recording that just ended, and it must not scroll away with
             // the words.
             if let micPrompt {
@@ -223,8 +238,7 @@ struct LiveView: View {
             if dictation.window.isOpen() {
                 micWindowBar
             }
-            Divider()
-            idleControls
+            idleDock
         }
     }
 
@@ -798,7 +812,7 @@ struct LiveView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
                     if recorder.segments.isEmpty {
-                        if inPanel { listeningState } else { emptyState }
+                        if recorder.isInMeeting { listeningState } else { emptyState }
                     }
                     ForEach(recorder.segments, id: \.id) { seg in
                         SegmentRow(segment: seg, isCurrent: seg.id == currentSpeakingID)
@@ -1076,19 +1090,21 @@ struct LiveView: View {
     /// Everything below the transcript between meetings, top to bottom: how
     /// long (nothing yet), whether it hears anything (nothing yet), what
     /// happened to the last one, and the button.
-    private var idleControls: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 8) {
-                Text(verbatim: "0:00")
-                    .font(.parley.displayNumber)
-                    .foregroundStyle(Color(.tertiaryLabel))
-                    .accessibilityHidden(true)
-                // The sentence is gone but the warning it carried is not.
-                if recorder.status == nil {
-                    healthBadge
-                }
+    /// The meeting's dock before the meeting: the same three lines in the
+    /// same places — clock and microphone, the waveform, the actions — so
+    /// pressing record changes what is in the dock, not where anything is.
+    /// The clock reads 0:00 behind a still grey dot and the waveform lies
+    /// flat; the actions are one button, Start recording.
+    private var idleDock: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                idleClockPill
+                Spacer(minLength: 8)
+                micChip
             }
             WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: false)
+                .frame(height: 30)
+                .accessibilityHidden(true)
             if let status = recorder.status {
                 statusLine(status)
             }
@@ -1097,15 +1113,35 @@ struct LiveView: View {
             if recorder.micDenied {
                 openSettingsControl
             }
-            recordControl
             if !app.hasAccount {
                 Text("Your session expired. Sign in with the button above and recording works again.")
                     .font(.parley.caption)
                     .foregroundStyle(Color(.secondaryLabel))
                     .multilineTextAlignment(.center)
             }
+            recordControl
         }
-        .padding(20)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .overlay(alignment: .top) { hairline }
+    }
+
+    /// The clock pill at rest: a still grey dot and 0:00, where the running
+    /// meeting's red dot and time will be.
+    private var idleClockPill: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(Color(.tertiaryLabel))
+            Text(verbatim: "0:00")
+                .font(.parley.clock)
+                .foregroundStyle(Color(.secondaryLabel))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color(.tertiarySystemFill)))
+        .accessibilityHidden(true)
     }
 
     /// How long this has been running, in ink. `Text(_:style:.timer)` rather
@@ -1140,17 +1176,27 @@ struct LiveView: View {
     /// uploading, where there is no action left to take.
     private var recordControl: some View {
         Button(action: toggle) {
-            ZStack {
-                Circle()
-                    .fill(Theme.primary)
-                    .frame(width: 64, height: 64)
+            HStack(spacing: 8) {
                 inner
+                Text(recordLabel)
+                    .font(.parley.subheadlineEmphasized)
             }
-            .contentShape(Circle())
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Theme.primary))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .opacity(recorder.isBusy ? 0.6 : 1)
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var recordLabel: LocalizedStringKey {
+        if recorder.isBusy { return "Wrapping up…" }
+        return app.hasAccount ? "Start recording" : "Sign in again to record"
     }
 
     /// White in both appearances, on purpose: the disc under it is the signal
@@ -1160,18 +1206,18 @@ struct LiveView: View {
     private var inner: some View {
         if recorder.isBusy {
             ProgressView()
-                .controlSize(.regular)
+                .controlSize(.small)
                 .tint(.white)
         } else if app.hasAccount {
             Circle()
                 .fill(.white)
-                .frame(width: 22, height: 22)
+                .frame(width: 10, height: 10)
         } else {
             // Signed out, the press opens sign-in rather than the microphone, so
             // the glyph says so — the sentence under the control carries the
             // rest.
             Image(systemName: "person.crop.circle")
-                .font(.system(size: 26, weight: .regular))
+                .font(.system(size: 15, weight: .regular))
                 .foregroundStyle(.white)
         }
     }
