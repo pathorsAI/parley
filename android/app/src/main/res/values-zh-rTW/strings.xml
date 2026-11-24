@@ -193,6 +193,14 @@
     <string name="import_phase_saved">已儲存</string>
     <string name="import_transcript_in_background">轉錄在中途停止了。錄音已儲存，逐字稿會在背景自動補齊。</string>
     <string name="import_queued_quota">額度已用完。錄音已安全保留在手機上，額度恢復後會自動同步。</string>
+    <string name="import_split_title">這個檔案比較長，會分成 %1$d 段上傳</string>
+    <string name="import_split_body">長度 %1$s，雲端轉錄一次最多 6 小時。Parley 會把它平均分成 %2$d 段，每段約 %3$s，各存成一筆錄音：「%4$s」、「%5$s」…</string>
+    <string name="import_split_confirm">分成 %1$d 段上傳</string>
+    <string name="import_part_progress">第 %1$d/%2$d 段</string>
+    <string name="import_part_failed">第 %1$d/%2$d 段失敗：%3$s</string>
+    <string name="duration_hours_minutes">%1$d\u00A0小時\u00A0%2$d\u00A0分</string>
+    <string name="duration_hours">%1$d\u00A0小時</string>
+    <string name="duration_minutes">%1$d\u00A0分</string>
 
     <!-- Recording detail -->
     <string name="detail_title">錄音</string>

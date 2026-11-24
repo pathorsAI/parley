@@ -31,6 +31,8 @@ import com.pathors.parley.kit.ParleyClientHeader
 import com.pathors.parley.library.SaveLocationStore
 import com.pathors.parley.ime.VoiceTypingSettings
 import com.pathors.parley.meeting.ImportSession
+import com.pathors.parley.meeting.importPartTitle
+import com.pathors.parley.kit.ImportSplitPlan
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.MeetingSession
 import com.pathors.parley.meeting.MeetingState
@@ -644,8 +646,12 @@ class AppContainer(private val app: Application) {
             hintTerms = lexicon::recognitionTerms,
         )
 
-    /** Start importing [uri], replacing (and cancelling) any previous import. */
-    fun startImport(uri: Uri, title: String): ImportSession {
+    /**
+     * Start importing [uri], replacing (and cancelling) any previous import.
+     * With [split], the file is imported as that many parts, each its own
+     * recording titled `title（k/n）` / `title (k/n)`.
+     */
+    fun startImport(uri: Uri, title: String, split: ImportSplitPlan? = null): ImportSession {
         _activeImport.value?.cancel()
         _importNotice.value = null
         val session = ImportSession(
@@ -658,6 +664,8 @@ class AppContainer(private val app: Application) {
             defaultDestination = saveLocation::current,
             runFilingPass = ::suggestFilingInBackground,
             hintTerms = lexicon::recognitionTerms,
+            split = split,
+            partTitle = { part -> importPartTitle(app, title, part.index, part.count) },
         )
         _activeImport.value = session
         session.start()

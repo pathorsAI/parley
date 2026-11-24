@@ -40,6 +40,22 @@ data class AudioSourceInfo(
         get() = if (durationUs < 0) -1 else durationUs * Pcm.BYTES_PER_SECOND / 1_000_000L
 }
 
+/**
+ * A time range of the source to decode: `[startUs, endUs)`, or from [startUs]
+ * to the end of the stream when [endUs] is null.
+ *
+ * What a split import decodes for one part. The output clock is the source's:
+ * the first chunk is the audio at [startUs], and the decode stops once
+ * `endUs - startUs` of audio has come out, so memory stays bounded however long
+ * the file is.
+ */
+data class DecodeRange(val startUs: Long, val endUs: Long? = null) {
+    init {
+        require(startUs >= 0) { "startUs must not be negative (got $startUs)" }
+        require(endUs == null || endUs > startUs) { "empty range $startUs..$endUs" }
+    }
+}
+
 /** Progress-carrying events from [AudioFileDecoder.decodeWithProgress]. */
 sealed interface DecodeEvent {
     /** Always the first event: what we are about to decode. */
@@ -166,12 +182,22 @@ object AudioFileDecoder {
         if (event is DecodeEvent.Chunk) emit(event.pcm)
     }
 
-    /** As [decode], but also reporting the source info and decode progress. */
+    /**
+     * As [decode], but also reporting the source info and decode progress.
+     *
+     * With a [range], only that part of the file is decoded: the extractor
+     * seeks to the sync sample at or before its start, the decoded audio before
+     * the start is dropped, and the decode stops at its end. Every event then
+     * speaks for the range, not the file — [DecodeEvent.Started] carries the
+     * range's duration, and progress and the decoded duration are within it.
+     */
     fun decodeWithProgress(
         context: Context,
         uri: Uri,
         quality: Resampler.Quality = Resampler.Quality.BALANCED,
-    ): Flow<DecodeEvent> = flow { decodeInto(this, context, uri, quality) }.flowOn(Dispatchers.IO)
+        range: DecodeRange? = null,
+    ): Flow<DecodeEvent> =
+        flow { decodeInto(this, context, uri, quality, range) }.flowOn(Dispatchers.IO)
 
     // ---------------------------------------------------------------- internals
 
@@ -191,6 +217,7 @@ object AudioFileDecoder {
         context: Context,
         uri: Uri,
         quality: Resampler.Quality,
+        range: DecodeRange?,
     ) {
         val extractor = MediaExtractor()
         var codec: MediaCodec? = null
@@ -198,11 +225,18 @@ object AudioFileDecoder {
             openSource(extractor, context, uri)
             val track = selectAudioTrack(extractor, uri)
             extractor.selectTrack(track.index)
-            val info = describe(context, uri, track.format, track.mime)
+            val source = describe(context, uri, track.format, track.mime)
+            val window = RangeWindow.of(range, source.durationUs, seekTo(extractor, range))
+            val info = source.copy(durationUs = window.durationUs)
             out.emit(DecodeEvent.Started(info))
 
             val sink = Pcm16Sink(info.sampleRate, info.channelCount, quality, Pcm.CHUNK_BYTES)
-            val emitter = ChunkEmitter(out, info.estimatedPcmBytes)
+            val emitter = ChunkEmitter(
+                out,
+                info.estimatedPcmBytes,
+                skipBytes = window.skipBytes,
+                limitBytes = window.limitBytes,
+            )
 
             if (track.mime == MIME_RAW) {
                 decodeRawTrack(extractor, track.format, sink, emitter)
@@ -211,15 +245,18 @@ object AudioFileDecoder {
                 decodeWithCodec(extractor, codec, sink, emitter)
             }
 
-            val tail = ArrayList<ByteArray>(2)
-            sink.finish(tail)
-            emitter.emitAll(tail)
+            if (!emitter.full) {
+                val tail = ArrayList<ByteArray>(2)
+                sink.finish(tail)
+                emitter.emitAll(tail)
+            }
+            // What was emitted, not what the sink produced: with a range they
+            // differ by the audio dropped before the start and after the end.
             out.emit(
                 DecodeEvent.Completed(
-                    totalBytes = sink.totalOutputBytes,
+                    totalBytes = emitter.decoded,
                     durationUs = info.durationUs,
-                    decodedDurationUs =
-                        sink.totalOutputBytes * 1_000_000L / Pcm.BYTES_PER_SECOND,
+                    decodedDurationUs = emitter.decoded * 1_000_000L / Pcm.BYTES_PER_SECOND,
                 ),
             )
         } catch (e: AudioDecodeException) {
@@ -237,17 +274,56 @@ object AudioFileDecoder {
         }
     }
 
+    /**
+     * Seek to the sync sample at or before the range's start.
+     *
+     * @return the source time decoding resumes from, in microseconds: the
+     *   output's first byte is the audio at this time. 0 without a range.
+     */
+    private fun seekTo(extractor: MediaExtractor, range: DecodeRange?): Long {
+        if (range == null || range.startUs == 0L) return 0L
+        extractor.seekTo(range.startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        val landed = extractor.sampleTime
+        if (landed in 0..range.startUs) return landed
+        // A container that cannot seek (or landed past the start): decode from
+        // the top and drop everything before the start. Slower, still exact.
+        Log.w(TAG, "seek to ${range.startUs} us landed at $landed us; decoding from the start")
+        extractor.seekTo(0L, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+        return 0L
+    }
+
     /** Accumulates the running byte count and pushes chunks through the flow. */
     private class ChunkEmitter(
         private val out: FlowCollector<DecodeEvent>,
         private val estimatedTotalBytes: Long,
+        /** Output bytes to drop first: the audio between the seek point and the range's start. */
+        skipBytes: Long = 0L,
+        /** Output bytes to emit at most: the range's length. */
+        private val limitBytes: Long = Long.MAX_VALUE,
     ) {
-        private var decoded = 0L
+        private var toSkip = skipBytes
+
+        /** Bytes emitted so far. */
+        var decoded = 0L
+            private set
+
+        /** The range is fully emitted; the decode loops stop on this. */
+        val full: Boolean get() = decoded >= limitBytes
 
         suspend fun emitAll(chunks: List<ByteArray>) {
             for (chunk in chunks) {
-                decoded += chunk.size
-                out.emit(DecodeEvent.Chunk(chunk, decoded, estimatedTotalBytes))
+                if (full) return
+                var from = 0
+                if (toSkip > 0) {
+                    val n = minOf(toSkip, chunk.size.toLong()).toInt()
+                    toSkip -= n
+                    from = n
+                }
+                val to = from + minOf((chunk.size - from).toLong(), limitBytes - decoded).toInt()
+                if (to <= from) continue
+                val piece = if (from == 0 && to == chunk.size) chunk else chunk.copyOfRange(from, to)
+                decoded += piece.size
+                out.emit(DecodeEvent.Chunk(piece, decoded, estimatedTotalBytes))
             }
         }
     }
@@ -344,7 +420,7 @@ object AudioFileDecoder {
         val loop = CodecLoop()
         var stall = 0
 
-        while (!loop.sawOutputEos) {
+        while (!loop.sawOutputEos && !emitter.full) {
             currentCoroutineContext().ensureActive()
             var progressed = false
 
@@ -490,7 +566,7 @@ object AudioFileDecoder {
         val encoding = format.intOr(MediaFormat.KEY_PCM_ENCODING, Pcm.ENCODING_PCM_16BIT)
         val buffer = ByteBuffer.allocate(RAW_READ_BYTES)
         val ready = ArrayList<ByteArray>(4)
-        while (true) {
+        while (!emitter.full) {
             currentCoroutineContext().ensureActive()
             buffer.clear()
             val size = extractor.readSampleData(buffer, 0)
@@ -646,6 +722,46 @@ internal class Pcm16Sink(
                 totalOutputBytes += chunkBytes
                 carryLen = 0
             }
+        }
+    }
+}
+
+/**
+ * Where a [DecodeRange] falls in the decoder's output, in 16 kHz mono s16le
+ * bytes. Pure arithmetic, so it is tested on the JVM.
+ */
+internal data class RangeWindow(
+    /** Output bytes between the seek point and the range's start, dropped. */
+    val skipBytes: Long,
+    /** Output bytes the range is long; [Long.MAX_VALUE] when it runs to the end. */
+    val limitBytes: Long,
+    /** The range's duration, or -1 when it runs to the end of a file of unknown length. */
+    val durationUs: Long,
+) {
+    companion object {
+        /** The whole file: nothing skipped, no limit. */
+        private fun whole(sourceDurationUs: Long) = RangeWindow(0L, Long.MAX_VALUE, sourceDurationUs)
+
+        /**
+         * @param seekedToUs where decoding actually resumes, at or before the
+         *   range's start ([AudioFileDecoder] seeks to the previous sync sample).
+         */
+        fun of(range: DecodeRange?, sourceDurationUs: Long, seekedToUs: Long): RangeWindow {
+            if (range == null) return whole(sourceDurationUs)
+            val skip = bytesFor(range.startUs - seekedToUs.coerceIn(0L, range.startUs))
+            val end = range.endUs
+            return if (end != null) {
+                RangeWindow(skip, bytesFor(end - range.startUs), end - range.startUs)
+            } else {
+                val remaining = if (sourceDurationUs < 0) -1L else (sourceDurationUs - range.startUs).coerceAtLeast(0L)
+                RangeWindow(skip, Long.MAX_VALUE, remaining)
+            }
+        }
+
+        /** Whole samples only, so a cut never splits one in half. */
+        fun bytesFor(us: Long): Long {
+            val samples = us * Pcm.SAMPLE_RATE / 1_000_000L
+            return samples * Pcm.BYTES_PER_SAMPLE
         }
     }
 }

@@ -582,6 +582,43 @@ class TranscriptBackfillerTest {
         assertTrue(result.failure is IOException)
     }
 
+    /**
+     * A file the batch route refuses as too large (413) is refused the same way
+     * on every pass. Treated like any other failure it stopped the pass at the
+     * head of the oldest-first queue, so every backfill behind it waited
+     * forever. It is dropped instead, and the pass carries on.
+     */
+    @Test
+    fun `a 413 drops that backfill and the ones behind it still run`() = runBlocking {
+        val queue = queue("too-large")
+        queue.enqueueMoving(BackfillRequest(pending = pending("rec-big")), audio("big.ogg"))
+        queue.enqueueMoving(BackfillRequest(pending = pending("rec-ok")), audio("ok.ogg"))
+
+        val service = FakeBatch(fullTranscript(), refuseAsTooLarge = setOf("rec-big"))
+        val result = backfiller(queue, ledger("too-large-l"), service).drain()
+
+        assertNull("a 413 does not stop the pass", result.failure)
+        assertEquals("the one behind it ran", 1, result.repaired)
+        assertEquals(1, result.discarded)
+        assertEquals(0, result.remaining)
+        assertFalse("nothing is left to block the queue", queue.has("rec-big"))
+        assertFalse(queue.audioFile("rec-big").exists())
+
+        // And the next pass has nothing left to trip over.
+        val again = backfiller(queue, ledger("too-large-l2"), service).drain()
+        assertNull(again.failure)
+        assertEquals(0, again.remaining)
+    }
+
+    @Test
+    fun `only a 413 counts as a final refusal`() {
+        assertTrue(TranscriptBackfiller.isFinalRefusal(CloudException(413, "too large")))
+        for (status in listOf(0, 400, 401, 402, 404, 429, 500, 502)) {
+            assertFalse("$status", TranscriptBackfiller.isFinalRefusal(CloudException(status, "x")))
+        }
+        assertFalse(TranscriptBackfiller.isFinalRefusal(IOException("offline")))
+    }
+
     // ── coverage, the thing that queues these in the first place ─────────────
 
     @Test
@@ -761,6 +798,8 @@ class TranscriptBackfillerTest {
 private class FakeBatch(
     private val transcript: BatchTranscriptResponse,
     private val failStart: Boolean = false,
+    /** Recording ids whose upload the cloud answers 413. */
+    private val refuseAsTooLarge: Set<String> = emptySet(),
 ) : BatchTranscriptionService {
 
     override suspend fun startBatchJob(
@@ -770,6 +809,9 @@ private class FakeBatch(
         terms: List<String>,
     ): String {
         if (failStart) throw IOException("no route to host")
+        if (audio.nameWithoutExtension in refuseAsTooLarge) {
+            throw CloudException(413, "payload too large", code = "payload_too_large")
+        }
         startedWithTerms = terms
         return "job-1"
     }

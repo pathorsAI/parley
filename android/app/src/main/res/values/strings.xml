@@ -195,6 +195,17 @@
     <string name="import_phase_saved">Saved</string>
     <string name="import_transcript_in_background">Transcription stopped partway through. The recording is saved, and the transcript will be completed in the background.</string>
     <string name="import_queued_quota">You\'re out of quota. The recording is safe on this phone and will sync once the quota resets.</string>
+    <!-- A picked file longer than one hosted transcription (5 h 50 min) is imported in equal parts. -->
+    <string name="import_split_title">This file is long, so it will be uploaded in %1$d parts</string>
+    <!-- 1: the file's length, 2: part count, 3: each part's length, 4/5: the first two part titles -->
+    <string name="import_split_body">It\'s %1$s, and cloud transcription takes up to 6 hours at a time. Parley will split it into %2$d equal parts of about %3$s each and save each as its own recording: “%4$s”, “%5$s”…</string>
+    <string name="import_split_confirm">Upload in %1$d parts</string>
+    <string name="import_part_progress">Part %1$d of %2$d</string>
+    <!-- 3: the failure message -->
+    <string name="import_part_failed">Part %1$d of %2$d failed: %3$s</string>
+    <string name="duration_hours_minutes">%1$d\u00A0h\u00A0%2$d\u00A0min</string>
+    <string name="duration_hours">%1$d\u00A0h</string>
+    <string name="duration_minutes">%1$d\u00A0min</string>
 
     <!-- Recording detail -->
     <string name="detail_title">Recording</string>
