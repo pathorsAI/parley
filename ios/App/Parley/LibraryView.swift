@@ -683,7 +683,7 @@ struct LibraryView: View {
                 folderFilter = nil
                 notice = nil
             } label: {
-                Label("Personal", systemImage: scope == nil ? "checkmark" : "folder")
+                Label("Personal", systemImage: scope == nil ? "checkmark" : "person")
             }
             ForEach(app.orgs) { org in
                 Button {
@@ -698,7 +698,8 @@ struct LibraryView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: scope == nil ? "folder" : "person.2")
+                // One person for the personal library, people for an organization's.
+                Image(systemName: scope == nil ? "person" : "person.2")
                 Text(verbatim: scopeName)
                     .font(.parley.subheadlineEmphasized)
             }
