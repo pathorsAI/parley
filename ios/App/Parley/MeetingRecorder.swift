@@ -133,6 +133,26 @@ final class MeetingRecorder: ObservableObject {
     /// honest moment to offer one is here. See `FilingSuggestionModel`.
     @Published private(set) var settled: Settled?
 
+    /// The meeting's name, as typed on the live screen while it records. Blank
+    /// lands the recording under its clock name, as before. Written by the
+    /// view and read once, by `upload`, so the recording is saved under it —
+    /// the same as the desktop, whose meeting window saves `meetingTitle`.
+    @Published var meetingTitle = ""
+    /// Where the user said this meeting goes, picked on the live screen. Nil
+    /// = the app's default destination (`AppState.defaultSave`). Saved
+    /// straight into, like the title: a choice that waited for the filing
+    /// card after stop would be lost to a locked phone or a failed pass.
+    @Published var meetingFolder: ChosenFolder?
+    /// When this meeting started, for the date on the live screen's heading.
+    @Published private(set) var startedAt: Date?
+
+    /// A folder picked for the meeting in progress, with the label the picker
+    /// drew it under (the chip shows that, not a lookup).
+    struct ChosenFolder: Equatable {
+        let destination: SaveDestination
+        let label: String
+    }
+
     /// How many times this meeting's microphone had to be rebuilt and came
     /// back — an interruption survived, a route change, a media-server reset.
     ///
@@ -165,6 +185,13 @@ final class MeetingRecorder: ObservableObject {
         let title: String
         let folderId: String?
         let segments: [TranscriptSegment]
+        /// The user named the meeting, or picked its folder, while it was
+        /// recording: the filing card does not offer that half again.
+        var named = false
+        var filed = false
+        /// The meeting went to an organization (a shared copy), which the
+        /// phone can neither rename nor re-file — no card at all.
+        var sharedToOrg = false
     }
 
     /// The live transcript's side of the meeting. None of these ends the
@@ -247,7 +274,11 @@ final class MeetingRecorder: ObservableObject {
         // waits on it (see `Haptics`).
         Haptics.prepareForRecording()
         status = String(localized: "Starting…")
-        clock = RecordingClock(startedAt: Date())
+        let now = Date()
+        clock = RecordingClock(startedAt: now)
+        startedAt = now
+        meetingTitle = ""
+        meetingFolder = nil
         segments = []
         // Whatever the last meeting left on screen belongs to the last meeting.
         settled = nil
@@ -475,6 +506,9 @@ final class MeetingRecorder: ObservableObject {
         segments = []
         settled = nil
         clock = nil
+        startedAt = nil
+        meetingTitle = ""
+        meetingFolder = nil
         status = nil
         phase = .idle
     }
@@ -833,7 +867,9 @@ final class MeetingRecorder: ObservableObject {
         do {
             guard
                 let filed = try await uploader.finishAndQueue(
-                    segments: segments, defaultSave: app.defaultSave)
+                    segments: segments,
+                    defaultSave: meetingFolder?.destination ?? app.defaultSave,
+                    title: meetingTitle, filedByUser: meetingFolder != nil)
             else {
                 status = String(localized: "That recording was too short to keep")
                 return
@@ -877,7 +913,10 @@ final class MeetingRecorder: ObservableObject {
                 ?? String(localized: "Synced to the cloud")
             settled = Settled(
                 id: outcome.recordingId, title: outcome.title,
-                folderId: outcome.folderId, segments: segments)
+                folderId: outcome.folderId, segments: segments,
+                named: !meetingTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                filed: meetingFolder != nil,
+                sharedToOrg: outcome.sharedToOrgName != nil)
         } catch let e as CloudError where e.status == 402 {
             status = String(
                 localized:
@@ -922,16 +961,30 @@ final class MeetingRecorder: ObservableObject {
         }
 
         /// ScreenshotDemo: put the screen in the state worth capturing — a
-        /// meeting already in progress — with no microphone and no network.
-        func seedDemo(segments: [TranscriptSegment], status: String) {
+        /// meeting already in progress, named and filed on the live screen —
+        /// with no microphone and no network. `paused` seeds the paused state.
+        func seedDemo(
+            segments: [TranscriptSegment], status: String, paused: Bool = false,
+            title: String = "", folder: ChosenFolder? = nil
+        ) {
             self.segments = segments
             self.status = status
-            phase = .recording
             transcription = .live
+            meetingTitle = title
+            meetingFolder = folder
             // 18:42 on the clock, matching the featured recording's duration, so
             // the captured frame shows a meeting well under way rather than one
             // that started the instant the screenshot was taken.
-            clock = RecordingClock(startedAt: Date(timeIntervalSinceNow: -1_122))
+            let started = Date(timeIntervalSinceNow: -1_122)
+            startedAt = started
+            clock = RecordingClock(startedAt: started)
+            if paused {
+                phase = .paused
+                clock?.pause(at: Date())
+                micLevel = 0
+                return
+            }
+            phase = .recording
             // A simulator has no microphone, so the waveform would sit on its
             // silence line. Feed it a fixed speech-shaped level pattern at the
             // real chunk rate instead: bursts and pauses, the same every run, so

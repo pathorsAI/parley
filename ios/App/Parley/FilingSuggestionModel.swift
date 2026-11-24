@@ -244,7 +244,11 @@ final class FilingSuggestionModel: ObservableObject {
         // renamed nor re-filed, so the suggestion would be spent on something
         // nobody can act on. The desktop skips the same case for the same
         // reason.
-        guard !app.defaultSave.isOrg else { return }
+        guard !settled.sharedToOrg else { return }
+        // Named and filed on the live screen while it recorded: the question
+        // this card asks has already been answered, and the recording was
+        // saved that way.
+        guard !(settled.named && settled.filed) else { return }
 
         // Only what was actually said. A recording that produced no final
         // transcript has nothing for the pass to read, and asking anyway spends
@@ -263,7 +267,13 @@ final class FilingSuggestionModel: ObservableObject {
         // answer back into that meta before returning — so the suggestion
         // survives this screen, and the desktop finds the pass already
         // spent instead of running its own.
-        async let proposal = FilingPass.shared.run(id: settled.id, cloud: app.cloud)
+        //
+        // A half the user answered while recording — the name they typed,
+        // the folder they picked — is left out, so the card opens on their
+        // own name (no "Was:") or offers no folders, and only asks what is
+        // still open.
+        async let proposal = FilingPass.shared.run(
+            id: settled.id, cloud: app.cloud, named: settled.named, filed: settled.filed)
         // Personal folders only: the chips move the recording, and an org
         // folder is a shared copy instead. The picker adds the organizations'
         // folders under their own headings. Not worth losing the card over

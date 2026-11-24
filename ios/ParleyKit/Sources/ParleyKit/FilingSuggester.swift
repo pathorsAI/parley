@@ -26,6 +26,16 @@ public struct FilingSuggestion: Equatable, Sendable {
         self.title = title
         self.folders = folders
     }
+
+    /// What is still worth offering once the user has answered part of the
+    /// question themselves — on the phone, by naming the meeting or picking
+    /// its folder while it was still recording. A name they typed is never
+    /// proposed over, and a folder they chose is never second-guessed; nil
+    /// when nothing is left.
+    public func answering(named: Bool, filed: Bool) -> FilingSuggestion? {
+        let kept = FilingSuggestion(title: named ? "" : title, folders: filed ? [] : folders)
+        return kept.title.isEmpty && kept.folders.isEmpty ? nil : kept
+    }
 }
 
 /// The pass that runs once a recording has been transcribed: read the
