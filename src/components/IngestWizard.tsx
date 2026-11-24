@@ -5,7 +5,19 @@ import { useStore, speakerKey, formatClock, hasSpokenSegment, type ReplayTrim } 
 import { speakerDotClass } from "../lib/speakerColors";
 import { hasProviderKey } from "../lib/ai/settings";
 import { runAnalysis } from "../lib/analysis/engine";
-import { saveUploadToHistory } from "../lib/history/history";
+import { loadHistoryEntry, saveUploadToHistory } from "../lib/history/history";
+import { STT_BY_ID } from "../lib/transcription/providers";
+import {
+  decideImport,
+  formatLongDuration,
+  partTitle,
+  wizardGate,
+  type ImportDecision,
+  type SplitPlan,
+} from "../lib/replay/split";
+import { fileNameOf } from "../lib/replay/ingest";
+import * as ipc from "../lib/ipc/commands";
+import { log } from "../lib/log";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { DestinationField } from "./DestinationSheet";
@@ -80,6 +92,45 @@ export function IngestWizard() {
   const [trimming, setTrimming] = useState(false);
   const startedRef = useRef<string | null>(null);
   const failedRef = useRef<"transcribing" | "diarizing" | "analyzing" | null>(null);
+  const ingestAudioPath = useStore((s) => s.ingestAudioPath);
+  const language = useStore((s) => s.settings.language);
+  // What the picked file's metadata says to do (null while probing), and
+  // whether the user agreed to the split it calls for.
+  const [decision, setDecision] = useState<ImportDecision | null>(null);
+  const [splitConfirmed, setSplitConfirmed] = useState(false);
+  const [splitProgress, setSplitProgress] = useState<{ k: number; n: number } | null>(null);
+  const [splitFailed, setSplitFailed] = useState(false);
+  const plan: SplitPlan | null = decision?.kind === "split" && splitConfirmed ? decision.plan : null;
+  const gate = wizardGate(decision, splitConfirmed);
+
+  // Probe the picked file BEFORE any heavy work: its duration decides whether
+  // hosted transcription needs it split, and an uncompressible file over the
+  // upload limit is refused here instead of after the upload starts.
+  useEffect(() => {
+    if (!open || !ingestAudioPath) return;
+    let alive = true;
+    setDecision(null);
+    setSplitConfirmed(false);
+    setSplitProgress(null);
+    setSplitFailed(false);
+    const { settings } = useStore.getState();
+    const hosted = STT_BY_ID[settings.transcriptionProvider]?.credential === "cloudSession";
+    ipc
+      .probeUploadAudio({ path: ingestAudioPath })
+      .catch((e: unknown) => {
+        log.warn("ingest: probe failed", { error: String(e) });
+        return null;
+      })
+      .then((probe) => {
+        if (!alive) return;
+        const next = decideImport(probe, hosted);
+        log.info("ingest: probed", { durationMs: probe?.durationMs ?? null, decision: next.kind });
+        setDecision(next);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [open, ingestAudioPath]);
 
   // Diarization staged progress (Rust `diarize://progress` events).
   useEffect(() => {
@@ -142,6 +193,10 @@ export function IngestWizard() {
   if (!open) return null;
 
   async function runTranscription() {
+    if (plan) {
+      await runSplitTranscription(plan);
+      return;
+    }
     setTxStage("decoding");
     try {
       const { settings, ingestAudioPath } = useStore.getState();
@@ -159,6 +214,65 @@ export function IngestWizard() {
     } catch (e) {
       failedRef.current = "transcribing";
       setStep("error", errMsg(e));
+    }
+  }
+
+  /**
+   * The split upload: compress the file into equal parts, then run each one
+   * through the per-file pipeline in turn — transcribe, then save it to history
+   * as 「name（k/n）」 in the destination chosen on the first step. Parts saved
+   * before a failure stay; the failure names its part and nothing is retried.
+   * The temp part files are deleted at the end, so the last saved part is
+   * reopened from history (its own copy of the audio) before they go.
+   */
+  async function runSplitTranscription(split: SplitPlan) {
+    const { settings, ingestAudioPath: source } = useStore.getState();
+    setSplitProgress(null);
+    setTxStage("splitting");
+    let parts: string[] = [];
+    let lastId: string | null = null;
+    let current = 0;
+    let failure: string | null = null;
+    let finished = false;
+    try {
+      if (!source) throw new Error("No recording selected");
+      parts = await ipc.splitUploadAudio({ path: source, parts: split.parts });
+      const n = parts.length;
+      const name = fileNameOf(source);
+      const { transcribeRecording } = await import("../lib/replay/ingest");
+      for (current = 1; current <= n; current++) {
+        // Closed (Cancel) mid-run: stop before the next part.
+        if (!useStore.getState().ingestWizardOpen) break;
+        setSplitProgress({ k: current, n });
+        setTxStage("decoding");
+        const session = await transcribeRecording(settings, parts[current - 1], {
+          onProgress: (p) => setTxStage(p.stage),
+        });
+        const part = { ...session, name: partTitle(name, current, n, settings.language) };
+        enterReplay(part);
+        lastId = (await saveUploadToHistory(part)) ?? lastId;
+      }
+      finished = current > n;
+    } catch (e) {
+      const n = parts.length || split.parts;
+      failure =
+        current >= 1
+          ? t("ingest.split.partFailed", { k: current, n, error: errMsg(e) })
+          : errMsg(e);
+      log.warn("ingest: split upload failed", { part: current, parts: n, error: errMsg(e) });
+    }
+    if (lastId) {
+      await loadHistoryEntry(lastId).catch((e: unknown) =>
+        log.warn("ingest: reopen last part failed", { error: String(e) }),
+      );
+    }
+    if (parts.length) await ipc.discardUploadParts({ paths: parts }).catch(() => {});
+    if (failure) {
+      failedRef.current = null;
+      setSplitFailed(true);
+      setStep("error", failure);
+    } else if (finished) {
+      close();
     }
   }
 
@@ -300,8 +414,36 @@ export function IngestWizard() {
         </div>
 
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-4">
-          {step === "count" && (
+          {step === "count" && gate === "refuse" && decision?.kind === "refuse" && (
+            <div className="flex items-start gap-2 rounded-md bg-danger px-3 py-2.5 text-[12px] text-danger-foreground">
+              <Mic className="mt-0.5 size-4 shrink-0" />
+              <span>{t(decision.key)}</span>
+            </div>
+          )}
+
+          {step === "count" && gate === "splitNotice" && decision?.kind === "split" && (
+            <div className="flex flex-col gap-1.5 rounded-md border px-3 py-2.5">
+              <span className="text-sm font-medium text-foreground">
+                {t("ingest.split.title", { n: decision.plan.parts })}
+              </span>
+              <p className="text-[12px] leading-relaxed text-muted-foreground">
+                {t("ingest.split.body", {
+                  n: decision.plan.parts,
+                  duration: formatLongDuration(decision.durationSeconds, language),
+                  partDuration: formatLongDuration(decision.plan.partSeconds, language),
+                  name: ingestAudioPath ? fileNameOf(ingestAudioPath) : "",
+                })}
+              </p>
+            </div>
+          )}
+
+          {step === "count" && (gate === "ready" || gate === "probing") && (
             <>
+              {plan && (
+                <p className="text-[12px] font-medium text-foreground">
+                  {t("ingest.split.title", { n: plan.parts })}
+                </p>
+              )}
               <p className="text-[12px] leading-relaxed text-muted-foreground">{t("ingest.countIntro")}</p>
               {/* Whose call is this? Asked on the way IN, because the import
                   doors that skipped the question are precisely the ones that
@@ -320,36 +462,40 @@ export function IngestWizard() {
                   onChange={pickDestination}
                 />
               </div>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] text-muted-foreground">{t("speakers.voiceCount")}</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {COUNT_OPTIONS.map((opt) => {
-                    const selected = numSpeakers === opt;
-                    return (
-                      <button
-                        key={opt ?? "auto"}
-                        type="button"
-                        onClick={() => setNumSpeakers(opt)}
-                        className={`h-8 min-w-9 rounded-md border px-3 text-xs transition-colors ${
-                          selected
-                            ? "border-primary bg-primary/10 text-foreground"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        {opt ?? t("speakers.voiceAuto")}
-                      </button>
-                    );
-                  })}
+              {/* A split upload goes straight from transcription to history,
+                  part by part, so the voice-diarization count has no use. */}
+              {!plan && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="text-[11px] text-muted-foreground">{t("speakers.voiceCount")}</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {COUNT_OPTIONS.map((opt) => {
+                      const selected = numSpeakers === opt;
+                      return (
+                        <button
+                          key={opt ?? "auto"}
+                          type="button"
+                          onClick={() => setNumSpeakers(opt)}
+                          className={`h-8 min-w-9 rounded-md border px-3 text-xs transition-colors ${
+                            selected
+                              ? "border-primary bg-primary/10 text-foreground"
+                              : "text-muted-foreground hover:text-foreground"
+                          }`}
+                        >
+                          {opt ?? t("speakers.voiceAuto")}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
+              )}
             </>
           )}
 
           {step === "transcribing" && (
             <Stage
               icon={<Loader2 className="size-4 animate-spin text-primary" />}
-              label={t(`replay.stage.${txStage ?? "decoding"}` as never)}
-              sub={t("ingest.transcribingSub")}
+              label={transcribingLabel(txStage, splitProgress, t)}
+              sub={t(txStage === "splitting" ? "ingest.split.preparingSub" : "ingest.transcribingSub")}
             />
           )}
 
@@ -561,7 +707,8 @@ export function IngestWizard() {
           {step === "error" && (
             <div className="flex items-start gap-2 rounded-md bg-danger px-3 py-2.5 text-[12px] text-danger-foreground">
               <Mic className="mt-0.5 size-4 shrink-0" />
-              <span>{t("ingest.failed", { error: wizardError ?? "—" })}</span>
+              {/* A split failure already says which part failed. */}
+              <span>{splitFailed ? (wizardError ?? "—") : t("ingest.failed", { error: wizardError ?? "—" })}</span>
             </div>
           )}
         </div>
@@ -574,8 +721,19 @@ export function IngestWizard() {
           >
             {t("ingest.cancel")}
           </button>
-          {step === "count" && (
-            <Button size="sm" className="h-8 gap-1.5" onClick={() => setStep("transcribing")}>
+          {step === "count" && gate === "splitNotice" && decision?.kind === "split" && (
+            <Button size="sm" className="h-8 gap-1.5" onClick={() => setSplitConfirmed(true)}>
+              <Check className="size-3.5" />
+              {t("ingest.split.confirm", { n: decision.plan.parts })}
+            </Button>
+          )}
+          {step === "count" && (gate === "ready" || gate === "probing") && (
+            <Button
+              size="sm"
+              className="h-8 gap-1.5"
+              disabled={gate === "probing"}
+              onClick={() => setStep("transcribing")}
+            >
               <Check className="size-3.5" />
               {t("ingest.start")}
             </Button>
@@ -603,7 +761,7 @@ export function IngestWizard() {
                 {t("ingest.skipAnalysis")}
               </Button>
             ))}
-          {step === "error" && (
+          {step === "error" && !splitFailed && (
             <Button size="sm" className="h-8" onClick={retry}>
               {t("ingest.retry")}
             </Button>
@@ -659,6 +817,18 @@ function StepDots({ step }: Readonly<{ step: string }>) {
       ))}
     </div>
   );
+}
+
+/** The transcribing step's label: the stage, prefixed with 「第 k/n 段」 while
+ *  a split upload works through its parts. */
+function transcribingLabel(
+  stage: string | null,
+  part: { k: number; n: number } | null,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  if (stage === "splitting") return t("ingest.split.preparing");
+  const label = t(`replay.stage.${stage ?? "decoding"}` as never);
+  return part ? `${t("ingest.split.part", { k: part.k, n: part.n })} · ${label}` : label;
 }
 
 /** Localized label for the current diarization stage. */

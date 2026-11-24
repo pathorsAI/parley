@@ -335,7 +335,7 @@ function reportStage(opts: IngestOptions, p: IngestProgress): void {
 }
 
 /** Last path component of an absolute file path (handles / and \\). */
-function fileNameOf(path: string): string {
+export function fileNameOf(path: string): string {
   const parts = path.split(/[\\/]/);
   return parts[parts.length - 1] || path;
 }
