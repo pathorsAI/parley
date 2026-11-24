@@ -44,6 +44,7 @@ ROUTES=(
   "onboarding-context:onboarding 6/7 — about you and terms"
   "onboarding-done:onboarding 7/7 — you're all set"
   "record:Record tab, a meeting in progress, named and filed"
+  "record-idle:Record tab before a meeting starts"
   "record-paused:the same meeting, paused"
   "settled:a meeting just finished, named live, its folder on offer"
   "adjust:the same, with the filing sheet open"

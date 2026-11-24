@@ -57,6 +57,8 @@
         @Published var focusKeyboardSection = false
         /// The record screen seeds a finished, uploaded recording with a filing
         /// suggestion on it instead of a meeting in progress.
+        /// The Record tab before any meeting, nothing seeded (`record-idle`).
+        @Published var showIdleRecord = false
         @Published var showSettledFiling = false
         /// The record screen's meeting in progress is seeded paused.
         var showPausedMeeting = false
@@ -191,6 +193,7 @@
             showTranscript = false
             focusKeyboardSection = false
             showSettledFiling = false
+            showIdleRecord = false
             showPausedMeeting = false
             openFilingAdjust = false
             wantsFilingAdjust = false
@@ -207,6 +210,10 @@
             holdsLitTurn = false
             switch route {
             case "record": tab = .record
+            case "record-idle":
+                // The Record tab before a meeting: nothing seeded.
+                tab = .record
+                showIdleRecord = true
             case "record-paused":
                 tab = .record
                 showPausedMeeting = true
@@ -744,7 +751,7 @@
         /// suggestion on it. One entry point so `LiveView` does not have to know
         /// the routes.
         static func seedRecordScreen(_ recorder: MeetingRecorder, filing: FilingSuggestionModel) {
-            guard servesFixtures else { return }
+            guard servesFixtures, !shared.showIdleRecord else { return }
             if shared.showSettledFiling {
                 seedSettled(recorder, filing: filing)
             } else {
