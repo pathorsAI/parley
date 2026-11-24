@@ -591,18 +591,18 @@ class TranscriptBackfillerTest {
     @Test
     fun `a 413 drops that backfill and the ones behind it still run`() = runBlocking {
         val queue = queue("too-large")
-        queue.enqueueMoving(BackfillRequest(pending = pending("rec-big")), audio("big.ogg"))
+        queue.enqueueMoving(BackfillRequest(pending = pending(BIG_ID)), audio("big.ogg"))
         queue.enqueueMoving(BackfillRequest(pending = pending("rec-ok")), audio("ok.ogg"))
 
-        val service = FakeBatch(fullTranscript(), refuseAsTooLarge = setOf("rec-big"))
+        val service = FakeBatch(fullTranscript(), refuseAsTooLarge = setOf(BIG_ID))
         val result = backfiller(queue, ledger("too-large-l"), service).drain()
 
         assertNull("a 413 does not stop the pass", result.failure)
         assertEquals("the one behind it ran", 1, result.repaired)
         assertEquals(1, result.discarded)
         assertEquals(0, result.remaining)
-        assertFalse("nothing is left to block the queue", queue.has("rec-big"))
-        assertFalse(queue.audioFile("rec-big").exists())
+        assertFalse("nothing is left to block the queue", queue.has(BIG_ID))
+        assertFalse(queue.audioFile(BIG_ID).exists())
 
         // And the next pass has nothing left to trip over.
         val again = backfiller(queue, ledger("too-large-l2"), service).drain()
@@ -849,3 +849,5 @@ private class RunningProbe : BatchTranscriptionService {
 
     override suspend fun deleteBatchJob(id: String) = Unit
 }
+
+private const val BIG_ID = "rec-big"

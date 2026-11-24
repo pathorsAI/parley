@@ -500,15 +500,12 @@ class ImportSession(
                     source = RecordingSource.UPLOAD,
                     destination = destination,
                 )
-            )
+            ) ?: return failNull(ImportFailure.UPLOAD_FAILED) // only LIVE captures are ever dropped for length
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             return failNull(ImportFailure.UPLOAD_FAILED, e.message)
         }
-        // Unreachable: only LIVE captures are ever dropped for length.
-        if (id == null) return failNull(ImportFailure.UPLOAD_FAILED)
-
         val result = runCatching { uploader.drain() }.getOrNull()
         // A refusal parks the recording on the phone; it is never dropped, so
         // this is a saved-but-not-uploaded outcome, not a failure — and

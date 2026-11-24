@@ -303,29 +303,13 @@ class TranscriptBackfiller(
                 discarded++
                 continue
             }
-            markAttempt(request)
-            _running.update { it + request.id }
-            try {
-                run(request, audio)
-                repaired++
-                _landed.update { it + 1 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                if (!isFinalRefusal(e)) {
-                    failure = e
+            when (val outcome = runOne(request, audio)) {
+                Outcome.Repaired -> repaired++
+                Outcome.Retired -> discarded++
+                is Outcome.Failed -> {
+                    failure = outcome.error
                     break
                 }
-                // The cloud will never take this file (413: past what hosted
-                // transcription accepts), so asking again on every pass only
-                // keeps the recordings queued behind it waiting forever. The
-                // recording itself is already in the cloud with the live
-                // transcript it has; only the repair is given up, the way a
-                // recording that vanished (404 on the re-read) is.
-                retireRefused(request, audio)
-                discarded++
-            } finally {
-                _running.update { it - request.id }
             }
         }
 
@@ -335,6 +319,37 @@ class TranscriptBackfiller(
             discarded = discarded,
             failure = failure,
         )
+    }
+
+    private sealed interface Outcome {
+        data object Repaired : Outcome
+        data object Retired : Outcome
+        data class Failed(val error: Throwable) : Outcome
+    }
+
+    /** One request of [drain]: run it, retire it on a final refusal, or report the failure that stops the pass. */
+    private suspend fun runOne(request: BackfillRequest, audio: File): Outcome {
+        markAttempt(request)
+        _running.update { it + request.id }
+        try {
+            run(request, audio)
+            _landed.update { it + 1 }
+            return Outcome.Repaired
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!isFinalRefusal(e)) return Outcome.Failed(e)
+            // The cloud will never take this file (413: past what hosted
+            // transcription accepts), so asking again on every pass only
+            // keeps the recordings queued behind it waiting forever. The
+            // recording itself is already in the cloud with the live
+            // transcript it has; only the repair is given up, the way a
+            // recording that vanished (404 on the re-read) is.
+            retireRefused(request, audio)
+            return Outcome.Retired
+        } finally {
+            _running.update { it - request.id }
+        }
     }
 
     /** Give up on a request the cloud has refused for good; see [isFinalRefusal]. */
