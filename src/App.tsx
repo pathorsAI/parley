@@ -47,6 +47,7 @@ import { useLiveSuggestEngine } from "./lib/meeting/liveSuggestRun";
 import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { initHistoryPersistSync, listenForRecordingSaved, recoverCrashedMeetings } from "./lib/history/history";
+import { scheduleFilingCatchUp } from "./lib/analysis/filingQueue";
 import { endMeeting, recoverOrphanedMeeting } from "./lib/meeting/controls";
 import { QUIT_REQUESTED_EVENT, quitAfterSaving } from "./lib/meeting/quit";
 import * as ipc from "./lib/ipc/commands";
@@ -236,6 +237,9 @@ const App = () => {
     const unSessionCmds = initSessionCommands();
     const unHistoryPersist = initHistoryPersistSync();
     const unStudyPipeline = initStudyPipeline();
+    // Name the recent recordings that were saved but never named (the last 7
+    // days only), in the background, a little after launch.
+    const unFilingCatchUp = scheduleFilingCatchUp();
     const unVoiceTyping = initVoiceTyping();
     // Personal dictionary ↔ cloud (and so the iPhone). Main window only: it lives
     // for the whole session; the other windows just edit the file and broadcast.
@@ -262,6 +266,7 @@ const App = () => {
       unSessionCmds();
       unHistoryPersist();
       unStudyPipeline();
+      unFilingCatchUp();
       unVoiceTyping();
       unDictionarySync();
       unDraftSync();

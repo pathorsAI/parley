@@ -3,7 +3,10 @@ import { hasProviderKey } from "../ai/settings";
 import { suggestFiling } from "../ai/filing";
 import { filingChoices, listLocalFolders } from "../history/folders";
 import { landStage, makeRunGuard, type RunHandle } from "./runGuard";
-import type { FilingSuggestion } from "../types";
+import { runRegistry } from "./runRegistry";
+import { isSampleEntry } from "../onboarding/sample";
+import type { FilingSuggestion, TranscriptSegment } from "../types";
+import type { HistoryEntry } from "../history/types";
 import { log } from "../log";
 
 /**
@@ -30,7 +33,11 @@ const guard = makeRunGuard("filing");
 
 /** Cancel the filing pass running for the recording on screen. */
 export function cancelFilingSuggestion(): boolean {
-  return guard.cancel();
+  // A background pass that was naming the recording on screen counts too: a
+  // regenerate must not leave it to land over the fresh run.
+  const id = useStore.getState().loadedHistoryId;
+  const background = id ? cancelBackgroundFiling(id) : false;
+  return guard.cancel() || background;
 }
 
 // Recordings whose pass came back empty this session (replay and entry ids).
@@ -133,37 +140,46 @@ async function applySuggestedTitle(
   }
 }
 
-export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<void> {
-  const state = useStore.getState();
-  if (state.filingStatus === "running") return;
-  if (!opts?.force && alreadyAnswered(state)) return;
-  if (!hasProviderKey(state.settings, "realtime")) return;
-  // A read-only org recording can be neither renamed nor refiled, so a suggestion
-  // for it would be pure spend on something the user cannot act on.
-  if (state.replayReadOnly) return;
-  // Honor the trim keep-window, same as the analysis + brief passes.
-  const segments = state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
-  if (!hasSpokenSegment(segments)) return;
+/** What a filing pass reads: the recording's transcript and the context the
+ *  model sees. The on-screen pass takes it from the store, the background pass
+ *  from the saved entry — the SAME fields either way, so every recording gets
+ *  the same answer wherever the pass ran. */
+interface FilingInput {
+  settings: ReturnType<typeof useStore.getState>["settings"];
+  /** Already trimmed to the keep-window (a saved entry has none). */
+  segments: TranscriptSegment[];
+  names: Record<string, string>;
+  meetingContext: string;
+  /** The recording's name when the pass starts (the rename check's baseline). */
+  currentTitle: string;
+  /** The replay session id, when the recording is on screen (empty-answer key). */
+  sessionId: string | null;
+}
 
-  const run = guard.begin();
-  state.setFilingStatus("running");
+/**
+ * THE filing pass, for one recording: ask for a suggestion, keep the user's
+ * answers (a rename mid-pass, a recovered recording's name), land it through
+ * runGuard's landStage (store when on screen, the entry when not), then name
+ * the recording. Both the on-screen runner and the background one
+ * ({@link runFilingForEntry}) come through here with their own RunHandle.
+ */
+async function filingPass(run: RunHandle, input: FilingInput): Promise<void> {
   try {
-    const currentTitle = state.replay?.name ?? "";
     let suggestion = await suggestFiling({
-      settings: state.settings,
-      segments,
-      names: state.speakerNames,
+      settings: input.settings,
+      segments: input.segments,
+      names: input.names,
       // The plain per-meeting context only — not the desktop-only negotiation
       // setup meetingBriefText folds in, since the phones have no such fields
       // and the model must see the same inputs on every platform.
-      meetingContext: state.meetingContext,
+      meetingContext: input.meetingContext,
       // Never propose an archived folder: the user put it away, and a suggestion
       // to file today's call into it would undo that decision for them.
       folders: filingChoices(listLocalFolders()).map((f) => ({ id: f.id, name: f.name })),
-      currentTitle,
+      currentTitle: input.currentTitle,
       signal: run.signal,
     });
-    suggestion = withoutStaleTitle(suggestion, currentTitle, run);
+    suggestion = withoutStaleTitle(suggestion, input.currentTitle, run);
     suggestion = await withoutTitleIfRecovered(suggestion, run.target().entryId);
     // A null suggestion — nothing usable (the title failed the gates and no
     // folder survived) or a failed call — is done for THIS session only: the
@@ -176,7 +192,7 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
     // A cancelled pass also comes back null (suggestFiling swallows the abort),
     // but it was never answered — remembering it would make the restart that
     // cancelled it decline to run.
-    if (!suggestion && !run.superseded()) rememberEmpty(state.replay?.id, run.target().entryId);
+    if (!suggestion && !run.superseded()) rememberEmpty(input.sessionId, run.target().entryId);
     const entryId = run.target().entryId;
     let landedOnScreen = false;
     await landStage(run, {
@@ -193,7 +209,7 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
     // the suggestion's title) is the one that lands last.
     const title = suggestion?.title.trim() ?? "";
     if (title && entryId && !run.superseded()) {
-      await applySuggestedTitle(entryId, title, currentTitle, landedOnScreen);
+      await applySuggestedTitle(entryId, title, input.currentTitle, landedOnScreen);
     }
   } catch (e) {
     if (run.superseded()) log.info("filing: superseded pass ended", { error: String(e) });
@@ -207,4 +223,174 @@ export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<v
   } finally {
     run.end();
   }
+}
+
+export async function runFilingSuggestion(opts?: { force?: boolean }): Promise<void> {
+  const state = useStore.getState();
+  if (state.filingStatus === "running") return;
+  // The background pass is already naming this recording (it started before
+  // the user opened it): that IS the pass, still running. A manual regenerate
+  // replaces it instead.
+  if (backgroundYields(state.loadedHistoryId, opts?.force)) return;
+  if (!opts?.force && alreadyAnswered(state)) return;
+  if (!hasProviderKey(state.settings, "realtime")) return;
+  // A read-only org recording can be neither renamed nor refiled, so a suggestion
+  // for it would be pure spend on something the user cannot act on.
+  if (state.replayReadOnly) return;
+  // Honor the trim keep-window, same as the analysis + brief passes.
+  const segments = state.segments.filter((s) => !isTrimmed(s, state.replayTrim));
+  if (!hasSpokenSegment(segments)) return;
+
+  const run = guard.begin();
+  state.setFilingStatus("running");
+  await filingPass(run, {
+    settings: state.settings,
+    segments,
+    names: state.speakerNames,
+    meetingContext: state.meetingContext,
+    currentTitle: state.replay?.name ?? "",
+    sessionId: state.replay?.id ?? null,
+  });
+}
+
+/**
+ * Whether the on-screen runner must stand down because a background pass holds
+ * this recording. Unforced: it does, and the stage reads "running" until that
+ * pass lands into the store. Forced (a manual regenerate): the background pass
+ * is cancelled and the on-screen one takes over.
+ */
+function backgroundYields(entryId: string | null, force: boolean | undefined): boolean {
+  if (!entryId || !background.has(entryId)) return false;
+  if (force) {
+    cancelBackgroundFiling(entryId);
+    return false;
+  }
+  useStore.getState().setFilingStatus("running");
+  return true;
+}
+
+// ── Background (headless) pass ───────────────────────────────────────────────
+//
+// The same pass for a SAVED entry nobody has opened: a meeting saved while the
+// user was busy elsewhere, a recent recording that never got named. iOS
+// (MeetingRecorder, after upload) and Android (FilingPass.generateInBackground)
+// do the same from the stored recording. Queued by filingQueue.ts.
+
+/** Background passes in flight, by entry id. */
+const background = new Map<string, { controller: AbortController; cancelled: boolean }>();
+// Registry tokens of their own (negative), so a background flight can never be
+// mistaken for an on-screen run's token under the same id.
+let backgroundSeq = 0;
+
+/** Is a background pass naming this entry right now? */
+export function backgroundFilingInFlight(entryId: string): boolean {
+  return background.has(entryId);
+}
+
+/** Cancel the background pass for one entry: its model call is aborted and
+ *  whatever it still produces is dropped. Returns whether one was running. */
+export function cancelBackgroundFiling(entryId: string): boolean {
+  const flight = background.get(entryId);
+  if (!flight) return false;
+  flight.cancelled = true;
+  flight.controller.abort(new DOMException("The background filing pass was cancelled", "AbortError"));
+  background.delete(entryId);
+  return true;
+}
+
+/**
+ * A RunHandle for a background pass, so landStage lands it exactly like an
+ * on-screen run: into the store while the entry is the one on screen, onto the
+ * entry otherwise — and registered in the in-flight registry, so opening the
+ * entry mid-pass restores filing as "running" instead of starting a second one.
+ */
+function backgroundHandle(entryId: string): RunHandle {
+  const controller = new AbortController();
+  const flight = { controller, cancelled: false };
+  background.set(entryId, flight);
+  const token = --backgroundSeq;
+  runRegistry.add(entryId, "filing", token);
+  let ended = false;
+  return {
+    superseded: () => flight.cancelled,
+    alive: () => {
+      const s = useStore.getState();
+      return !flight.cancelled && s.loadedHistoryId === entryId && !s.replayReadOnly;
+    },
+    target: () => ({ entryId, readOnlyId: null }),
+    end: () => {
+      if (ended) return;
+      ended = true;
+      runRegistry.remove(entryId, "filing", token);
+      if (background.get(entryId) === flight) background.delete(entryId);
+    },
+    signal: controller.signal,
+  };
+}
+
+/** Why a background pass would not start for an entry already read. Null: go. */
+function backgroundSkipReason(entry: HistoryEntry): string | null {
+  if (entry.filingSuggested || entry.filingSuggestion != null) return "answered";
+  if (!hasSpokenSegment(entry.segments)) return "no speech";
+  return null;
+}
+
+/** Why a background pass would not start for this entry id, before reading it.
+ *  Null: go. The same gates the on-screen pipeline applies (studyPipeline
+ *  evaluateStages + runFilingSuggestion). */
+function backgroundGate(entryId: string): string | null {
+  const s = useStore.getState();
+  if (!hasProviderKey(s.settings, "realtime")) return "no realtime key";
+  // Auto-analysis off leaves recordings for an external AI over MCP; the
+  // bundled sample ships its outputs prewritten.
+  if (!s.settings.autoStudyAnalysis || isSampleEntry({ id: entryId })) return "auto-analysis off";
+  if (emptyThisSession.has(entryId)) return "empty this session";
+  if (background.has(entryId)) return "in flight";
+  // On screen, the study pipeline owns it (and a read-only recording is never
+  // named at all).
+  if (s.loadedHistoryId === entryId || (s.replayReadOnly && s.replay?.id === entryId)) return "on screen";
+  if (runRegistry.stagesFor(entryId).has("filing")) return "on-screen pass in flight";
+  return null;
+}
+
+/**
+ * Run the filing pass for a saved entry without loading it: read it from disk,
+ * ask with the same inputs the on-screen pass sends, persist the suggestion
+ * onto the entry and name it (applySuggestedTitle's off-screen branch: only
+ * while the saved title is still the one the pass started with). Never throws.
+ * Resolves to whether a pass ran.
+ */
+export async function runFilingForEntry(entryId: string): Promise<boolean> {
+  const before = backgroundGate(entryId);
+  if (before) {
+    log.debug("filing: background pass skipped", { entryId, reason: before });
+    return false;
+  }
+  let entry: HistoryEntry;
+  try {
+    const { entryWritesSettled, readEntry } = await import("../history/entryStore");
+    await entryWritesSettled(entryId);
+    entry = (await readEntry(entryId)).meta;
+  } catch (e) {
+    log.warn("filing: background pass could not read the entry", { entryId, error: String(e) });
+    return false;
+  }
+  // Re-checked after the read: the user may have opened it meanwhile.
+  const reason = backgroundGate(entryId) ?? backgroundSkipReason(entry);
+  if (reason) {
+    log.debug("filing: background pass skipped", { entryId, reason });
+    return false;
+  }
+  log.info("filing: background pass", { entryId });
+  await filingPass(backgroundHandle(entryId), {
+    settings: useStore.getState().settings,
+    // A saved entry keeps no trim window (it is screen state), so this is the
+    // transcript the on-screen pass would read on first open.
+    segments: entry.segments,
+    names: entry.speakerNames ?? {},
+    meetingContext: entry.meetingContext ?? "",
+    currentTitle: entry.title ?? "",
+    sessionId: null,
+  });
+  return true;
 }
