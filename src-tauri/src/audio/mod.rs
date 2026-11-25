@@ -1,6 +1,7 @@
 // Platform-neutral half of the Windows loopback source (sample conversion,
 // silence padding, reopen policy) — compiled into tests everywhere so it is
 // exercised on macOS CI as well.
+pub mod aec;
 #[cfg(any(target_os = "windows", test))]
 pub mod loopback;
 pub mod microphone;

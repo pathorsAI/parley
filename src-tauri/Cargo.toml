@@ -65,6 +65,10 @@ sha2 = "0.10"
 # (no LAPACK/BLAS — keeps the no-native-deps posture of the load-dynamic ort setup).
 nalgebra = "0.35"
 tauri-plugin-os = "2.3.2"
+# Software echo cancellation for the meeting mic (audio/aec.rs): WebRTC AEC3,
+# ported to pure Rust (BSD-3-Clause). No C++/meson build, so the
+# universal-apple-darwin and Windows MSVC builds need nothing new.
+sonora = "0.3.0"
 # On-device speech recognition (the "local" STT provider, see local_stt.rs and
 # transcription/local.rs). Builds whisper.cpp from source with CMake, and
 # generates its bindings with bindgen (libclang). CPU everywhere; macOS adds
