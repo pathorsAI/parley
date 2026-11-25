@@ -9,6 +9,7 @@ import { log } from "../log";
 import { CLOUD_URL, cloudFetch, cloudToken } from "../cloud/client";
 import type { ReplaySession } from "../replay/types";
 import { withTimingRepaired } from "../replay/timing";
+import { withoutEchoes } from "../transcription/echo";
 import * as ipc from "../ipc/commands";
 import { readStudyCache } from "./studyCache";
 import { refreshSampleOutputs } from "../onboarding/sampleOutputs";
@@ -22,12 +23,25 @@ import { entryWritesSettled, readEntry } from "./entryStore";
  * read the same clock. Pure + exported for testing.
  */
 export function replaySessionFor(meta: HistoryEntry, audioPath: string, audioSrc: string): ReplaySession {
-  const { segments, estimated } = withTimingRepaired(meta.segments ?? [], meta.durationMs);
+  const repaired = withTimingRepaired(meta.segments ?? [], meta.durationMs);
+  const { estimated } = repaired;
   if (estimated) {
     log.info("history: transcript has no timing; estimating it", {
       id: meta.id,
-      segments: segments.length,
+      segments: repaired.segments.length,
       durationMs: meta.durationMs,
+    });
+  }
+  // The mic's copies of the other side's speech (transcription/echo.ts). The
+  // live meeting drops them as they arrive; a recording saved before that
+  // filter caught them, or opened from another device, is cleaned here, so the
+  // transcript, findings and 評分 never count them as the user's. Nothing is
+  // written back: the file changes only when the entry is next saved.
+  const segments = estimated ? repaired.segments : withoutEchoes(repaired.segments);
+  if (segments.length !== repaired.segments.length) {
+    log.info("history: dropped mic echoes of the other side", {
+      id: meta.id,
+      dropped: repaired.segments.length - segments.length,
     });
   }
   return {
