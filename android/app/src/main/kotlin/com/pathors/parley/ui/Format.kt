@@ -30,6 +30,23 @@ fun formatDuration(ms: Double): String {
     }
 }
 
+/**
+ * A long length in words, to the nearest minute: 「7 小時 12 分」 / "7 h 12 min",
+ * dropping a zero part (「6 小時」, 「45 分」). For prose, where `h:mm:ss` reads
+ * like a clock.
+ */
+fun formatLongDuration(context: Context, ms: Long): String {
+    val totalMinutes = ((ms.coerceAtLeast(0L) + 30_000L) / 60_000L)
+    val hours = (totalMinutes / 60).toInt()
+    val minutes = (totalMinutes % 60).toInt()
+    return when {
+        hours > 0 && minutes > 0 ->
+            context.getString(R.string.duration_hours_minutes, hours, minutes)
+        hours > 0 -> context.getString(R.string.duration_hours, hours)
+        else -> context.getString(R.string.duration_minutes, minutes)
+    }
+}
+
 /** A transcript timestamp, always `m:ss`. */
 fun formatClock(ms: Long): String {
     val total = (ms / 1000).coerceAtLeast(0L)

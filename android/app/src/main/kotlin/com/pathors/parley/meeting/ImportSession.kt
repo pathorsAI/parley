@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.pathors.parley.audio.AudioDecodeException
 import com.pathors.parley.audio.AudioFileDecoder
+import com.pathors.parley.audio.DecodeRange
 import com.pathors.parley.audio.DecodeEvent
 import com.pathors.parley.audio.OggOpusEncoder
 import com.pathors.parley.audio.OpusEncodeException
@@ -11,6 +12,8 @@ import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.feedback.Log
+import com.pathors.parley.kit.ImportPart
+import com.pathors.parley.kit.ImportSplitPlan
 import com.pathors.parley.kit.SttRelayClient
 import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptSegment
@@ -78,7 +81,15 @@ sealed interface ImportState {
         val uploadRefused: Boolean = false,
     ) : ImportState
 
-    data class Failed(val reason: ImportFailure, val detail: String? = null) : ImportState
+    /**
+     * [part] names which part of a split import failed; the parts before it
+     * are already saved and stay. Null for a file imported whole.
+     */
+    data class Failed(
+        val reason: ImportFailure,
+        val detail: String? = null,
+        val part: ImportPartLabel? = null,
+    ) : ImportState
 
     /** The user backed out; the temporary files are already gone. */
     data object Cancelled : ImportState
@@ -107,6 +118,9 @@ data class ImportNotice(val title: String, val sharedToOrgId: String?) {
         }
     }
 }
+
+/** Which part of a split import is running, 1-based: "Part [index] of [count]". */
+data class ImportPartLabel(val index: Int, val count: Int)
 
 /** Why an import ended badly. The UI owns the (bilingual) copy for each case. */
 enum class ImportFailure {
@@ -197,9 +211,21 @@ class ImportSession(
     private val runFilingPass: (recordingId: String) -> Unit = {},
     /** The personal dictionary's recognition terms, sent as the relay's hints. */
     private val hintTerms: () -> List<String> = { emptyList() },
+    /**
+     * The file is too long for one hosted session and the user agreed to
+     * import it in parts (see [ImportSplit]). Null imports it whole, as before.
+     */
+    private val split: ImportSplitPlan? = null,
+    /** The title of each part, `name（k/n）` / `name (k/n)`. Only read with [split]. */
+    private val partTitle: (ImportPart) -> String = { title },
 ) {
     private val _state = MutableStateFlow<ImportState>(ImportState.Idle)
     val state: StateFlow<ImportState> = _state.asStateFlow()
+
+    private val _part = MutableStateFlow<ImportPartLabel?>(null)
+
+    /** The part running now, for a split import; null for a file imported whole. */
+    val part: StateFlow<ImportPartLabel?> = _part.asStateFlow()
 
     private val _segments = MutableStateFlow<List<TranscriptSegment>>(emptyList())
     val segments: StateFlow<List<TranscriptSegment>> = _segments.asStateFlow()
@@ -235,50 +261,118 @@ class ImportSession(
      * uncaught exception that would take the process down with it.
      */
     private suspend fun run() {
+        val parts: List<ImportPart?> = split?.parts ?: listOf(null)
+        var finished: ImportState.Finished? = null
+        for (part in parts) {
+            val label = part?.let { ImportPartLabel(it.index, it.count) }
+            _part.value = label
+            resetForPart()
+            val result = runPart(part)
+            if (result == null) {
+                // The part failed and [state] says why. Parts already finished
+                // stay saved; nothing is retried automatically.
+                val failed = _state.value as? ImportState.Failed
+                if (failed != null && label != null) _state.value = failed.copy(part = label)
+                return
+            }
+            finished = finished?.let { merge(it, result) } ?: result
+        }
+        // Published once, after the last part: an intermediate Finished would
+        // let the screen close itself (and drop the session) after part 1.
+        finished?.let { _state.value = it }
+    }
+
+    /**
+     * One run of the pipeline — the whole file, or one [part] of it.
+     *
+     * @return the outcome, or null when it failed and [state] already says why.
+     */
+    private suspend fun runPart(part: ImportPart?): ImportState.Finished? =
         try {
-            runImport()
+            runImport(part)
         } catch (e: CancellationException) {
             throw e // cancel() — the user backed out, not a failure
         } catch (t: Throwable) {
             Log.e(TAG, "import failed", t)
             abandon()
             _state.value = ImportState.Failed(ImportFailure.UNKNOWN, t.message)
+            null
         }
+
+    /** Everything one part's run accumulates, cleared before the next part starts. */
+    private fun resetForPart() {
+        relay = null
+        encoder = null
+        eventsJob = null
+        byId.clear()
+        _segments.value = emptyList()
+        relayVerdict = ImportRelayVerdict.Healthy
+        finishSent = false
+        transcribedMs = 0L
+        durationMs = -1L
+        decodeProgress = 0f
+        if (_state.value !is ImportState.Idle) _state.value = ImportState.Preparing
     }
 
-    private suspend fun runImport() {
-        val token = auth.currentToken() ?: return fail(ImportFailure.NOT_SIGNED_IN)
+    /**
+     * What a split import ends on: the last part's recording, with any caveat
+     * a part had — still on the phone, waiting for quota, transcript being
+     * redone — carried through, so the screen does not close itself over one.
+     */
+    private fun merge(soFar: ImportState.Finished, next: ImportState.Finished) = next.copy(
+        pendingUpload = soFar.pendingUpload || next.pendingUpload,
+        transcript = if (soFar.transcript == ImportTranscript.COMPLETES_IN_BACKGROUND) {
+            ImportTranscript.COMPLETES_IN_BACKGROUND
+        } else {
+            next.transcript
+        },
+        waitingForQuota = soFar.waitingForQuota || next.waitingForQuota,
+        uploadRefused = soFar.uploadRefused || next.uploadRefused,
+    )
 
-        try {
-            durationMs = AudioFileDecoder.probe(context, uri).durationMs
-        } catch (e: AudioDecodeException) {
-            return fail(decodeFailure(e), e.message)
+    private suspend fun runImport(part: ImportPart?): ImportState.Finished? {
+        val token = auth.currentToken() ?: return failNull(ImportFailure.NOT_SIGNED_IN)
+
+        if (part == null) {
+            try {
+                durationMs = AudioFileDecoder.probe(context, uri).durationMs
+            } catch (e: AudioDecodeException) {
+                return failNull(decodeFailure(e), e.message)
+            }
+        } else {
+            durationMs = part.durationMs
         }
 
         val encoder = try {
             OggOpusEncoder.create(newAudioFile())
         } catch (e: OpusEncodeException) {
-            return fail(ImportFailure.ENCODER_UNAVAILABLE, e.message)
+            return failNull(ImportFailure.ENCODER_UNAVAILABLE, e.message)
         }
         this.encoder = encoder
 
         val client = connectRelay(token)
         publishRunning()
-        var decodedMs = decodeAndStream(encoder, client) ?: return
-        if (!drainRelayTail(client)) return
+        var decodedMs = decodeAndStream(encoder, client, part?.decodeRange()) ?: return null
+        if (!drainRelayTail(client)) return null
 
         val audio = try {
             withContext(Dispatchers.IO) { encoder.finish() }
         } catch (e: OpusEncodeException) {
-            return fail(ImportFailure.ENCODER_UNAVAILABLE, e.message)
+            return failNull(ImportFailure.ENCODER_UNAVAILABLE, e.message)
         }
         if (decodedMs <= 0L) decodedMs = encoder.durationMs
 
-        uploadAndFinish(audio, decodedMs)
+        return uploadAndFinish(audio, decodedMs, part?.let(partTitle) ?: title)
     }
 
     private fun fail(reason: ImportFailure, detail: String? = null) {
         _state.value = ImportState.Failed(reason, detail)
+    }
+
+    /** [fail], as a null outcome for `return`. */
+    private fun failNull(reason: ImportFailure, detail: String? = null): ImportState.Finished? {
+        fail(reason, detail)
+        return null
     }
 
     /** Opens the relay and starts listening to it; audio goes out via [decodeAndStream]. */
@@ -296,10 +390,14 @@ class ImportSession(
      * @return the decoded duration in ms (0 when the decoder did not say), or
      *   null when the import failed and [state] already says why.
      */
-    private suspend fun decodeAndStream(encoder: OggOpusEncoder, client: SttRelayClient): Long? {
+    private suspend fun decodeAndStream(
+        encoder: OggOpusEncoder,
+        client: SttRelayClient,
+        range: DecodeRange?,
+    ): Long? {
         var decodedMs = 0L
         try {
-            AudioFileDecoder.decodeWithProgress(context, uri).collect { event ->
+            AudioFileDecoder.decodeWithProgress(context, uri, range = range).collect { event ->
                 when (event) {
                     is DecodeEvent.Started -> {
                         if (event.info.durationMs >= 0) durationMs = event.info.durationMs
@@ -365,10 +463,18 @@ class ImportSession(
         return false
     }
 
-    /** Queues the recording, tries to upload it now, and reports how that went. */
-    private suspend fun uploadAndFinish(audio: File, decodedMs: Long) {
+    /**
+     * Queues the recording, tries to upload it now, and reports how that went.
+     *
+     * @return the outcome, or null when it failed and [state] already says why.
+     */
+    private suspend fun uploadAndFinish(
+        audio: File,
+        decodedMs: Long,
+        recordingTitle: String,
+    ): ImportState.Finished? {
         val segments = finalSegments()
-        val transcript = transcriptOutcome(segments, decodedMs)
+        val transcript = transcriptOutcome(segments, decodedMs, recordingTitle)
         (relayVerdict as? ImportRelayVerdict.Degraded)?.let {
             Log.w(TAG, "relay stopped short (${it.detail}); transcript=$transcript")
         }
@@ -388,19 +494,18 @@ class ImportSession(
             uploader.enqueue(
                 EnqueueRequest(
                     audio = audio,
-                    title = title,
+                    title = recordingTitle,
                     durationMs = decodedMs.toDouble(),
                     segments = segments,
                     source = RecordingSource.UPLOAD,
                     destination = destination,
                 )
-            )
+            ) ?: return failNull(ImportFailure.UPLOAD_FAILED) // only LIVE captures are ever dropped for length
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Throwable) {
-            return fail(ImportFailure.UPLOAD_FAILED, e.message)
+            return failNull(ImportFailure.UPLOAD_FAILED, e.message)
         }
-        // Unreachable: only LIVE captures are ever dropped for length.
-        if (id == null) return fail(ImportFailure.UPLOAD_FAILED)
-
         val result = runCatching { uploader.drain() }.getOrNull()
         // A refusal parks the recording on the phone; it is never dropped, so
         // this is a saved-but-not-uploaded outcome, not a failure — and
@@ -417,7 +522,7 @@ class ImportSession(
         // personal library (an org copy cannot be renamed or re-filed from
         // here), and only with words to read.
         if (!pending && destination?.isOrg != true && segments.isNotEmpty()) runFilingPass(id)
-        _state.value = ImportState.Finished(
+        return ImportState.Finished(
             recordingId = id,
             pendingUpload = pending,
             transcript = transcript,
@@ -436,11 +541,12 @@ class ImportSession(
     private fun transcriptOutcome(
         segments: List<TranscriptSegmentDto>,
         durationMs: Long,
+        recordingTitle: String,
     ): ImportTranscript {
         val coverage = TranscriptBackfiller.coverage(
             PendingUpload(
                 id = "",
-                title = title,
+                title = recordingTitle,
                 source = RecordingSource.UPLOAD,
                 startedAtMs = 0L,
                 durationMs = durationMs.toDouble(),
@@ -548,6 +654,12 @@ class ImportSession(
         const val TAIL_TIMEOUT_MS = 15_000L
     }
 }
+
+/** The slice of the file one part decodes. The last part runs to the end of the stream. */
+internal fun ImportPart.decodeRange(): DecodeRange = DecodeRange(
+    startUs = startMs * 1000,
+    endUs = if (isLast) null else endMs * 1000,
+)
 
 /**
  * The relay options an import opens with. An imported meeting is still a

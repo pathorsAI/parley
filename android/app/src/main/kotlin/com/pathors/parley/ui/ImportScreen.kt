@@ -24,6 +24,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.R
 import com.pathors.parley.meeting.ImportFailure
+import com.pathors.parley.meeting.ImportPartLabel
 import com.pathors.parley.meeting.ImportState
 import com.pathors.parley.meeting.ImportTranscript
 import com.pathors.parley.screenshot.DemoMode
@@ -56,6 +57,7 @@ fun ImportScreen(onDone: () -> Unit) {
     }
 
     val state by active.state.collectAsState()
+    val part by active.part.collectAsState()
 
     // Only a clean ending closes itself. Anything with a caveat — still on the
     // phone, transcript being redone — stays up until it has been read.
@@ -70,6 +72,7 @@ fun ImportScreen(onDone: () -> Unit) {
     ImportContent(
         title = active.title,
         state = state,
+        part = part,
         onDismiss = {
             container.clearImport()
             onDone()
@@ -106,6 +109,7 @@ private fun ImportContent(
     state: ImportState,
     onDismiss: () -> Unit,
     onSignIn: () -> Unit,
+    part: ImportPartLabel? = null,
 ) {
     Column(
         modifier = Modifier
@@ -119,6 +123,7 @@ private fun ImportContent(
         Spacer(Modifier.height(24.dp))
         ImportFileHeader(title = title, state = state)
         Spacer(Modifier.height(32.dp))
+        ImportPartLine(state = state, part = part)
         ImportProgress(state = state)
         ImportFailureNotice(state = state)
         ImportTranscriptNotice(state = state)
@@ -221,12 +226,29 @@ private fun ImportProgress(state: ImportState) {
     }
 }
 
+/** 「第 k/n 段」 above the phase while a split import is in flight. */
+@Composable
+private fun ImportPartLine(state: ImportState, part: ImportPartLabel?) {
+    if (part == null || !state.isInFlight()) return
+    Text(
+        text = stringResource(R.string.import_part_progress, part.index, part.count),
+        style = MaterialTheme.typography.titleSmall,
+    )
+    Spacer(Modifier.height(8.dp))
+}
+
 @Composable
 private fun ImportFailureNotice(state: ImportState) {
     val failed = state as? ImportState.Failed ?: return
     Spacer(Modifier.height(16.dp))
+    val reason = failureMessage(failed.reason)
+    val part = failed.part
     Text(
-        text = failureMessage(failed.reason),
+        text = if (part == null) {
+            reason
+        } else {
+            stringResource(R.string.import_part_failed, part.index, part.count, reason)
+        },
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.error,
     )

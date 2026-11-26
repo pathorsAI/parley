@@ -33,7 +33,11 @@ data class BackfillResult(
     val repaired: Int,
     /** Still waiting after the pass. */
     val remaining: Int,
-    /** Manifests dropped because their audio blob was gone (unrunnable forever). */
+    /**
+     * Requests dropped because they can never run: their audio blob was gone,
+     * or the cloud refused the file outright (413, too large for hosted
+     * transcription). Either would otherwise block the queue head forever.
+     */
     val discarded: Int = 0,
     /** Why the pass stopped early, if it did. Null means the queue drained clean. */
     val failure: Throwable? = null,
@@ -299,19 +303,13 @@ class TranscriptBackfiller(
                 discarded++
                 continue
             }
-            markAttempt(request)
-            _running.update { it + request.id }
-            try {
-                run(request, audio)
-                repaired++
-                _landed.update { it + 1 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                failure = e
-                break
-            } finally {
-                _running.update { it - request.id }
+            when (val outcome = runOne(request, audio)) {
+                Outcome.Repaired -> repaired++
+                Outcome.Retired -> discarded++
+                is Outcome.Failed -> {
+                    failure = outcome.error
+                    break
+                }
             }
         }
 
@@ -321,6 +319,45 @@ class TranscriptBackfiller(
             discarded = discarded,
             failure = failure,
         )
+    }
+
+    private sealed interface Outcome {
+        data object Repaired : Outcome
+        data object Retired : Outcome
+        data class Failed(val error: Throwable) : Outcome
+    }
+
+    /** One request of [drain]: run it, retire it on a final refusal, or report the failure that stops the pass. */
+    private suspend fun runOne(request: BackfillRequest, audio: File): Outcome {
+        markAttempt(request)
+        _running.update { it + request.id }
+        try {
+            run(request, audio)
+            _landed.update { it + 1 }
+            return Outcome.Repaired
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!isFinalRefusal(e)) return Outcome.Failed(e)
+            // The cloud will never take this file (413: past what hosted
+            // transcription accepts), so asking again on every pass only
+            // keeps the recordings queued behind it waiting forever. The
+            // recording itself is already in the cloud with the live
+            // transcript it has; only the repair is given up, the way a
+            // recording that vanished (404 on the re-read) is.
+            retireRefused(request, audio)
+            return Outcome.Retired
+        } finally {
+            _running.update { it - request.id }
+        }
+    }
+
+    /** Give up on a request the cloud has refused for good; see [isFinalRefusal]. */
+    private suspend fun retireRefused(request: BackfillRequest, audio: File) {
+        // No log line: this class runs under plain JVM tests, where
+        // android.util.Log is not available. [BackfillResult.discarded] counts it.
+        transcriber.forgetJob(request.id)
+        finish(request.id, audio)
     }
 
     /**
@@ -471,6 +508,19 @@ class TranscriptBackfiller(
 
     companion object {
         private const val SOURCE_KEY = "source"
+
+        /**
+         * Whether [failure] is the cloud refusing this one file for good, so
+         * that retrying it can never succeed and it must not stay at the head
+         * of the oldest-first queue.
+         *
+         * Only 413 today: the request body is past the batch route's limit, and
+         * the same bytes will be past it on every later pass. Every other
+         * failure stops the pass and keeps the request, because a network, a
+         * quota or a session coming back is what clears it.
+         */
+        fun isFinalRefusal(failure: Throwable): Boolean =
+            (failure as? CloudException)?.status == 413
         private const val DEFAULT_MAX_PASSES = 3
 
         /** Where the batch jobs a run has uploaded are remembered — see [BatchTranscriber]. */

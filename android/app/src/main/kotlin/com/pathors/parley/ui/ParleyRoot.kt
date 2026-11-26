@@ -16,6 +16,10 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
@@ -27,9 +31,11 @@ import androidx.navigation.navArgument
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
 import com.pathors.parley.meeting.MeetingService
+import com.pathors.parley.meeting.importSplitFor
 import com.pathors.parley.quickrecord.QuickRecord
 import com.pathors.parley.quickrecord.QuickRecordInbox
 import com.pathors.parley.screenshot.DemoMode
+import kotlinx.coroutines.launch
 
 /** The four places the app can be. */
 private object Route {
@@ -167,6 +173,9 @@ private fun ParleyNavHost(container: AppContainer) {
     DemoNavigation(navController, container)
     QuickRecordNavigation(navController)
 
+    val scope = rememberCoroutineScope()
+    var pendingSplit by remember { mutableStateOf<PendingSplitImport?>(null) }
+
     // The Storage Access Framework: no storage permission, any provider (Files,
     // Drive, a recorder app), and the grant lives as long as we need the Uri.
     val picker = rememberLauncherForActivityResult(
@@ -179,9 +188,32 @@ private fun ParleyNavHost(container: AppContainer) {
                     Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
             }
-            container.startImport(uri, displayNameOf(context, uri))
-            navController.navigate(Route.IMPORT)
+            val title = displayNameOf(context, uri)
+            // Read the length off the container before anything is decoded: a
+            // file past one hosted session is only imported in parts once the
+            // user has agreed to it.
+            scope.launch {
+                val plan = importSplitFor(context, uri)
+                if (plan == null) {
+                    container.startImport(uri, title)
+                    navController.navigate(Route.IMPORT)
+                } else {
+                    pendingSplit = PendingSplitImport(uri, title, plan)
+                }
+            }
         }
+    }
+
+    pendingSplit?.let { pending ->
+        ImportSplitDialog(
+            pending = pending,
+            onConfirm = {
+                pendingSplit = null
+                container.startImport(pending.uri, pending.title, pending.plan)
+                navController.navigate(Route.IMPORT)
+            },
+            onDismiss = { pendingSplit = null },
+        )
     }
 
     NavHost(navController = navController, startDestination = Route.HOME) {
