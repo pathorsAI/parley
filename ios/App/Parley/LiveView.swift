@@ -1181,11 +1181,14 @@ struct LiveView: View {
                 Text(recordLabel)
                     .font(.parley.subheadlineEmphasized)
             }
-            .foregroundStyle(.white)
+            // The desktop's light-primary button (its Resume): blue ink on a
+            // faint blue wash. A solid blue bar was the loudest thing on a
+            // screen that is waiting, not asking.
+            .foregroundStyle(Theme.primary)
             .frame(maxWidth: .infinity, minHeight: 42)
             .background(
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(Theme.primary))
+                    .fill(Theme.primary.opacity(0.12)))
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
@@ -1199,18 +1202,18 @@ struct LiveView: View {
         return app.hasAccount ? "Start recording" : "Sign in again to record"
     }
 
-    /// White in both appearances, on purpose: the disc under it is the signal
-    /// blue, which does not follow the system appearance, so what sits on it
-    /// must not either.
+    /// The glyph before Start recording, in the button's blue ink: a dot
+    /// (the record mark), a spinner while the last meeting is still being
+    /// saved, or the account glyph when the press opens sign-in.
     @ViewBuilder
     private var inner: some View {
         if recorder.isBusy {
             ProgressView()
                 .controlSize(.small)
-                .tint(.white)
+                .tint(Theme.primary)
         } else if app.hasAccount {
             Circle()
-                .fill(.white)
+                .fill(Theme.primary)
                 .frame(width: 10, height: 10)
         } else {
             // Signed out, the press opens sign-in rather than the microphone, so
@@ -1218,7 +1221,7 @@ struct LiveView: View {
             // rest.
             Image(systemName: "person.crop.circle")
                 .font(.system(size: 15, weight: .regular))
-                .foregroundStyle(.white)
+                .foregroundStyle(Theme.primary)
         }
     }
 
