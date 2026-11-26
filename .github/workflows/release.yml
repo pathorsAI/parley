@@ -305,7 +305,10 @@ jobs:
         with:
           name: cloud-updater-darwin
           path: updater-sig/darwin-aarch64.sig
-          retention-days: 1
+          # Long enough to re-run a failed downstream job days later: with 1 day,
+          # re-running only the failed jobs of v0.37.7 a day on found the macOS
+          # signature expired and compose-updater died on ENOENT.
+          retention-days: 7
 
   build-windows:
     name: Build Windows app
@@ -457,7 +460,10 @@ jobs:
         with:
           name: cloud-updater-windows
           path: updater-sig/windows-x86_64.sig
-          retention-days: 1
+          # Long enough to re-run a failed downstream job days later: with 1 day,
+          # re-running only the failed jobs of v0.37.7 a day on found the macOS
+          # signature expired and compose-updater died on ENOENT.
+          retention-days: 7
 
   compose-updater:
     # Writes downloads/latest.json with BOTH platforms. Runs last so the feed
