@@ -36,6 +36,8 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -77,6 +79,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -145,6 +148,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeScreen(
     onRecord: () -> Unit,
+    /** The bottom button: onto the record screen with the meeting already started. */
+    onStartRecording: () -> Unit,
     onImport: () -> Unit,
     onOpenRecording: (id: String, orgId: String?, guided: Boolean) -> Unit,
 ) {
@@ -385,7 +390,9 @@ fun HomeScreen(
                     modifier = body,
                 )
             }
-            HomeBottomBar(onRecord = onRecord)
+            // While a meeting runs, the active-meeting card is the way back
+            // to it; a Start button beside it would only start nothing.
+            if (!meetingLive) HomeBottomBar(onStart = onStartRecording)
         }
     }
 
@@ -654,21 +661,37 @@ private fun FullListHeader(title: String, onBack: () -> Unit) {
 }
 
 /**
- * Record, along the bottom. Import has moved up beside the title (iOS's
- * header), so recording — the thing this app is for — has the bar to itself.
+ * Start recording, along the bottom — the record screen's own button, the
+ * same words and the same light-primary look (primary ink on a faint primary
+ * wash, the desktop's Resume), and it starts the meeting on the tap: one press
+ * from the library to recording, as Android always had. The meeting is named
+ * and filed on the record screen while it runs.
  */
 @Composable
-private fun HomeBottomBar(onRecord: () -> Unit) {
-    Button(
-        onClick = onRecord,
+private fun HomeBottomBar(onStart: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 12.dp)
-            .height(56.dp),
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(primary.copy(alpha = 0.12f))
+            .clickable(role = Role.Button, onClick = onStart),
     ) {
+        Box(
+            Modifier
+                .size(9.dp)
+                .background(primary, CircleShape),
+        )
+        Spacer(Modifier.width(8.dp))
         Text(
-            text = stringResource(R.string.home_record),
-            style = MaterialTheme.typography.titleMedium,
+            text = stringResource(R.string.meeting_start),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = primary,
         )
     }
 }

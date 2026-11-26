@@ -37,7 +37,6 @@
     <string name="home_empty_body">開一場會議或匯入一段錄音，之後每一場都會依日期排在這裡。</string>
     <string name="home_empty_import">匯入音訊檔</string>
     <string name="home_search_hint">搜尋標題或摘要</string>
-    <string name="home_record">錄一場會議</string>
     <string name="home_pending_header">等待上傳</string>
     <string name="home_pending_badge">%1$d</string>
     <string name="home_pending_retry">立即上傳</string>

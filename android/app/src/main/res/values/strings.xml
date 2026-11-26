@@ -39,7 +39,6 @@
     <string name="home_empty_body">Start a meeting or import a recording, and each one lines up here by date.</string>
     <string name="home_empty_import">Import an audio file</string>
     <string name="home_search_hint">Search titles and snippets</string>
-    <string name="home_record">Record a meeting</string>
     <string name="home_pending_header">Waiting to upload</string>
     <string name="home_pending_badge">%1$d</string>
     <string name="home_pending_retry">Upload now</string>

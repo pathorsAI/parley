@@ -240,6 +240,7 @@ private fun ParleyNavHost(container: AppContainer) {
         composable(Route.HOME) {
             HomeScreen(
                 onRecord = { navController.openMeeting() },
+                onStartRecording = { navController.openMeeting(start = true) },
                 onImport = { picker.launch(arrayOf("audio/*")) },
                 onOpenRecording = { id, orgId, guided ->
                     navController.navigate(Route.recording(id, orgId, guided = guided))
