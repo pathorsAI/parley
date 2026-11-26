@@ -252,6 +252,8 @@ class MeetingService : Service() {
         // even though `stopSelf()` is about to take the service down.
         applicationContext.parleyContainer.appScope.launch {
             runCatching { session.discard() }
+            // The name and folder were this meeting's, and it is gone.
+            MeetingDraft.clear()
             _activeSession.value = null
             session.dispose()
             stopSelfAndForeground()

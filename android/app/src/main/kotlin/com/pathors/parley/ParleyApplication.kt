@@ -11,6 +11,7 @@ import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.auth.SignInError
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.filing.FilingPass
+import com.pathors.parley.meeting.MeetingDraft
 import com.pathors.parley.study.StudyPass
 import com.pathors.parley.study.StudySettings
 import com.pathors.parley.filing.SampleFilingTarget
@@ -646,6 +647,10 @@ class AppContainer(private val app: Application) {
             title = title,
             orgName = { orgId -> cloud.myOrgs().firstOrNull { it.id == orgId }?.name },
             hintTerms = lexicon::recognitionTerms,
+            // The record screen's name and folder for this meeting, saved with
+            // it and then let go of — iOS `MeetingRecorder.upload`.
+            choices = { MeetingDraft.choices.value },
+            onChoicesSaved = MeetingDraft::clear,
         )
 
     /** Start importing [uri], replacing (and cancelling) any previous import. */

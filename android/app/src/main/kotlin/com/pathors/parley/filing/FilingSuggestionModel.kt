@@ -235,7 +235,7 @@ data class FilingUiState(
  * write that threw leaves the offer open, because it is still worth taking.
  *
  * Plain suspend functions over a [StateFlow], so the rules can be tested
- * against a mock server without a ViewModel; `FilingSuggestionViewModel` owns
+ * against a mock server without a ViewModel; the result page's `FilingCardController` owns
  * the coroutines.
  */
 class FilingSuggestionModel(
@@ -295,10 +295,19 @@ class FilingSuggestionModel(
      * final transcript as the screen holds it — read only if the uploaded meta
      * somehow carries none, since the stored one is what every other device
      * reads. Never throws: any failure is "no suggestion".
+     *
+     * [named] / [filed]: the user gave the meeting its name or its folder on the
+     * record screen while it recorded, so that half is not offered — see
+     * [FilingPass.generate].
      */
-    suspend fun run(recordingId: String, spoken: List<TranscriptSegment>) {
+    suspend fun run(
+        recordingId: String,
+        spoken: List<TranscriptSegment>,
+        named: Boolean = false,
+        filed: Boolean = false,
+    ) {
         val offered = try {
-            suggest(recordingId, spoken)
+            suggest(recordingId, spoken, named, filed)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
@@ -315,7 +324,12 @@ class FilingSuggestionModel(
         _state.value = offered
     }
 
-    private suspend fun suggest(recordingId: String, spoken: List<TranscriptSegment>): FilingUiState? {
+    private suspend fun suggest(
+        recordingId: String,
+        spoken: List<TranscriptSegment>,
+        named: Boolean,
+        filed: Boolean,
+    ): FilingUiState? {
         // The cloud's meta rather than what the screen remembers: it is what
         // the server holds — the title and folder the upload actually wrote,
         // the names typed for the speakers — and it says whether another
@@ -323,7 +337,8 @@ class FilingSuggestionModel(
         // produced before it returns, so the offer below is the same one the
         // desktop and the recording page will see if this one goes unanswered.
         val pass = this.pass ?: return null
-        val generated = pass.generate(recordingId, fallbackSegments = spoken) ?: return null
+        val generated = pass.generate(recordingId, fallbackSegments = spoken, named = named, filed = filed)
+            ?: return null
         return FilingUiState(
             phase = FilingPhase.OFFERING,
             suggestion = generated.suggestion,

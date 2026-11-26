@@ -529,6 +529,29 @@ class FilingSuggesterTest {
         assertNull(chat.sent)
     }
 
+    // ── halves the user answered while recording ─────────────────────────────
+
+    /**
+     * A name typed during the meeting is never proposed over, and a folder
+     * picked then is never second-guessed; nothing left is null. iOS
+     * `FilingPassTests.testAnsweringStripsTheHalvesTheUserGave`.
+     */
+    @Test
+    fun `answering strips the halves the user gave`() {
+        val full = FilingSuggestion(
+            title = "Acme renewal terms",
+            folders = listOf(FilingFolderSuggestion("f-acme", "Acme", "customer")),
+        )
+        assertEquals(full, full.answering(named = false, filed = false))
+        assertEquals("", full.answering(named = true, filed = false)?.title)
+        assertEquals(full.folders, full.answering(named = true, filed = false)?.folders)
+        assertEquals("Acme renewal terms", full.answering(named = false, filed = true)?.title)
+        assertEquals(emptyList<FilingFolderSuggestion>(), full.answering(named = false, filed = true)?.folders)
+        assertNull(full.answering(named = true, filed = true))
+        assertNull(FilingSuggestion("Acme", emptyList()).answering(named = true, filed = false))
+        assertNull(FilingSuggestion("", full.folders).answering(named = false, filed = true))
+    }
+
     private companion object {
         const val FITS = "fits"
         const val CUSTOMER = "customer"

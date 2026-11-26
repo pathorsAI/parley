@@ -66,6 +66,15 @@ data class PendingUpload(
      * Null = an ordinary pending upload.
      */
     val parked: ParkedUpload? = null,
+    /**
+     * The user named the meeting, or picked its folder, on the record screen
+     * while it was recording. The title is in [title] and the folder in
+     * [folderId] / [shareOrgId] either way; these only say the choice was
+     * theirs, so the filing pass does not propose over it. False on an import
+     * and on every manifest written before they existed (decoded by default).
+     */
+    val namedByUser: Boolean = false,
+    val filedByUser: Boolean = false,
 )
 
 /**
