@@ -6,6 +6,7 @@ export interface ReleaseNotes {
 }
 
 const LATEST_RELEASE_API = "https://api.github.com/repos/pathorsAI/parley/releases/latest";
+const RELEASE_BY_TAG_API = "https://api.github.com/repos/pathorsAI/parley/releases/tags/";
 const PENDING_NOTES_KEY = "parley.pendingReleaseNotes";
 const SEEN_NOTES_KEY = "parley.seenReleaseNotesVersion";
 
@@ -63,8 +64,16 @@ export function markReleaseNotesSeen(version: string): void {
   storage()?.setItem(SEEN_NOTES_KEY, normalizeVersion(version));
 }
 
-export async function fetchLatestReleaseNotes(): Promise<ReleaseNotes> {
-  const response = await fetch(LATEST_RELEASE_API, {
+interface GitHubRelease {
+  tag_name?: unknown;
+  name?: unknown;
+  body?: unknown;
+  html_url?: unknown;
+  published_at?: unknown;
+}
+
+async function fetchRelease(url: string): Promise<ReleaseNotes> {
+  const response = await fetch(url, {
     headers: {
       Accept: "application/vnd.github+json",
     },
@@ -73,13 +82,7 @@ export async function fetchLatestReleaseNotes(): Promise<ReleaseNotes> {
     throw new Error(`GitHub release lookup failed (${response.status})`);
   }
 
-  const data = (await response.json()) as {
-    tag_name?: unknown;
-    name?: unknown;
-    body?: unknown;
-    html_url?: unknown;
-    published_at?: unknown;
-  };
+  const data = (await response.json()) as GitHubRelease;
   let rawVersion = "";
   if (typeof data.tag_name === "string") {
     rawVersion = data.tag_name;
@@ -92,4 +95,35 @@ export async function fetchLatestReleaseNotes(): Promise<ReleaseNotes> {
     url: typeof data.html_url === "string" ? data.html_url : undefined,
     publishedAt: typeof data.published_at === "string" ? data.published_at : undefined,
   };
+}
+
+export async function fetchLatestReleaseNotes(): Promise<ReleaseNotes> {
+  return fetchRelease(LATEST_RELEASE_API);
+}
+
+/** The GitHub release notes for one exact version (tag `v<version>`). */
+export async function fetchReleaseNotesForVersion(version: string): Promise<ReleaseNotes> {
+  return fetchRelease(`${RELEASE_BY_TAG_API}v${encodeURIComponent(normalizeVersion(version))}`);
+}
+
+/**
+ * The notes the post-update dialog should show, or null when there is nothing
+ * to show. The update payload's body is empty whenever the feed carries no
+ * `notes` (the cloud channel's latest.json didn't until v0.37.8), and a dialog
+ * with only a title reads as broken — so an empty body is filled from the
+ * GitHub release for that exact version, and if that is empty or unreachable
+ * too, the dialog is skipped rather than opened blank.
+ */
+export async function resolveInstalledReleaseNotes(
+  notes: ReleaseNotes,
+  fetchForVersion: (version: string) => Promise<ReleaseNotes> = fetchReleaseNotesForVersion,
+): Promise<ReleaseNotes | null> {
+  if (notes.body.trim()) return notes;
+  try {
+    const fetched = await fetchForVersion(notes.version);
+    if (!fetched.body.trim()) return null;
+    return { ...fetched, version: notes.version };
+  } catch {
+    return null;
+  }
 }

@@ -59,6 +59,7 @@ import { checkForUpdate } from "./lib/update";
 import {
   getPendingInstalledReleaseNotes,
   markReleaseNotesSeen,
+  resolveInstalledReleaseNotes,
   type ReleaseNotes,
 } from "./lib/releaseNotes";
 import { refreshSession } from "./lib/cloud/client";
@@ -288,9 +289,14 @@ const App = () => {
   useEffect(() => {
     if (!isTauri()) return;
     getVersion()
-      .then((version) => {
-        const notes = getPendingInstalledReleaseNotes(version);
+      .then(async (version) => {
+        const pending = getPendingInstalledReleaseNotes(version);
+        if (!pending) return;
+        const notes = await resolveInstalledReleaseNotes(pending);
+        // Nothing to say for this version: count it as seen instead of opening
+        // an empty dialog (and asking again on every launch).
         if (notes) setReleaseNotes(notes);
+        else markReleaseNotesSeen(version);
       })
       .catch((error) => log.warn("update: installed release notes lookup failed", { error: String(error) }));
   }, []);

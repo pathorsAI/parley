@@ -90,20 +90,33 @@ async function runUpdate(): Promise<void> {
           toast.loading(t("update.downloadingPct", { pct }), { id: TOAST_ID, duration: Infinity });
         }
       } else if (e.event === "Finished") {
-        log.info("update: download finished, installed");
+        // "Finished" is the end of the DOWNLOAD. The signature is verified and
+        // the bundle installed only after this, so don't call it installed yet.
+        log.info("update: download finished, verifying + installing");
       }
     });
     installed = true;
     log.info("update: relaunching into the new version");
     await relaunch(); // never returns on success
   } catch (e) {
-    // downloadAndInstall failed, so nothing will relaunch: drop the marker
-    // rather than let it surface the window at some unrelated later launch. A
-    // failed relaunch() keeps it — the update is staged and the user reopens
-    // by hand, which shows the window anyway.
-    if (!installed) ipc.clearShowOnNextLaunch().catch(() => {});
+    if (!installed) {
+      // downloadAndInstall failed (network, or "The signature verification
+      // failed" when the feed's signature doesn't match the file it points
+      // at). NOTHING was installed, so telling the user to reopen would just
+      // land them back on the old version and the same prompt. Drop the
+      // show-on-next-launch marker (nothing will relaunch) and offer a retry.
+      ipc.clearShowOnNextLaunch().catch(() => {});
+      log.warn("update: install failed", { version: pending.version, error: String(e) });
+      toast.error(t("update.failed"), {
+        id: TOAST_ID,
+        duration: Infinity,
+        action: { label: t("update.retry"), onClick: () => void runUpdate() },
+      });
+      return;
+    }
     // Install finished but the auto-relaunch failed (e.g. App Translocation) —
-    // the new version IS staged, so tell the user to reopen rather than fail silently.
+    // the new version IS staged, so tell the user to reopen rather than fail
+    // silently. The marker stays: the manual reopen shows the window anyway.
     log.warn("update: relaunch failed", { error: String(e) });
     toast.error(t("update.reopen"), { id: TOAST_ID, duration: Infinity });
   }
