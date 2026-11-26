@@ -31,13 +31,14 @@ struct LiveView: View {
     /// notices that dot opens Parley and lands *here*, and a record screen that
     /// says "not recording" while the indicator is on reads as a lie.
     @ObservedObject private var dictation = DictationCoordinator.shared
-    /// The name-and-folder suggestion for the recording that just finished. It
-    /// owns the pass and its own accepted state, so this view only has to say
-    /// where the block goes and when a new recording retires it.
-    @StateObject private var filing = FilingSuggestionModel()
-    /// The meeting the `mic_recovery` prompt is about, when it is up. Latched
-    /// on the meeting ending — see `MeetingRecorder.micRecoveries` — and
-    /// cleared by the next meeting, a send, or ✕.
+    /// Where a meeting goes once its upload settles: its result page on the
+    /// Library tab. See `TabRouter.openEndedMeeting`.
+    @EnvironmentObject private var router: TabRouter
+    /// The meeting the `mic_recovery` prompt is about, when it is up here.
+    /// Only for a meeting whose upload did NOT settle — one that did is asked
+    /// about on its result page instead (`RecordingDetailView`). Latched once
+    /// the upload has an outcome, and cleared by the next meeting, a send, or
+    /// ✕.
     @State private var micPrompt: MeetingRecorder.FinishedMeeting?
     @State private var showDiscardConfirm = false
     /// The folder picker for the meeting in progress.
@@ -110,32 +111,39 @@ struct LiveView: View {
             .onChange(of: recorder.lostMicrophone) {
                 if recorder.lostMicrophone { Task { await recorder.stop(app: app) } }
             }
-            // `mic_recovery`: asked once, as the meeting it is about ends.
+            // The next meeting starting (or the handoff below) clears the
+            // meeting the prompt was about, and the prompt with it.
             .onChange(of: recorder.finished?.id) {
-                guard let finished = recorder.finished else {
-                    micPrompt = nil
-                    return
-                }
-                guard FeedbackConditions.isMicRecoveryWorthAsking(finished.micRecoveries),
-                    FeedbackCenter.shared.mayOffer(.micRecovery, recordingId: finished.id)
+                if recorder.finished == nil { micPrompt = nil }
+            }
+            // `mic_recovery` on this screen: asked once the upload has an
+            // outcome and it was not a settled one. Not on `finished` itself,
+            // which is set before the upload is even tried: a prompt that went
+            // up during "Uploading…" would be whisked away by the handoff a
+            // second later, its one showing spent on nobody reading it.
+            .onChange(of: recorder.isBusy) {
+                guard !recorder.isBusy, recorder.settled == nil,
+                    let finished = recorder.finished, finished.offersMicRecoveryPrompt
                 else { return }
                 withAnimation { micPrompt = finished }
             }
-            // Keyed on the settled recording rather than on the meeting ending:
-            // the suggestion is a write against a recording the cloud already
-            // holds, so it cannot be offered before the upload lands. The
-            // recorder clears `settled` when the next meeting starts, which is
-            // what takes the previous block down.
+            // End, as on the desktop, ends on the recording's result page. Keyed
+            // on the settled recording rather than on the meeting ending: the
+            // page reads the recording from the cloud, so it cannot open before
+            // the upload lands. Until then the disc keeps its "Wrapping up…"
+            // spinner; an upload that never settles (background, quota,
+            // offline, too short) stays here with its status line, as before.
+            //
+            // The recorder is cleared in the same beat, so coming back to
+            // Record finds the screen for the next meeting rather than the
+            // transcript of one that now has a page of its own. The filing
+            // suggestion and the mic prompt travel with the handoff.
             .onChange(of: recorder.settled?.id) {
-                if let settled = recorder.settled {
-                    // A rename or a filing accepted on this card changes a
-                    // row the Library tab already has on screen; tell it, or
-                    // going over there shows the clock name it loaded first.
-                    filing.onApplied = { _, _, _ in app.noteLibraryChanged() }
-                    filing.consider(settled, app: app)
-                } else {
-                    filing.forget()
-                }
+                guard let settled = recorder.settled else { return }
+                router.openEndedMeeting(
+                    EndedMeeting(settled: settled, finished: recorder.finished))
+                micPrompt = nil
+                recorder.clearEndedMeeting()
             }
             // A new meeting is a new transcript, and its folder chip needs the
             // folder names to say where the default sends it.
@@ -148,7 +156,7 @@ struct LiveView: View {
             .sheet(isPresented: $choosingFolder) { folderPicker }
             #if DEBUG
                 .task {
-                    ScreenshotDemo.seedRecordScreen(recorder, filing: filing)
+                    ScreenshotDemo.seedRecordScreen(recorder)
                     if recorder.isInMeeting { await loadFolders() }
                 }
             #endif
@@ -176,18 +184,6 @@ struct LiveView: View {
             isEmpty: recorder.segments.isEmpty)
     }
 
-    private func sendMicReport(_ meeting: MeetingRecorder.FinishedMeeting) {
-        let context = FeedbackDiagnostics.Context(
-            recordingId: meeting.id, recordingDurationMs: Int(meeting.durationMs),
-            transcriptSegments: meeting.transcriptSegments,
-            lastSegmentEndMs: Int(meeting.lastSegmentEndMs),
-            micRecoveries: meeting.micRecoveries)
-        Task {
-            await FeedbackCenter.shared.send(
-                .micRecovery, recordingId: meeting.id, context: context)
-        }
-    }
-
     // MARK: - Between meetings
 
     /// The transcript of the meeting that just ended (or the empty state),
@@ -196,9 +192,10 @@ struct LiveView: View {
         VStack(spacing: 0) {
             // Before a meeting, the heading is the next one's: name it and
             // pick its folder now, and the recording starts under them. With
-            // the last meeting's transcript still on screen (and its filing
-            // card under it) the heading would read as that meeting's, so the
-            // page keeps only the copy button for it.
+            // the last meeting's transcript still on screen — an upload that
+            // did not settle, so no result page took it — the heading would
+            // read as that meeting's, so the page keeps only the copy button
+            // for it.
             if recorder.segments.isEmpty {
                 meetingHeading
             } else {
@@ -224,13 +221,12 @@ struct LiveView: View {
                         "The microphone dropped \(micPrompt.micRecoveries) times during this recording."),
                     send: {
                         self.micPrompt = nil
-                        sendMicReport(micPrompt)
+                        micPrompt.sendMicRecoveryReport()
                     },
                     close: { withAnimation { self.micPrompt = nil } })
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
             }
-            FilingSuggestionCard(model: filing)
             if dictation.window.isOpen() {
                 micWindowBar
             }

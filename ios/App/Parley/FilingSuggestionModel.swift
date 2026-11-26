@@ -10,8 +10,8 @@ import SwiftUI
 /// was a dead end rather than an annoyance. Neither answer can be produced any
 /// earlier than this: a name worth having needs a transcript to read, and the
 /// right folder needs somebody to know what the meeting was about. So the offer
-/// arrives at the end of the recording, on the screen the user is still looking
-/// at.
+/// arrives at the end of the recording, at the top of its result page — where
+/// ending a meeting now lands, as the desktop's End lands on the report.
 ///
 /// It waits for the UPLOAD to settle, not for the microphone to stop. A rename
 /// or a re-file is a write against a recording the server has to already hold;
@@ -52,13 +52,13 @@ import SwiftUI
 /// worth taking. `forget()` clears them with the rest of the offer, because the
 /// next recording gets its own to answer.
 ///
-/// ## Two screens, two kinds of recording
+/// ## Two ways in, two kinds of recording
 ///
-/// The record screen asks for the pass (`consider`) for the recording that
-/// just landed — joining the one the upload already started (`FilingPass`),
-/// which persists its answer into the meta before handing it over. The
-/// recording screen shows a suggestion that is already *pending* on the
-/// recording (`present`): any pass — this phone's on an import or a queued
+/// A result page opened because its meeting just ended asks for the pass
+/// (`consider`) for the recording that just landed — joining the one the
+/// upload already started (`FilingPass`), which persists its answer into the
+/// meta before handing it over. Opened any other way, the page shows a
+/// suggestion that is already *pending* on the recording (`present`): any pass — this phone's on an import or a queued
 /// upload, or the desktop's — leaves one in the synced meta's
 /// `filingSuggestion`, and the bundled sample ships with one. The
 /// writes differ only in where they land — `Target` — and both answer the
@@ -112,7 +112,7 @@ final class FilingSuggestionModel: ObservableObject {
     var onRetired: (() -> Void)?
     /// The recording the pass has already been spent on. Kept separately from
     /// `target`, and NOT cleared by `forget()`: a dismissed card must stay
-    /// dismissed, and this view is re-entered every time the tab comes back.
+    /// dismissed, and the page's `task` runs again every time it reappears.
     private var consideredId: String?
     /// The user has answered the name half of this offer — with the proposed
     /// name or with one of their own, it makes no difference. Set by `apply`,
@@ -213,11 +213,9 @@ final class FilingSuggestionModel: ObservableObject {
         }
     }
 
-    /// Drop the suggestion without writing anything. Used when a new meeting
-    /// starts — the card belongs to the recording that just ended, and leaving
-    /// it up over the next one would offer a rename for a recording the user
-    /// has moved on from — and by the routes that have finished with the offer
-    /// AFTER their own write landed (`dismiss`, the Adjust sheet's Save).
+    /// Drop the suggestion without writing anything. Used by the routes that
+    /// have finished with the offer AFTER their own write landed (`dismiss`,
+    /// the Adjust sheet's Save).
     ///
     /// It clears `target`, so a write ordered after this one is a no-op:
     /// retire the offer once the push it was answered with has returned, never
@@ -283,10 +281,9 @@ final class FilingSuggestionModel: ObservableObject {
         // to offer", and the recording is already safely in the cloud
         // under its clock name either way.
         guard let proposal = await proposal else { return }
-        // A new meeting cancels the pass through `forget()`. Nothing after
-        // an await is guaranteed to still be wanted, and a card that
-        // reappeared over the recording that replaced it would be offering
-        // a rename for the wrong meeting.
+        // A dismiss cancels the pass through `forget()`. Nothing after an
+        // await is guaranteed to still be wanted, and a card that reappeared
+        // after the user said no would be asking a question already answered.
         guard !Task.isCancelled else { return }
         target = .cloud(id: settled.id)
         currentTitle = settled.title

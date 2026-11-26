@@ -127,10 +127,12 @@ final class MeetingRecorder: ObservableObject {
     /// until an upload settles, and nil again the moment the next meeting
     /// starts.
     ///
-    /// This is the beat the filing suggestion hangs off, rather than the
-    /// microphone stopping: renaming or re-filing a recording is a write
-    /// against something the server has to already hold, so the earliest
-    /// honest moment to offer one is here. See `FilingSuggestionModel`.
+    /// This is the beat the record screen hands the meeting to its result
+    /// page on (`TabRouter.openEndedMeeting`), and so the beat the filing
+    /// suggestion hangs off, rather than the microphone stopping: opening a
+    /// recording, renaming or re-filing it are all things the server has to
+    /// already hold it for. Cleared by `clearEndedMeeting` once handed over.
+    /// See `FilingSuggestionModel`.
     @Published private(set) var settled: Settled?
 
     /// The meeting's name, as typed on the live screen while it records. Blank
@@ -175,6 +177,28 @@ final class MeetingRecorder: ObservableObject {
         let micRecoveries: Int
         let transcriptSegments: Int
         let lastSegmentEndMs: UInt64
+
+        /// Whether this meeting's microphone dropped often enough to ask about,
+        /// and the prompt has not been used up on it. Shared by the two places
+        /// the prompt can appear: the result page, for a meeting whose upload
+        /// settled, and the record screen for one that did not.
+        @MainActor var offersMicRecoveryPrompt: Bool {
+            FeedbackConditions.isMicRecoveryWorthAsking(micRecoveries)
+                && FeedbackCenter.shared.mayOffer(.micRecovery, recordingId: id)
+        }
+
+        /// Send the `mic_recovery` report for this meeting.
+        @MainActor func sendMicRecoveryReport() {
+            let context = FeedbackDiagnostics.Context(
+                recordingId: id, recordingDurationMs: Int(durationMs),
+                transcriptSegments: transcriptSegments,
+                lastSegmentEndMs: Int(lastSegmentEndMs),
+                micRecoveries: micRecoveries)
+            let id = id
+            Task {
+                await FeedbackCenter.shared.send(.micRecovery, recordingId: id, context: context)
+            }
+        }
     }
 
     /// A recording the cloud has accepted. Carries the transcript too: the pass
@@ -513,6 +537,27 @@ final class MeetingRecorder: ObservableObject {
         meetingFolder = nil
         status = nil
         phase = .idle
+    }
+
+    /// Put the record screen back to "before a meeting" once the meeting that
+    /// just ended has been handed to its result page: its transcript, its
+    /// settled upload, its finished note and its status line all belong to
+    /// that page now, and leaving them here would make the Record tab read as
+    /// the last meeting's screen instead of the next one's.
+    ///
+    /// The title and folder are not touched: `upload` already cleared them,
+    /// and anything in them now was typed for the next meeting. A meeting in
+    /// progress is never cleared — a new one may have started between the
+    /// handoff being asked for and this running.
+    func clearEndedMeeting() {
+        guard !isInMeeting, phase != .finishing else { return }
+        segments = []
+        settled = nil
+        finished = nil
+        status = nil
+        clock = nil
+        startedAt = nil
+        transcription = .idle
     }
 
     // MARK: relay
@@ -957,19 +1002,6 @@ final class MeetingRecorder: ObservableObject {
     }
 
     #if DEBUG
-        /// ScreenshotDemo: the beat after a meeting — the transcript complete,
-        /// the upload landed, nothing running. `settled` is deliberately left
-        /// nil: the filing suggestion is seeded straight into its own model
-        /// (`FilingSuggestionModel.seedDemo`) rather than through the pass,
-        /// which would need the network the demo exists to avoid.
-        func seedDemoSettled(segments: [TranscriptSegment], status: String) {
-            self.segments = segments
-            self.status = status
-            phase = .idle
-            transcription = .idle
-            clock = nil
-        }
-
         /// ScreenshotDemo: put the screen in the state worth capturing — a
         /// meeting already in progress, named and filed on the live screen —
         /// with no microphone and no network. `paused` seeds the paused state.

@@ -46,7 +46,7 @@ ROUTES=(
   "record:Record tab, a meeting in progress, named and filed"
   "record-idle:Record tab before a meeting starts"
   "record-paused:the same meeting, paused"
-  "settled:a meeting just finished, named live, its folder on offer"
+  "settled:a meeting just ended: its result page, the filing card on top"
   "adjust:the same, with the filing sheet open"
   "library:Library tab"
   "transcript:a recording's transcript"
