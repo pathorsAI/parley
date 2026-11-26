@@ -3692,24 +3692,6 @@
         }
       }
     },
-    "Meeting tabs" : {
-      "comment" : "Accessibility label of the live screen's tab strip",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Meeting tabs"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "會議分頁"
-          }
-        }
-      }
-    },
     "Meeting: %1$@ (%2$@)" : {
       "extractionState" : "manual",
       "localizations" : {

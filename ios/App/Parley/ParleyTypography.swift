@@ -73,9 +73,6 @@ struct ParleyTypography {
     var subheadlineEmphasized: Font {
         Font.custom(Face.medium, size: 15, relativeTo: .subheadline)
     }
-    /// Bold at subheadline size: the selected tab of the live screen's tab
-    /// strip, which reads as the one chosen without a fill of its own.
-    var subheadlineBold: Font { Font.custom(Face.bold, size: 15, relativeTo: .subheadline) }
 
     // MARK: - Display (Alexandria)
 

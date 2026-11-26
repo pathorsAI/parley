@@ -46,9 +46,6 @@ struct LiveView: View {
     /// lists them, and the folder chip names the default destination with
     /// them before anything has been picked.
     @State private var folders: [CloudFolder] = []
-    /// The live tab the panel shows. One today; the strip is drawn for the
-    /// desktop's three (`LiveTab`).
-    @State private var tab: LiveTab = .transcript
     @FocusState private var titleFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -146,7 +143,6 @@ struct LiveView: View {
                 guard recorder.isInMeeting else { return }
                 followsLive = true
                 segmentsWhenLeft = 0
-                tab = .transcript
                 Task { await loadFolders() }
             }
             .sheet(isPresented: $choosingFolder) { folderPicker }
@@ -216,7 +212,7 @@ struct LiveView: View {
                 }
                 .padding(.horizontal, 8)
             }
-            tabbedPanel
+            transcriptPanel
             // Above the dock, not in the transcript: it is about the
             // recording that just ended, and it must not scroll away with
             // the words.
@@ -253,7 +249,7 @@ struct LiveView: View {
         VStack(spacing: 0) {
             warningStrip
             meetingHeading
-            tabbedPanel
+            transcriptPanel
             controlDock
         }
         .confirmationDialog(
@@ -658,73 +654,22 @@ struct LiveView: View {
         }
     }
 
-    // MARK: Tabs and panel
+    // MARK: Panel
 
-    /// The desktop's tab strip: the selected tab rises into the rounded panel
-    /// below it, the two one muted surface. Drawn with room for the desktop's
-    /// three tabs — Notes and Coach are still to come on the phone — so the one
-    /// tab there is sits where it will stay rather than stretching across.
-    private var tabbedPanel: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(LiveTab.allCases) { item in
-                    tabButton(item)
-                }
-                ForEach(LiveTab.allCases.count..<LiveTab.slots, id: \.self) { _ in
-                    Color.clear.frame(maxWidth: .infinity, maxHeight: 1)
-                }
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(Text("Meeting tabs"))
-            Group {
-                switch tab {
-                case .transcript: transcript(inPanel: true)
-                }
-            }
+    /// The transcript on the desktop's muted, rounded panel. No tab strip and
+    /// no label: while recording the phone shows the transcript and nothing
+    /// else, so a lone 逐字稿 tab only named what is plainly there. When Notes
+    /// or Coach come to the phone, the desktop's tabs come back above it.
+    private var transcriptPanel: some View {
+        transcript(inPanel: true)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: tab == LiveTab.allCases.first ? 0 : 12,
-                    bottomLeadingRadius: 12, bottomTrailingRadius: 12, topTrailingRadius: 12,
-                    style: .continuous
-                )
-                .fill(Color(.quaternarySystemFill)))
-            .clipShape(
-                UnevenRoundedRectangle(
-                    topLeadingRadius: tab == LiveTab.allCases.first ? 0 : 12,
-                    bottomLeadingRadius: 12, bottomTrailingRadius: 12, topTrailingRadius: 12,
-                    style: .continuous))
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, 12)
-    }
-
-    /// One tab of the strip, after the desktop's `TabButton`: the selected
-    /// one bold in the primary blue on the panel's own surface, rounded only
-    /// along its top so it reads as part of the panel; the rest quiet text.
-    private func tabButton(_ item: LiveTab) -> some View {
-        let active = tab == item
-        return Button {
-            tab = item
-        } label: {
-            Text(item.title)
-                .font(active ? .parley.subheadlineBold : .parley.subheadlineEmphasized)
-                .foregroundStyle(active ? Theme.primary : Color(.secondaryLabel))
-                .lineLimit(1)
-                .frame(maxWidth: .infinity)
-                .padding(.top, 11)
-                .padding(.bottom, active ? 12 : 10)
-                .background(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 10, bottomLeadingRadius: 0,
-                        bottomTrailingRadius: 0, topTrailingRadius: 10, style: .continuous
-                    )
-                    .fill(active ? Color(.quaternarySystemFill) : Color.clear))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(active ? [.isSelected] : [])
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.quaternarySystemFill)))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 12)
     }
 
     // MARK: Pause and End
@@ -1254,23 +1199,6 @@ struct LiveView: View {
             // The gate in RootView normally keeps this unreachable, but a
             // session can expire while the app is open and on this screen.
             app.signIn()
-        }
-    }
-}
-
-/// The meeting panel's tabs, left to right. Only the transcript so far; the
-/// desktop's Notes and Coach join when the phone has them, and `slots` is the
-/// width the strip is drawn for so adding one does not reflow the others.
-private enum LiveTab: CaseIterable, Identifiable {
-    case transcript
-
-    static let slots = 3
-
-    var id: Self { self }
-
-    var title: LocalizedStringKey {
-        switch self {
-        case .transcript: return "Transcript"
         }
     }
 }
