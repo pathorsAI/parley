@@ -76,6 +76,27 @@ describe("update & restart", () => {
     expect(m.toast.error).toHaveBeenCalled();
   });
 
+  it("says the update failed (not 'reopen') when nothing was installed, and offers a retry", async () => {
+    // A bad signature used to surface as "installed, please reopen": the user
+    // reopened into the old version and got the same prompt, forever.
+    const update = fakeUpdate("fails");
+    await clickUpdateAndRestart(update);
+    await vi.waitFor(() => expect(m.toast.error).toHaveBeenCalled());
+    const [message, options] = m.toast.error.mock.lastCall as [string, { action?: { label: string; onClick: () => void } }];
+    expect(message).toMatch(/didn't install/);
+    expect(message).not.toMatch(/reopen/);
+    expect(options.action?.label).toBe("Retry");
+    options.action?.onClick();
+    await vi.waitFor(() => expect(update.downloadAndInstall).toHaveBeenCalledTimes(2));
+  });
+
+  it("tells the user to reopen only when the install succeeded and the relaunch didn't", async () => {
+    m.relaunch.mockRejectedValue(new Error("translocated"));
+    await clickUpdateAndRestart(fakeUpdate("installs"));
+    await vi.waitFor(() => expect(m.toast.error).toHaveBeenCalled());
+    expect(m.toast.error.mock.lastCall?.[0]).toMatch(/reopen/);
+  });
+
   it("keeps the marker when only the relaunch fails: the update is staged", async () => {
     m.relaunch.mockImplementation(async () => {
       m.calls.push("relaunch");

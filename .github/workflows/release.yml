@@ -281,13 +281,20 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         shell: bash
         run: |
           set -euxo pipefail
           BUNDLE="src-tauri/target/aarch64-apple-darwin/release/bundle"
           TARGZ="${BUNDLE}/macos/Parley.app.tar.gz"
           DMG="$(ls "${BUNDLE}"/dmg/Parley_*_aarch64.dmg | head -1)"
-          bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley.app.tar.gz" --file "${TARGZ}" --remote
+          # The updater feed points at a VERSIONED key. The unversioned one is
+          # overwritten here, before compose-updater runs, so a feed that still
+          # names the previous version would pair its signature with this build
+          # ("The signature verification failed" for every user) for as long as
+          # the Windows job or compose-updater hasn't finished — forever, if one
+          # of them fails (v0.37.7). A versioned key is never overwritten.
+          bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley-${VERSION}.app.tar.gz" --file "${TARGZ}" --remote
           bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley.dmg" --file "${DMG}" --remote
           # Stage the updater signature for the compose-updater job.
           mkdir -p updater-sig
@@ -431,11 +438,15 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         shell: bash
         run: |
           set -euxo pipefail
           BUNDLE="src-tauri/target/x86_64-pc-windows-msvc/release/bundle"
           SETUP="$(ls "${BUNDLE}"/nsis/Parley_*_x64-setup.exe | head -1)"
+          # Versioned key for the updater feed (see the macOS step for why);
+          # the unversioned one stays for the website's download button.
+          bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley-${VERSION}-setup.exe" --file "${SETUP}" --remote
           bunx wrangler@4.115.0 r2 object put "parley-recordings/downloads/Parley-setup.exe" --file "${SETUP}" --remote
           # Stage the updater signature for the compose-updater job.
           mkdir -p updater-sig
@@ -475,6 +486,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          # The "what's new" dialog after an update shows this. Without it the
+          # updater hands the app an empty body and the dialog opened blank.
+          NOTES: ${{ needs.prepare.outputs.body }}
         shell: bash
         run: |
           set -euxo pipefail
@@ -483,15 +497,16 @@ jobs:
             const sig = (f) => fs.readFileSync(`sigs/${f}`, "utf8").trim();
             fs.writeFileSync("latest.json", JSON.stringify({
               version: process.env.VERSION,
+              notes: process.env.NOTES || "",
               pub_date: new Date().toISOString(),
               platforms: {
                 "darwin-aarch64": {
                   signature: sig("darwin-aarch64.sig"),
-                  url: "https://api.parley.tw/download/Parley.app.tar.gz",
+                  url: `https://api.parley.tw/download/Parley-${process.env.VERSION}.app.tar.gz`,
                 },
                 "windows-x86_64": {
                   signature: sig("windows-x86_64.sig"),
-                  url: "https://api.parley.tw/download/Parley-setup.exe",
+                  url: `https://api.parley.tw/download/Parley-${process.env.VERSION}-setup.exe`,
                 },
               },
             }, null, 2));
