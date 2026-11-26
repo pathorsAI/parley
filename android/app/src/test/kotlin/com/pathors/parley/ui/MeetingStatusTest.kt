@@ -132,10 +132,12 @@ class MeetingStatusTest {
     }
 
     @Test
-    fun `the empty transcript invites a recording until the microphone is open`() {
+    fun `the empty panel invites a recording before a meeting and listens during one`() {
         assertEquals(R.string.meeting_idle_hint, emptyTranscriptRes(MeetingState.Idle))
-        assertEquals(R.string.meeting_idle_hint, emptyTranscriptRes(MeetingState.Connecting))
-        assertEquals(R.string.meeting_transcript_empty, emptyTranscriptRes(MeetingState.Recording))
+        assertEquals(R.string.meeting_listening, emptyTranscriptRes(MeetingState.Connecting))
+        assertEquals(R.string.meeting_listening, emptyTranscriptRes(MeetingState.Recording))
+        assertEquals(R.string.meeting_listening, emptyTranscriptRes(MeetingState.Paused))
+        assertEquals(R.string.meeting_idle_hint, emptyTranscriptRes(finished()))
     }
 
     @Test
@@ -177,4 +179,49 @@ class MeetingStatusTest {
         dropped = false,
         interruptedBy = interruptedBy,
     )
+
+    @Test
+    fun `the meeting layout stays up while the last sentence drains`() {
+        assertTrue(showsMeeting(MeetingState.Connecting))
+        assertTrue(showsMeeting(MeetingState.Recording))
+        assertTrue(showsMeeting(MeetingState.Paused))
+        assertTrue(showsMeeting(MeetingState.Finishing))
+        assertFalse(showsMeeting(MeetingState.Idle))
+        assertFalse(showsMeeting(MeetingState.Uploading))
+        assertFalse(showsMeeting(finished()))
+    }
+
+    @Test
+    fun `only a meeting the user ended and the cloud has opens its result page`() {
+        fun done(
+            pending: Boolean = false,
+            dropped: Boolean = false,
+            id: String? = "rec-1",
+            interrupted: MeetingFailure? = null,
+        ) = MeetingState.Finished(id, pendingUpload = pending, dropped = dropped, interruptedBy = interrupted)
+
+        assertTrue(endsOnResultPage(done()))
+        assertFalse("offline, the quota or a refusal", endsOnResultPage(done(pending = true)))
+        assertFalse("too short to keep", endsOnResultPage(done(dropped = true, id = null)))
+        assertFalse("cut short, not ended", endsOnResultPage(done(interrupted = MeetingFailure.MIC_UNAVAILABLE)))
+        assertFalse(endsOnResultPage(MeetingState.Failed(MeetingFailure.UNKNOWN)))
+        assertFalse(endsOnResultPage(MeetingState.Uploading))
+    }
+
+    @Test
+    fun `one warning at a time, the recording's own trouble first`() {
+        val lost = MicLine.Lost(CaptureRecovery.Loss.TakenBySystem)
+        val reconnecting = TranscriptionIssue.RECONNECTING
+        assertEquals(MeetingWarning.Mic(lost), currentWarning(lost, storageLow = true, issue = reconnecting))
+        assertEquals(MeetingWarning.StorageLow, currentWarning(MicLine.Back, storageLow = true, issue = reconnecting))
+        assertEquals(
+            MeetingWarning.Transcription(reconnecting),
+            currentWarning(MicLine.Back, storageLow = false, issue = reconnecting),
+        )
+        assertEquals(MeetingWarning.Mic(MicLine.Back), currentWarning(MicLine.Back, storageLow = false, issue = null))
+        assertNull(currentWarning(null, storageLow = false, issue = null))
+        assertEquals(NoticeTone.RECONNECTING, MeetingWarning.Transcription(reconnecting).tone)
+        assertEquals(NoticeTone.INFO, MeetingWarning.Mic(MicLine.Back).tone)
+        assertEquals(NoticeTone.ALARM, MeetingWarning.StorageLow.tone)
+    }
 }

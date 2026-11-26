@@ -39,4 +39,18 @@ internal object MeetingIcons {
             fill = SolidColor(Color.Black),
         ).build()
     }
+
+    /** Two bars — Pause, iOS's `pause.fill`; the core set has only Play. */
+    val Pause: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "Pause",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).addPath(
+            pathData = addPathNodes("M6,5h4v14H6zM14,5h4v14h-4z"),
+            fill = SolidColor(Color.Black),
+        ).build()
+    }
 }

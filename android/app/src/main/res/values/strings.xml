@@ -102,26 +102,17 @@
     <string name="meeting_permission_denied">Microphone permission was denied. Parley can\'t record without it.</string>
     <string name="meeting_permission_blocked">Microphone access is turned off for Parley, and Android won\'t ask again. Turn it on in system settings to record.</string>
     <string name="meeting_permission_settings">Open system settings</string>
-    <string name="meeting_discard">Discard</string>
-    <string name="meeting_discard_title">Discard this recording?</string>
-    <string name="meeting_discard_body">The audio and transcript are thrown away. Nothing is saved or uploaded.</string>
-    <string name="meeting_discard_confirm">Discard</string>
     <string name="meeting_latest">Latest</string>
     <string name="meeting_jump_to_latest">Jump to latest</string>
     <string name="meeting_connecting">Connecting…</string>
     <string name="meeting_recording">Recording</string>
-    <string name="meeting_recording_live">Recording · live transcript</string>
     <string name="meeting_paused">Paused</string>
-    <string name="meeting_panel_resize">Resize controls</string>
-    <string name="meeting_panel_expand">Expand controls</string>
-    <string name="meeting_panel_collapse">Collapse controls</string>
     <string name="meeting_finishing">Wrapping up…</string>
     <string name="meeting_uploading">Uploading…</string>
     <string name="meeting_uploaded">Synced to the cloud</string>
     <string name="meeting_queued">Saved on this device. It uploads as soon as the network is back.</string>
     <string name="meeting_dropped">That recording was too short to keep</string>
     <string name="meeting_interrupted">The meeting was cut short, but everything recorded up to that point is saved.</string>
-    <string name="meeting_transcript_empty">The transcript appears here as people speak.</string>
     <string name="meeting_issue_quota">You\'re out of transcription quota — live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs.</string>
     <string name="meeting_issue_reconnecting">Transcription dropped — reconnecting…</string>
     <string name="meeting_issue_stopped">Live transcription stopped. The recording keeps running, and the audio is transcribed in full after it syncs.</string>
@@ -131,7 +122,6 @@
     <string name="meeting_sync_failed">Sync failed for now. The recording is safe on this phone and will retry automatically.</string>
     <string name="meeting_upload_refused">Not uploaded — Parley Cloud didn\'t accept it. The recording is kept on this phone and retries later; tap it under “Waiting to upload” to retry now.</string>
     <string name="meeting_idle_hint">Hit record and put the phone on the table to catch the whole room.</string>
-    <string name="meeting_discard_a11y">Discard recording. Asks you to confirm, then throws the audio and transcript away.</string>
     <string name="meeting_mic_silenced">Another app has taken the microphone — Parley is recording silence until it gives it back.</string>
     <string name="meeting_mic_recovering">Trying to get the microphone back. The recording is still open and picks up where it left off.</string>
     <string name="meeting_mic_lost_taken">Something else is holding the microphone. Everything recorded so far is safe; bring Parley to the front to try again.</string>
@@ -143,6 +133,28 @@
     <string name="meeting_stopped_mic_permission">Stopped early — microphone access was turned off</string>
     <string name="meeting_stopped_storage">Stopped early — this phone ran out of storage</string>
     <string name="meeting_stopped_other">Stopped early — something went wrong</string>
+    <string name="meeting_name_placeholder">Untitled meeting</string>
+    <string name="meeting_name_label">Meeting name</string>
+    <string name="meeting_folder_add">Add to folder</string>
+    <string name="meeting_folder_choose">Choose a folder</string>
+    <string name="meeting_mic">Microphone</string>
+    <string name="meeting_mic_chip">Microphone: %1$s</string>
+    <string name="meeting_input_builtin">Phone microphone</string>
+    <string name="meeting_input_bluetooth">Bluetooth headset</string>
+    <string name="meeting_input_wired">Wired headset</string>
+    <string name="meeting_input_usb">USB microphone</string>
+    <string name="meeting_transcribing_live">Transcribing live</string>
+    <string name="meeting_listening">Listening…</string>
+    <string name="meeting_cancel">Cancel meeting</string>
+    <string name="meeting_cancel_title">Cancel this meeting?</string>
+    <string name="meeting_cancel_body">The transcript and recording will be discarded — nothing is saved and no analysis runs. This cannot be undone.</string>
+    <string name="meeting_cancel_confirm">Discard meeting</string>
+    <string name="meeting_cancel_keep">Keep meeting</string>
+    <string name="meeting_pause">Pause</string>
+    <string name="meeting_resume">Resume</string>
+    <string name="meeting_end">End</string>
+    <string name="meeting_start">Start recording</string>
+    <string name="meeting_warning_reconnecting">Transcription dropped — reconnecting… The recording is still running. What\'s said during a short drop catches up in the transcript; a longer gap is kept in the recording but won\'t appear in the live transcript.</string>
     <string name="meeting_title_format">Meeting %1$s</string>
     <string name="speaker_label">Speaker %1$s</string>
     <string name="speaker_you">You</string>
@@ -514,7 +526,6 @@
     <string name="filing_choose_another">Choose another…</string>
     <string name="filing_skip">Skip suggestion</string>
     <string name="filing_write_failed">That didn\'t save. Try again.</string>
-    <string name="filing_done">Done</string>
     <!-- Not shown. The language the AI title suggestion is written in, which is
          whatever language these resources resolved to (a BCP 47 tag read by
          FilingLanguage.forTag) — the title follows the app, not the meeting. -->
