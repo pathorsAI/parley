@@ -3,10 +3,13 @@ package com.pathors.parley.ui
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.kit.SampleManifest
+import com.pathors.parley.library.FolderFilter
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.playback.AudioDownloadState
 import com.pathors.parley.playback.PlaybackPhase
 import com.pathors.parley.screenshot.DemoMode
+import java.util.Calendar
+import java.util.TimeZone
 
 /**
  * One library row as the screen draws it: the recording, where it is filed,
@@ -54,8 +57,28 @@ internal data class RecordingRowModel(
  */
 internal enum class DownloadAction { DOWNLOAD, REMOVE }
 
-/** The widths [LibraryRules.metaWidths] hands the folder and the date, in pixels. */
-internal data class MetaWidths(val folder: Int, val date: Int)
+/**
+ * Which of the desktop's empty states a list with nothing in it shows — iOS
+ * `LibraryView.emptyState`, the desktop's `emptyStateCopy`. Each has its own
+ * title and hint; only [NOTHING_YET] in the personal library carries the
+ * import button.
+ */
+internal enum class EmptyLibraryState {
+    /** A search found nothing. */
+    NO_MATCH,
+
+    /** A folder with nothing filed in it. */
+    EMPTY_FOLDER,
+
+    /** An organization nobody has shared a recording into. */
+    EMPTY_ORG,
+
+    /** The Unfiled page with everything filed. */
+    ALL_FILED,
+
+    /** A library with nothing in it at all. */
+    NOTHING_YET,
+}
 
 /** What a library row's tap and menu entries do. */
 internal class RecordingRowActions(
@@ -101,25 +124,36 @@ internal object LibraryRules {
     )
 
     /**
-     * How a row's meta line shares out the width its pinned items (the counts,
-     * the audio glyphs) leave: [available] pixels between the folder and the
-     * date, spacing already taken off.
-     *
-     * Both get their natural width when they fit. When they do not, the folder
-     * gives way first — but only down to [folderMin] (a few characters and the
-     * glyph, never less than it needs): from there on the date shortens
-     * instead. Without the floor a long date left a folder as a glyph and "…",
-     * which says nothing; iOS truncates the folder only as far as it has to.
-     * With too little room for even the floor the folder takes all of it and
-     * the date none.
+     * The empty state for a list that shows nothing, chosen in the desktop's
+     * order: a search first (the words typed are why it is empty), then a
+     * folder, then an organization's library, then the personal Unfiled page,
+     * and only then "nothing yet".
      */
-    fun metaWidths(available: Int, dateNatural: Int, folderNatural: Int, folderMin: Int): MetaWidths {
-        val room = available.coerceAtLeast(0)
-        if (dateNatural + folderNatural <= room) return MetaWidths(folder = folderNatural, date = dateNatural)
-        val floor = minOf(folderNatural, folderMin.coerceAtLeast(0))
-        if (room <= floor) return MetaWidths(folder = room, date = 0)
-        val folder = (room - dateNatural).coerceIn(floor, folderNatural)
-        return MetaWidths(folder = folder, date = (room - folder).coerceAtMost(dateNatural))
+    fun emptyState(query: String, filter: FolderFilter, isPersonal: Boolean): EmptyLibraryState = when {
+        query.isNotBlank() -> EmptyLibraryState.NO_MATCH
+        filter is FolderFilter.Folder -> EmptyLibraryState.EMPTY_FOLDER
+        !isPersonal -> EmptyLibraryState.EMPTY_ORG
+        filter == FolderFilter.Unfiled -> EmptyLibraryState.ALL_FILED
+        else -> EmptyLibraryState.NOTHING_YET
+    }
+
+    /**
+     * How many recordings the overview's 最近錄音 shows before See all takes
+     * over — the desktop's number. Four is a shortcut, not a browser.
+     */
+    const val RECENT_COUNT = 4
+
+    /** The overview's recent rows: the scope's [RECENT_COUNT] newest. */
+    fun recentRecordings(library: List<RecordingSummary>): List<RecordingSummary> =
+        LibraryFolders.newestFirst(library).take(RECENT_COUNT)
+
+    /**
+     * Whether a row's date needs its year: only outside the year [nowMs] is
+     * in, in [zone]. See `formatRowTimestamp`.
+     */
+    fun showsYear(epochMs: Long, nowMs: Long, zone: TimeZone = TimeZone.getDefault()): Boolean {
+        fun yearOf(ms: Long) = Calendar.getInstance(zone).apply { timeInMillis = ms }.get(Calendar.YEAR)
+        return yearOf(epochMs) != yearOf(nowMs)
     }
 
     /**

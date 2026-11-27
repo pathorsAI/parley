@@ -4,6 +4,7 @@ import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.library.FolderFilter
 import com.pathors.parley.meeting.ImportFailure
 import com.pathors.parley.meeting.ImportNotice
 import com.pathors.parley.meeting.ImportState
@@ -16,6 +17,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.TimeZone
 
 /**
  * The library's decisions that used to live inside composables: which menu
@@ -103,47 +105,31 @@ class LibraryRulesTest {
     }
 
     @Test
-    fun `the meta line gives both their width when they fit`() {
-        assertEquals(
-            MetaWidths(folder = 80, date = 120),
-            LibraryRules.metaWidths(available = 300, dateNatural = 120, folderNatural = 80, folderMin = 60),
-        )
+    fun `the empty state follows the desktop's order`() {
+        val folder = FolderFilter.Folder(northwind.id)
+        assertEquals(EmptyLibraryState.NO_MATCH, LibraryRules.emptyState("north", folder, isPersonal = false))
+        assertEquals(EmptyLibraryState.EMPTY_FOLDER, LibraryRules.emptyState("", folder, isPersonal = false))
+        assertEquals(EmptyLibraryState.EMPTY_FOLDER, LibraryRules.emptyState(" ", folder, isPersonal = true))
+        assertEquals(EmptyLibraryState.EMPTY_ORG, LibraryRules.emptyState("", FolderFilter.All, isPersonal = false))
+        assertEquals(EmptyLibraryState.EMPTY_ORG, LibraryRules.emptyState("", FolderFilter.Unfiled, isPersonal = false))
+        assertEquals(EmptyLibraryState.ALL_FILED, LibraryRules.emptyState("", FolderFilter.Unfiled, isPersonal = true))
+        assertEquals(EmptyLibraryState.NOTHING_YET, LibraryRules.emptyState("", FolderFilter.All, isPersonal = true))
     }
 
     @Test
-    fun `the folder gives way first, down to its floor, before the date shortens`() {
-        // 40px short: the folder alone absorbs it, still above its floor.
-        assertEquals(
-            MetaWidths(folder = 140, date = 120),
-            LibraryRules.metaWidths(available = 260, dateNatural = 120, folderNatural = 180, folderMin = 60),
-        )
-        // The row seen on a 1080-wide phone: a long date used to leave the
-        // folder a glyph and "…". It keeps its floor, and the date shortens.
-        assertEquals(
-            MetaWidths(folder = 60, date = 90),
-            LibraryRules.metaWidths(available = 150, dateNatural = 160, folderNatural = 180, folderMin = 60),
-        )
+    fun `the overview's recent rows are the four newest`() {
+        val rows = (1..6).map { recording.copy(id = "r$it", createdAt = it * 1_000.0) }.shuffled()
+        assertEquals(listOf("r6", "r5", "r4", "r3"), LibraryRules.recentRecordings(rows).map { it.id })
+        assertEquals(listOf("r1"), LibraryRules.recentRecordings(listOf(rows.first { it.id == "r1" })).map { it.id })
     }
 
     @Test
-    fun `a short folder is never padded out to the floor, and no room means no date`() {
-        assertEquals(
-            MetaWidths(folder = 30, date = 70),
-            LibraryRules.metaWidths(available = 100, dateNatural = 120, folderNatural = 30, folderMin = 60),
-        )
-        assertEquals(
-            MetaWidths(folder = 40, date = 0),
-            LibraryRules.metaWidths(available = 40, dateNatural = 120, folderNatural = 180, folderMin = 60),
-        )
-        assertEquals(
-            "no folder: the date takes what there is",
-            MetaWidths(folder = 0, date = 50),
-            LibraryRules.metaWidths(available = 50, dateNatural = 120, folderNatural = 0, folderMin = 0),
-        )
-        assertEquals(
-            MetaWidths(folder = 0, date = 0),
-            LibraryRules.metaWidths(available = -20, dateNatural = 120, folderNatural = 180, folderMin = 60),
-        )
+    fun `a row's date carries its year only outside the current one`() {
+        val utc = TimeZone.getTimeZone("UTC")
+        val now = 1_786_498_800_000L // 2026-08-12
+        assertFalse(LibraryRules.showsYear(1_767_225_600_000L, now, utc)) // 2026-01-01 00:00
+        assertTrue(LibraryRules.showsYear(1_767_225_599_000L, now, utc)) // 2025-12-31 23:59:59
+        assertTrue(LibraryRules.showsYear(1_798_761_600_000L, now, utc)) // 2027-01-01
     }
 
     @Test

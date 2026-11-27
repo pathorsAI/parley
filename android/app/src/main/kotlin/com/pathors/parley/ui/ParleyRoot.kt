@@ -6,9 +6,14 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
@@ -16,7 +21,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -30,6 +37,7 @@ import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.quickrecord.QuickRecord
 import com.pathors.parley.quickrecord.QuickRecordInbox
 import com.pathors.parley.screenshot.DemoMode
+import kotlinx.coroutines.launch
 
 /** The four places the app can be. */
 private object Route {
@@ -117,6 +125,7 @@ fun ParleyRoot() {
     val demo by DemoMode.enabled.collectAsState()
     val signingIn by container.signingIn.collectAsState()
     val quickRecord by QuickRecordInbox.shared.requestedAt.collectAsState()
+    val demoOnboarding by DemoMode.onboarding.collectAsState()
 
     // A record request that meets the onboarding wall is dropped, not kept for
     // after sign-in: that is minutes later, on a screen reached for another
@@ -134,8 +143,21 @@ fun ParleyRoot() {
         // inset themselves, so the one place every screen passes through takes
         // the safe-drawing insets once. The Surface stays full-bleed so its
         // background is what shows through the bars.
-        Box(Modifier.fillMaxSize().safeDrawingPadding()) {
+        //
+        // The signed-in graph takes all but the top here: its destinations
+        // take the top themselves ([ParleyNavHost]), so that the Library's
+        // overview can draw its light bars up behind the status bar.
+        val navHost = demo && demoOnboarding?.signedOut != true || !demo && signedIn == true
+        Box(
+            Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(
+                    if (navHost) WindowInsets.safeDrawing.only(BELOW_STATUS_BAR) else WindowInsets.safeDrawing,
+                ),
+        ) {
             when {
+                // The welcome and account frames are of the signed-out wizard.
+                demo && demoOnboarding?.signedOut == true -> OnboardingScreen(container)
                 demo -> ParleyNavHost(container)
                 // Still reading the stored token. Named, not a bare spinner: a
                 // returning user must not watch an anonymous loading screen, nor
@@ -147,7 +169,9 @@ fun ParleyRoot() {
             }
             // Over every screen, signed in or not (a crash report does not need an
             // account) — but never over a store screenshot.
-            if (!demo) FeedbackHost(container.feedback)
+            if (!demo) {
+                Box(Modifier.matchParentSize().underStatusBarInset()) { FeedbackHost(container.feedback) }
+            }
         }
         // The sign-in page's edge glow lives here rather than in
         // `OnboardingScreen` so that it can outlast it: a successful sign-in
@@ -159,10 +183,25 @@ fun ParleyRoot() {
     }
 }
 
+/** Every safe-drawing side but the top, which the signed-in destinations take themselves. */
+private val BELOW_STATUS_BAR = WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom
+
+/**
+ * The top safe-drawing inset the root left to the signed-in destinations. Every
+ * one of them takes it here except the Library, whose overview draws behind the
+ * status bar and insets its own content ([HomeScreen]).
+ */
+@Composable
+internal fun Modifier.underStatusBarInset(): Modifier =
+    windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+
 @Composable
 private fun ParleyNavHost(container: AppContainer) {
     val navController = rememberNavController()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val onboardingStart = rememberSignedInOnboardingStart(container)
+    val language = LocalConfiguration.current.locales[0].language
 
     DemoNavigation(navController, container)
     QuickRecordNavigation(navController)
@@ -193,14 +232,19 @@ private fun ParleyNavHost(container: AppContainer) {
                     navController.navigate(Route.recording(id, orgId, guided = guided))
                 },
             )
-            // What's New after an update: only ever over the signed-in library.
-            WhatsNewHost(container.whatsNew)
+            // What's New after an update: only ever over the signed-in library,
+            // and never over the onboarding wizard covering it.
+            if (onboardingStart == null) WhatsNewHost(container.whatsNew)
         }
         composable(Route.MEETING) {
-            MeetingScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
+            Box(Modifier.underStatusBarInset()) {
+                MeetingScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
+            }
         }
         composable(Route.IMPORT) {
-            ImportScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
+            Box(Modifier.underStatusBarInset()) {
+                ImportScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
+            }
         }
         composable(
             route = Route.RECORDING,
@@ -223,18 +267,83 @@ private fun ParleyNavHost(container: AppContainer) {
         ) { entry ->
             val guided = entry.arguments?.getBoolean(Route.ARG_GUIDED) ?: false
             CompositionLocalProvider(LocalLapRecording provides guided) {
-                RecordingDetailScreen(
-                    recordingId = entry.arguments?.getString("id").orEmpty(),
-                    orgId = entry.arguments?.getString(Route.ARG_ORG),
-                    openFor = OpenFor.parse(entry.arguments?.getString(Route.ARG_FOR)),
-                    onBack = { navController.popBackStack() },
-                    // The recording is left behind, so the meeting's "done"
-                    // lands back on the library.
-                    onStartMeeting = {
-                        navController.navigate(Route.MEETING) { popUpTo(Route.HOME) }
-                    },
-                )
+                Box(Modifier.underStatusBarInset()) {
+                    RecordingDetailScreen(
+                        recordingId = entry.arguments?.getString("id").orEmpty(),
+                        orgId = entry.arguments?.getString(Route.ARG_ORG),
+                        openFor = OpenFor.parse(entry.arguments?.getString(Route.ARG_FOR)),
+                        onBack = { navController.popBackStack() },
+                        // The recording is left behind, so the meeting's "done"
+                        // lands back on the library.
+                        onStartMeeting = {
+                            navController.navigate(Route.MEETING) { popUpTo(Route.HOME) }
+                        },
+                    )
+                }
             }
+        }
+    }
+
+    // After a sign-in that started in the wizard, the rest of it covers the
+    // library until it is left — iOS `MainTabs.onboardingStart`.
+    if (onboardingStart != null) {
+        // Over the status bar too, so the Library's light bars, which run up
+        // behind it, do not show above the wizard.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background),
+        ) {
+            OnboardingWizard(
+                container = container,
+                start = onboardingStart,
+                hasAccount = true,
+                onFinish = { exit ->
+                    container.onboarding.finish()
+                    DemoMode.clearOnboarding()
+                    when (exit) {
+                        OnboardingExit.SKIP -> Unit
+                        OnboardingExit.RECORD -> navController.navigate(Route.MEETING)
+                        // The sample, loaded into the library, opens as the lap's
+                        // recording — the checklist's own walk-through, without its pause.
+                        OnboardingExit.SAMPLE -> scope.launch {
+                            val sample = container.sample.load(language) ?: return@launch
+                            navController.navigate(Route.recording(sample.id, guided = true))
+                        }
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .underStatusBarInset(),
+            )
+        }
+    }
+}
+
+/**
+ * Which step to open the signed-in wizard on, or null when there is none to
+ * show: where it was left, but never before the signed-in confirmation (except
+ * a re-run from the account sheet, which starts at the welcome). Only
+ * after a sign-in that started in the wizard (`onboarding.afterSignIn`), so
+ * users signed in before it existed never see it. A demo route names its own
+ * step. iOS `MainTabs.onboardingStart`.
+ */
+@Composable
+private fun rememberSignedInOnboardingStart(container: AppContainer): OnboardingStep? {
+    val afterSignIn by container.onboarding.afterSignIn.collectAsState()
+    val savedStep by container.onboarding.step.collectAsState()
+    val rerun by container.onboarding.rerun.collectAsState()
+    val demo by DemoMode.enabled.collectAsState()
+    val scenario by DemoMode.onboarding.collectAsState()
+    val current = scenario
+    return when {
+        current != null -> if (current.signedOut) null else current.step
+        demo || !afterSignIn -> null
+        // A re-run from the account sheet starts at the welcome.
+        rerun && savedStep == OnboardingStep.INTRO.key -> OnboardingStep.INTRO
+        else -> {
+            val saved = OnboardingStep.fromKey(savedStep) ?: OnboardingStep.ACCOUNT
+            if (saved < OnboardingStep.ACCOUNT) OnboardingStep.ACCOUNT else saved
         }
     }
 }

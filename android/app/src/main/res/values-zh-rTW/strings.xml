@@ -22,18 +22,6 @@
     <!-- Launch -->
     <string name="launch_loading">正在載入 Parley</string>
 
-    <!-- Onboarding: the screen a cold install lands on -->
-    <string name="onboarding_headline">錄下來，交給你已經在用的 AI</string>
-    <string name="onboarding_subline">Parley 把現場會議錄下來、即時轉成文字，回到 Mac 或手機上都找得到。</string>
-    <string name="intro_recording_now">錄音中</string>
-    <string name="intro_caption_recording">Parley 把你和對方的聲音同時錄下來。</string>
-    <string name="intro_caption_transcript">即時轉成文字，標出誰在說話。</string>
-    <string name="intro_caption_folder">之後一個客戶一個資料夾。</string>
-    <string name="intro_caption_share">再分享給 ChatGPT 或 Claude 分析。</string>
-    <string name="intro_point_record">錄音與即時轉錄，鎖屏也繼續</string>
-    <string name="intro_point_folder">一個客戶一個資料夾，和 Mac 同步</string>
-    <string name="intro_point_share">分享給 ChatGPT 或 Claude 分析</string>
-    <string name="onboarding_sign_in_methods">支援信箱密碼、Google 與 Apple 登入。</string>
 
     <!-- Sign in -->
     <string name="sign_in_button">登入或建立帳號</string>
@@ -44,15 +32,12 @@
 
     <!-- Home -->
     <string name="home_title">錄音庫</string>
-    <string name="home_account">帳號</string>
+    <string name="home_account_settings">帳號與設定</string>
     <string name="home_empty_title">還沒有任何錄音</string>
-    <string name="home_empty_body">錄一場會議，或匯入你手上既有的音訊檔。</string>
+    <string name="home_empty_body">開一場會議或匯入一段錄音，之後每一場都會依日期排在這裡。</string>
     <string name="home_empty_import">匯入音訊檔</string>
-    <string name="home_search">搜尋錄音</string>
     <string name="home_search_hint">搜尋標題或摘要</string>
-    <string name="home_search_empty">沒有符合的結果。</string>
     <string name="home_record">錄一場會議</string>
-    <string name="home_import">匯入錄音檔</string>
     <string name="home_pending_header">等待上傳</string>
     <string name="home_pending_badge">%1$d</string>
     <string name="home_pending_retry">立即上傳</string>
@@ -72,9 +57,7 @@
     <string name="recording_untitled">未命名錄音</string>
     <string name="recording_source_upload">上傳</string>
     <string name="recording_source_live">現場</string>
-    <string name="recording_meta_duration">長度</string>
     <string name="recording_meta_speakers">講者</string>
-    <string name="recording_meta_audio">有音檔</string>
     <string name="home_recording_actions">錄音選項</string>
     <string name="home_delete_recording">刪除錄音</string>
     <string name="home_deleting">刪除中…</string>
@@ -386,7 +369,7 @@
     <string name="getting_started_filed">放進一個資料夾</string>
     <string name="getting_started_replayed">回放：點一句跳過去</string>
     <string name="getting_started_shared">分享給你的 AI</string>
-    <string name="getting_started_show_again">再顯示起步清單</string>
+    <string name="onboarding_rerun">重新執行引導設定</string>
     <string name="getting_started_walk_through">用範例錄音走一遍</string>
     <string name="getting_started_continue">繼續 →</string>
     <string name="getting_started_transcribing">轉錄中…</string>
@@ -422,8 +405,26 @@
     <string name="org_role_member">成員</string>
     <string name="library_folder_all">全部</string>
     <string name="library_folder_unfiled">未歸檔</string>
-    <string name="library_empty_here">這裡還沒有錄音。</string>
-    <string name="library_folder_meta">資料夾</string>
+    <!-- The Library's overview (LibraryOverview.kt) and its empty states -->
+    <string name="library_all_recordings">全部錄音</string>
+    <string name="library_import_audio">匯入音訊</string>
+    <string name="library_overview_folders">資料夾</string>
+    <string name="library_folder_add">新增資料夾</string>
+    <string name="library_overview_recent">最近錄音</string>
+    <string name="library_overview_see_all">查看全部</string>
+    <string name="library_recent_empty">還沒有錄音——開一場會議，或匯入一段錄音。</string>
+    <string name="library_use_sample">用範例錄音</string>
+    <plurals name="library_folder_card_count">
+        <item quantity="other">%1$d 筆錄音</item>
+    </plurals>
+    <string name="library_empty_search_title">沒有符合的錄音</string>
+    <string name="library_empty_search_hint">換個關鍵字，或清除搜尋回到資料夾。</string>
+    <string name="library_empty_folder_title">這個資料夾還沒有錄音</string>
+    <string name="library_empty_folder_hint">在錄音上長按，選「移到…」，就能把它放進來。</string>
+    <string name="library_empty_org_title">這個組織還沒有共享的錄音</string>
+    <string name="library_empty_org_hint">在個人錄音上長按，選「分享到組織」，就會複製一份到這裡。</string>
+    <string name="library_empty_unfiled_title">都歸檔好了</string>
+    <string name="library_empty_unfiled_hint">新的錄音沒歸檔時會出現在這裡。</string>
     <string name="home_error_forbidden_org">你已沒有權限查看這個組織的錄音。</string>
     <!-- Library row actions -->
     <string name="library_move_to_folder">移到…</string>
@@ -696,4 +697,101 @@
     <string name="dictionary_edit">編輯</string>
     <string name="dictionary_delete">刪除</string>
     <string name="dictionary_row_actions">「%1$s」的更多動作</string>
+
+    <!-- 新手導覽精靈（與 iOS 同一套文案） -->
+    <string name="onboarding_title_account">選擇使用方式</string>
+    <string name="onboarding_title_org">組織</string>
+    <string name="onboarding_title_perms">Android 權限</string>
+    <string name="onboarding_title_mic">麥克風測試</string>
+    <string name="onboarding_title_context">語境庫</string>
+    <string name="onboarding_progress">第 %1$d 步，共 %2$d 步</string>
+    <string name="onboarding_language">介面語言</string>
+    <string name="onboarding_skip">略過</string>
+    <string name="onboarding_get_started">開始</string>
+    <string name="onboarding_back">上一步</string>
+    <string name="onboarding_next">下一步</string>
+    <string name="onboarding_or">or</string>
+    <string name="onboarding_welcome">歡迎使用 Parley！</string>
+    <string name="intro_step_record">錄音</string>
+    <string name="intro_step_transcript">即時轉錄</string>
+    <string name="intro_step_file">歸檔</string>
+    <string name="intro_step_ai">AI 分析與摘要</string>
+    <string name="intro_play_from_step">從這一步開始播放</string>
+    <string name="intro_how_it_works">Parley 怎麼運作</string>
+    <string name="intro_tab_record">錄音</string>
+    <string name="intro_tab_library">錄音庫</string>
+    <string name="intro_tab_settings">設定</string>
+    <string name="intro_recording_live">錄音中 · 即時轉錄</string>
+    <string name="intro_chip_all">全部</string>
+    <string name="intro_chip_unfiled">未歸檔</string>
+    <string name="intro_live_badge">現場</string>
+    <string name="intro_summary">摘要</string>
+    <string name="intro_transcript">逐字稿</string>
+    <string name="intro_action_items">後續行動</string>
+    <string name="intro_brief">重點</string>
+    <string name="intro_replay">重播</string>
+    <string name="intro_caption_overview">四個步驟，從開會到交給 AI。</string>
+    <string name="intro_caption_record">Parley 把你和對方的聲音同時錄下來。</string>
+    <string name="intro_caption_transcript">即時轉成文字，標出誰在說話。</string>
+    <string name="intro_caption_folder">之後一個客戶一個資料夾。</string>
+    <string name="intro_caption_mcp">再把紀錄交給 Claude 或 ChatGPT 分析。</string>
+    <string name="intro_caption_ready">先花一分鐘完成設定。</string>
+    <string name="onboarding_cloud">雲端版</string>
+    <string name="onboarding_cloud_body">登入後用 Parley 的轉錄與 AI 模型，每月有免費額度，不用準備任何金鑰。網頁版或手機上的 Claude 也能透過 MCP 連接器讀你的錄音。</string>
+    <string name="onboarding_local">地端版</string>
+    <string name="onboarding_local_body">用你自己的 API 金鑰，或電腦上的本機模型，資料只會送到你選的供應商。地端版請在電腦版設定。</string>
+    <string name="onboarding_desktop_only">僅限電腦版</string>
+    <string name="onboarding_on_cloud">已登入雲端版</string>
+    <string name="onboarding_on_cloud_body">轉錄與 AI 都由 Parley 提供，每月有免費額度，不用自己付費。</string>
+    <string name="onboarding_org_checking">正在查看你的組織…</string>
+    <string name="onboarding_org_failed">查不到你的組織。可以重試，或先略過。</string>
+    <string name="onboarding_retry">重試</string>
+    <string name="onboarding_org_joined">已加入組織</string>
+    <string name="onboarding_org_joined_body">分享到組織的錄音，組織成員都看得到。</string>
+    <string name="onboarding_org_invited">「%1$s」邀請你加入</string>
+    <string name="onboarding_org_join">加入</string>
+    <string name="onboarding_org_create">建立組織</string>
+    <string name="onboarding_org_create_note">之後可以在電腦版的「設定 › 組織」用 Email 邀請成員。</string>
+    <string name="onboarding_org_name">輸入組織名稱</string>
+    <string name="onboarding_org_create_button">建立</string>
+    <string name="onboarding_org_solo">以個人版使用</string>
+    <string name="onboarding_org_solo_note">之後在電腦版的「設定 › 組織」建立或加入組織。</string>
+    <string name="onboarding_continue">繼續</string>
+    <string name="onboarding_org_error">沒有成功，請確認網路後再試一次。</string>
+    <string name="onboarding_org_name_missing">填上組織名稱，或選「以個人版使用」。</string>
+    <string name="onboarding_perms_body">錄下你的聲音需要麥克風權限，Parley 會用手機的麥克風錄下現場對話。</string>
+    <string name="onboarding_perms_mic">麥克風（你的聲音）</string>
+    <string name="onboarding_perms_notifications">通知（錄音中提示）</string>
+    <string name="onboarding_perms_allowed">已允許</string>
+    <string name="onboarding_perms_grant">授權</string>
+    <string name="onboarding_perms_open_settings">打開設定</string>
+    <string name="onboarding_mic_intro">點擊「開始測試」並朗讀下方句子，確認麥克風能正常收音。</string>
+    <string name="onboarding_mic_input">麥克風（輸入裝置）</string>
+    <string name="onboarding_mic_input_default">手機麥克風</string>
+    <string name="onboarding_mic_prompt">請簡單介紹自己</string>
+    <string name="onboarding_mic_script">我是 {company} 的 {role}，我主要用 Parley 來 {purpose}。</string>
+    <string name="onboarding_mic_blank_company">公司</string>
+    <string name="onboarding_mic_blank_role">姓名／職稱</string>
+    <string name="onboarding_mic_blank_purpose">描述用途</string>
+    <string name="onboarding_mic_start">開始測試</string>
+    <string name="onboarding_mic_stop">停止錄音</string>
+    <string name="onboarding_mic_again">再測一次</string>
+    <string name="onboarding_mic_listening">正在聽…</string>
+    <string name="onboarding_mic_saving">整理成講者背景…</string>
+    <string name="onboarding_mic_saved">已加入講者背景，下一步可以修改。</string>
+    <string name="onboarding_mic_empty">沒有聽到內容。再試一次，或確認麥克風沒有被擋住。</string>
+    <string name="onboarding_mic_failed">轉錄沒有成功：%1$s</string>
+    <string name="onboarding_mic_permission">麥克風權限是關閉的，請到「設定」開啟。</string>
+    <string name="onboarding_mic_sign_in">請先登入。</string>
+    <string name="onboarding_about_you">講者背景</string>
+    <string name="onboarding_about_you_hint">例如：我是派斯科技的設計師，常和東森談外撥專案。</string>
+    <string name="onboarding_terms">常用詞</string>
+    <string name="onboarding_terms_add_hint">+ 新增</string>
+    <string name="onboarding_terms_add">加入</string>
+    <string name="onboarding_terms_remove">移除 %1$s</string>
+    <string name="onboarding_done_title">設定完成！</string>
+    <string name="onboarding_done_lead">五分鐘認識 Parley：</string>
+    <string name="onboarding_done_body">從範例錄音開始，帶你快速走過歸檔、回放與 AI 分析。</string>
+    <string name="onboarding_start_recording">開始錄音</string>
+    <string name="onboarding_try_sample">體驗範例</string>
 </resources>
