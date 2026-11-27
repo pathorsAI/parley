@@ -301,6 +301,9 @@ struct MeetingDraftDetailView: View {
                         .font(.parley.caption)
                         .foregroundStyle(Color(.tertiaryLabel))
                 }
+                // The page's width, not the content's: a draft with only a time
+                // and a folder would otherwise sit centred, off the left edge.
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
                 .padding(.bottom, 32)
