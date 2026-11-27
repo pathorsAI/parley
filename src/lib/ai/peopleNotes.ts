@@ -59,35 +59,44 @@ export function capPeopleTranscript(transcript: string): string {
 /** A speaker label the app made up, not a person's name. */
 const PLACEHOLDER_NAME = /^(me|我|speaker|remote|講者|對方|說話者)\s*\d*$/i;
 
+type RawNote = { name?: unknown; org?: unknown; text?: unknown; quote?: unknown; at?: unknown };
+
+const trimmed = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+
+/** One of the model's notes as a candidate, or null when it cannot be used:
+ *  a blank field, a placeholder name, the user, or a quote that is not in the
+ *  transcript. */
+function checkedNote(r: RawNote, transcript: string, self: ReadonlySet<string>): ExtractedNote | null {
+  const name = trimmed(r.name);
+  const text = trimmed(r.text);
+  const quote = trimmed(r.quote);
+  if (!name || !text || !quote) return null;
+  if (PLACEHOLDER_NAME.test(name) || self.has(name.toLowerCase())) return null;
+  if (containment(quote, transcript) < QUOTE_FOUND_THRESHOLD) return null;
+  const note: ExtractedNote = { name, org: trimmed(r.org), text, quote };
+  const atMs = parseClock(trimmed(r.at));
+  if (atMs !== undefined) note.atMs = atMs;
+  return note;
+}
+
 /**
- * The model's notes, trusted as little as possible: blank fields, placeholder
- * names, anything about the user, a quote that is not in the transcript and
- * repeats are dropped; the rest is cut to MAX_CANDIDATES. Pure.
+ * The model's notes, trusted as little as possible: whatever
+ * {@link checkedNote} refuses and repeats are dropped; the rest is cut to
+ * MAX_CANDIDATES. Pure.
  */
 export function checkedCandidates(
-  raw: readonly { name?: unknown; org?: unknown; text?: unknown; quote?: unknown; at?: unknown }[],
+  raw: readonly RawNote[],
   ctx: { transcript: string; selfNames: readonly string[] },
 ): ExtractedNote[] {
   const self = new Set(ctx.selfNames.map((n) => n.trim().toLowerCase()).filter(Boolean));
-  const seen = new Set<string>();
-  const out: ExtractedNote[] = [];
+  const byKey = new Map<string, ExtractedNote>();
   for (const r of raw) {
-    const name = typeof r.name === "string" ? r.name.trim() : "";
-    const text = typeof r.text === "string" ? r.text.trim() : "";
-    const quote = typeof r.quote === "string" ? r.quote.trim() : "";
-    if (!name || !text || !quote) continue;
-    if (PLACEHOLDER_NAME.test(name) || self.has(name.toLowerCase())) continue;
-    if (containment(quote, ctx.transcript) < QUOTE_FOUND_THRESHOLD) continue;
-    const key = `${name.toLowerCase()}|${text.toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const note: ExtractedNote = { name, org: typeof r.org === "string" ? r.org.trim() : "", text, quote };
-    const atMs = parseClock(typeof r.at === "string" ? r.at : null);
-    if (atMs !== undefined) note.atMs = atMs;
-    out.push(note);
-    if (out.length >= MAX_CANDIDATES) break;
+    const note = checkedNote(r, ctx.transcript, self);
+    if (!note) continue;
+    const key = `${note.name.toLowerCase()}|${note.text.toLowerCase()}`;
+    if (!byKey.has(key)) byKey.set(key, note);
   }
-  return out;
+  return [...byKey.values()].slice(0, MAX_CANDIDATES);
 }
 
 /**

@@ -1647,9 +1647,11 @@
       "inputSchema": {
         "properties": {
           "noteId": {
+            "description": "The note (see get_person).",
             "type": "string"
           },
           "personId": {
+            "description": "The person (see list_people).",
             "type": "string"
           }
         },
