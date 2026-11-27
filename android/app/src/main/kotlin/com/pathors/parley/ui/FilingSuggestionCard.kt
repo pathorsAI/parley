@@ -992,7 +992,7 @@ private fun successHaptic(view: View) {
  * Reduce Motion.
  */
 @Composable
-private fun rememberAnimationsRemoved(): Boolean {
+internal fun rememberAnimationsRemoved(): Boolean {
     val context = LocalContext.current
     return remember(context) { animationsRemoved(context) }
 }

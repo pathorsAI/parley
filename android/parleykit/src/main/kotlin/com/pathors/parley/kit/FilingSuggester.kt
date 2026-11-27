@@ -43,7 +43,22 @@ data class FilingSuggestion(
     /** "" when the model had nothing better to propose than the current title. */
     val title: String,
     val folders: List<FilingFolderSuggestion>,
-)
+) {
+    /**
+     * What is still worth offering once the user has answered part of the
+     * question themselves — on the phone, by naming the meeting or picking its
+     * folder while it was still recording. A name they typed is never proposed
+     * over, and a folder they chose is never second-guessed; null when nothing
+     * is left. iOS `FilingSuggestion.answering(named:filed:)`.
+     */
+    fun answering(named: Boolean, filed: Boolean): FilingSuggestion? {
+        val kept = FilingSuggestion(
+            title = if (named) "" else title,
+            folders = if (filed) emptyList() else folders,
+        )
+        return kept.takeUnless { it.title.isEmpty() && it.folders.isEmpty() }
+    }
+}
 
 /**
  * The pass that runs once a recording has been transcribed: read the

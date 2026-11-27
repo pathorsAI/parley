@@ -60,6 +60,14 @@ data class EnqueueRequest(
      * [folderId] was given. See [MeetingUploader.resolveDestination].
      */
     val destination: SaveDestination? = null,
+    /**
+     * The user typed [title] on the record screen, rather than it being the
+     * clock name — the filing pass must not propose over it. iOS
+     * `PendingUpload.namedByUser`.
+     */
+    val namedByUser: Boolean = false,
+    /** [destination] is a folder the user picked on the record screen, not the default. */
+    val filedByUser: Boolean = false,
 )
 
 /** What one [MeetingUploader.drain] pass achieved. */
@@ -226,6 +234,8 @@ class MeetingUploader(
             folderId = destination.personalFolderId,
             shareOrgId = destination.orgId,
             shareFolderId = destination.orgFolderId,
+            namedByUser = request.namedByUser,
+            filedByUser = request.filedByUser,
         )
         queue.enqueue(pending, request.audio)
         onSaved()
@@ -704,6 +714,10 @@ class MeetingUploader(
                 put("audio", AUDIO_FILE_NAME)
                 put("analyzed", false)
                 pending.folderId?.let { put("folderId", it) }
+                // Named and filed by the user while recording: the filing
+                // question is answered, and the flag is how every platform
+                // knows not to ask it. iOS `MeetingUploader.buildMeta`.
+                if (pending.namedByUser && pending.filedByUser) put("filingSuggested", true)
             }
         )
 

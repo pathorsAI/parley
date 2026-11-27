@@ -105,10 +105,11 @@ class QuickRecordTest {
     }
 
     @Test
-    fun aMeetingScreenStillStartingIsLeftAlone() {
-        // The screen has asked the service to start and not heard back yet:
-        // replacing it here is how one tap would become two recordings.
-        assertFalse(QuickRecord.shouldOpenMeeting(onMeetingScreen = true, meeting = null))
+    fun aMeetingScreenWithNoMeetingStartsOne() {
+        // The record screen before a meeting: the tap is a press of Start.
+        // (One still asking the service to start is replaced safely — the
+        // service begins a recording only when it has none.)
+        assertTrue(QuickRecord.shouldOpenMeeting(onMeetingScreen = true, meeting = null))
     }
 
     @Test

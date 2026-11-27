@@ -5,10 +5,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentSender
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -189,26 +185,5 @@ fun CopyTranscriptButton(
         modifier = modifier.semantics { contentDescription = spoken },
     ) {
         Text(label)
-    }
-}
-
-/** The share-sheet twin of [CopyTranscriptButton]. */
-@Composable
-fun ShareTranscriptButton(
-    text: () -> String,
-    isEmpty: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val context = LocalContext.current
-    val title = stringResource(R.string.transcript_share_title)
-    IconButton(
-        onClick = {
-            val payload = text()
-            if (payload.isNotEmpty()) TranscriptClipboard.share(context, payload, title)
-        },
-        enabled = !isEmpty,
-        modifier = modifier,
-    ) {
-        Icon(Icons.Default.Share, stringResource(R.string.transcript_share))
     }
 }

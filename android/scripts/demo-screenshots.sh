@@ -2,12 +2,13 @@
 #
 # Capture demo-mode screens from a booted emulator (or device) with the debug
 # build installed, through the same `parley://demo/<route>` deep links
-# preview.sh uses: every onboarding step, and the Library's pages. Run by
+# preview.sh uses: every onboarding step, the Library's pages, and the record
+# screen (before, during and paused) with End's result page. Run by
 # .github/workflows/android-screenshots.yml so they can be looked at without an
 # Android toolchain; works locally too:
 #
-#   android/scripts/demo-screenshots.sh out/              # both sets; needs adb + a device
-#   android/scripts/demo-screenshots.sh out/ library      # one set: onboarding | library
+#   android/scripts/demo-screenshots.sh out/              # every set; needs adb + a device
+#   android/scripts/demo-screenshots.sh out/ record       # one set: onboarding | library | record
 #
 # Writes <out>/<set>/<lang>-<mode>/<nn>-<route>.png, plus the welcome demo at
 # one frame per beat (onboarding/…/01-welcome-t<seconds>.png). Emulator timing
@@ -15,7 +16,7 @@
 
 set -euo pipefail
 
-OUT="${1:?usage: demo-screenshots.sh <out-dir> [onboarding|library|all]}"
+OUT="${1:?usage: demo-screenshots.sh <out-dir> [onboarding|library|record|all]}"
 SETS="${2:-all}"
 PACKAGE="com.pathors.parley"
 
@@ -33,6 +34,9 @@ LIBRARY_ROUTES=(
   library library-all library-folder-empty library-org
   library-overview-drafts library-drafts library-draft library-draft-short
 )
+# The record screen before a meeting, during one and paused, and the result
+# page End opens, filing card on top (DemoMode.MeetingScenario).
+RECORD_ROUTES=(record-idle record record-paused settled)
 # Seconds after launch: one frame inside each welcome beat
 # (LapMotion.WelcomeSchedule starts: 0 / 1.8 / 3.4 / 6.4 / 8.3 / 11.0).
 WELCOME_AT=(1 2.8 5 7.4 9.8 13)
@@ -104,6 +108,11 @@ for combo in zh-TW:light en-US:light zh-TW:dark; do
   if wants library; then
     dir="$OUT/library/$locale-$mode"; mkdir -p "$dir"
     capture_routes "$dir" 1 "${LIBRARY_ROUTES[@]}"
+  fi
+
+  if wants record; then
+    dir="$OUT/record/$locale-$mode"; mkdir -p "$dir"
+    capture_routes "$dir" 1 "${RECORD_ROUTES[@]}"
   fi
 done
 

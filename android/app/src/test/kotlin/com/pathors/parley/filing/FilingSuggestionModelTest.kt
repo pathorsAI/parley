@@ -691,6 +691,60 @@ class FilingSuggestionModelTest {
         }
     }
 
+    // ── named or filed on the record screen ──────────────────────────────────
+
+    /**
+     * Named while recording: the model is still asked for a folder, and what is
+     * persisted carries no title for any device to offer later. iOS
+     * `FilingPassTests.testANamedRecordingPersistsNoTitle`.
+     */
+    @Test
+    fun `a named recording is offered folders only, and persists no title`() {
+        assertTrue(model.claim(RECORDING, skip = null))
+        runBlocking { model.run(RECORDING, spoken, named = true) }
+
+        assertEquals(FilingPhase.OFFERING, state.phase)
+        assertEquals("", state.suggestion?.title)
+        assertEquals(listOf(ACME_ID), state.proposedFolders.mapNotNull { it.folderId })
+        val meta = lastMeta()
+        assertTrue(meta.filingSuggested)
+        assertEquals("", meta.filingSuggestion?.title)
+        assertEquals(CLOCK_TITLE, meta.title)
+    }
+
+    @Test
+    fun `a filed recording is offered a name only`() {
+        assertTrue(model.claim(RECORDING, skip = null))
+        runBlocking { model.run(RECORDING, spoken, filed = true) }
+
+        assertEquals(FilingPhase.OFFERING, state.phase)
+        assertEquals(RENEWAL, state.proposedTitle)
+        assertTrue(state.proposedFolders.isEmpty())
+        assertTrue(lastMeta().filingSuggestion?.folders.orEmpty().isEmpty())
+    }
+
+    /** Named and filed while recording: nothing left to ask, so nothing is. */
+    @Test
+    fun `a named and filed recording asks nothing`() {
+        assertTrue(model.claim(RECORDING, skip = null))
+        runBlocking { model.run(RECORDING, spoken, named = true, filed = true) }
+
+        assertEquals(FilingPhase.SETTLED, state.phase)
+        assertTrue("not even the meta is read", paths.isEmpty())
+    }
+
+    /** The only half left was the one answered: the pass is spent, nothing offered. */
+    @Test
+    fun `a pass with nothing left after the answered half still marks the recording`() {
+        answer = """{"title":"Acme renewal terms","folders":[]}"""
+        assertTrue(model.claim(RECORDING, skip = null))
+        runBlocking { model.run(RECORDING, spoken, named = true) }
+
+        assertEquals(FilingPhase.SETTLED, state.phase)
+        assertTrue(lastMeta().filingSuggested)
+        assertNull(lastMeta().filingSuggestion)
+    }
+
     private companion object {
         const val PENDING = "filingSuggestion"
         const val PENDING_JSON = """{"title":"Acme renewal terms","folders":[""" +

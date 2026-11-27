@@ -19,7 +19,7 @@ import kotlinx.coroutines.CancellationException
 /**
  * The filing pass (the AI title + folder suggestion) for one recording that is
  * already in the cloud, run once and written down at once — the one way every
- * Android door into a recording (the live meeting screen, an import) asks the
+ * Android door into a recording (End's result page, an import) asks the
  * question, and the same inputs the desktop and iOS send.
  *
  * ## The inputs
@@ -78,11 +78,19 @@ class FilingPass(
      *
      * @param fallbackSegments what to read if the stored meta carries no
      *   transcript at all (the live screen's own copy); the stored one wins.
+     * @param named the user typed the meeting's name on the record screen while
+     *   it recorded: the pass proposes no title over it.
+     * @param filed the user picked the meeting's folder there: the pass does not
+     *   second-guess it. Both answered, nothing is asked at all (the upload
+     *   already marked the pass spent). iOS `FilingPass.run(named:filed:)`.
      */
     suspend fun generate(
         recordingId: String,
         fallbackSegments: List<TranscriptSegment> = emptyList(),
+        named: Boolean = false,
+        filed: Boolean = false,
     ): Generated? {
+        if (named && filed) return null
         val meta = cloud.recordingMeta(recordingId)
         if (meta.filingSuggested) return null
         // Personal folders only: an org folder is not somewhere this recording
@@ -98,10 +106,19 @@ class FilingPass(
             language = language(),
             meetingContext = meta.meetingContext,
         ) ?: return null
-        return when (persist(recordingId, suggestion)) {
+        // Persisted without the half the user already answered, so no screen —
+        // this phone's recording page, the desktop — ever offers to rename over
+        // a name they typed. Nothing left is still a spent pass: the flag is
+        // written either way, so the desktop does not run one of its own.
+        val answered = suggestion.answering(named = named, filed = filed)
+        if (answered == null) {
+            markSpent(recordingId)
+            return null
+        }
+        return when (persist(recordingId, answered)) {
             Persist.SPENT_ELSEWHERE -> null
-            Persist.WRITTEN -> Generated(suggestion, meta, folders, persisted = true)
-            Persist.FAILED -> Generated(suggestion, meta, folders, persisted = false)
+            Persist.WRITTEN -> Generated(answered, meta, folders, persisted = true)
+            Persist.FAILED -> Generated(answered, meta, folders, persisted = false)
         }
     }
 
@@ -132,6 +149,19 @@ class FilingPass(
         throw e
     } catch (e: Throwable) {
         Persist.FAILED
+    }
+
+    /** The flag alone, for a pass whose every half the user had answered. Best-effort. */
+    private suspend fun markSpent(recordingId: String) {
+        try {
+            cloud.editRecordingIf(recordingId) { fresh ->
+                if (fresh.filingSuggested) null else fresh.withFilingSuggested()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // Nothing is offered either way; at worst the desktop asks later.
+        }
     }
 
     private fun speakerLabel(meta: RecordingMeta, segment: TranscriptSegment): String =

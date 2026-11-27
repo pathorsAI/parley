@@ -33,6 +33,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
+import com.pathors.parley.meeting.EndedMeetings
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.quickrecord.QuickRecord
 import com.pathors.parley.quickrecord.QuickRecordInbox
@@ -42,7 +43,19 @@ import kotlinx.coroutines.launch
 /** The four places the app can be. */
 private object Route {
     const val HOME = "home"
-    const val MEETING = "meeting"
+
+    /**
+     * The record screen, and — as an optional argument — whether the visit
+     * starts a meeting on arrival (the lock-screen tile, the launcher
+     * shortcut, the onboarding's "record now"), as if Start had been pressed.
+     * Absent is the screen before a meeting, where the next one is named and
+     * filed and Start recording begins it.
+     */
+    const val ARG_START = "start"
+    const val MEETING = "meeting?$ARG_START={$ARG_START}"
+
+    fun meeting(start: Boolean = false): String = if (start) "meeting?$ARG_START=true" else "meeting"
+
     const val IMPORT = "import"
 
     /**
@@ -226,7 +239,8 @@ private fun ParleyNavHost(container: AppContainer) {
     NavHost(navController = navController, startDestination = Route.HOME) {
         composable(Route.HOME) {
             HomeScreen(
-                onRecord = { navController.navigate(Route.MEETING) },
+                onRecord = { navController.openMeeting() },
+                onStartRecording = { navController.openMeeting(start = true) },
                 onImport = { picker.launch(arrayOf("audio/*")) },
                 onOpenRecording = { id, orgId, guided ->
                     navController.navigate(Route.recording(id, orgId, guided = guided))
@@ -236,9 +250,24 @@ private fun ParleyNavHost(container: AppContainer) {
             // and never over the onboarding wizard covering it.
             if (onboardingStart == null) WhatsNewHost(container.whatsNew)
         }
-        composable(Route.MEETING) {
+        composable(
+            route = Route.MEETING,
+            arguments = listOf(
+                navArgument(Route.ARG_START) {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+            ),
+        ) { entry ->
             Box(Modifier.underStatusBarInset()) {
-                MeetingScreen(onDone = { navController.popBackStack(Route.HOME, inclusive = false) })
+                MeetingScreen(
+                    autoStart = entry.arguments?.getBoolean(Route.ARG_START) ?: false,
+                    onDone = { navController.popBackStack(Route.HOME, inclusive = false) },
+                    // End, as on the desktop, ends on the recording's result
+                    // page — in place of the record screen, so Back from it is
+                    // the Library, the recording's own parent.
+                    onEnded = { id -> navController.navigate(Route.recording(id)) { popUpTo(Route.HOME) } },
+                )
             }
         }
         composable(Route.IMPORT) {
@@ -275,9 +304,7 @@ private fun ParleyNavHost(container: AppContainer) {
                         onBack = { navController.popBackStack() },
                         // The recording is left behind, so the meeting's "done"
                         // lands back on the library.
-                        onStartMeeting = {
-                            navController.navigate(Route.MEETING) { popUpTo(Route.HOME) }
-                        },
+                        onStartMeeting = { navController.openMeeting(start = true) },
                     )
                 }
             }
@@ -303,7 +330,7 @@ private fun ParleyNavHost(container: AppContainer) {
                     DemoMode.clearOnboarding()
                     when (exit) {
                         OnboardingExit.SKIP -> Unit
-                        OnboardingExit.RECORD -> navController.navigate(Route.MEETING)
+                        OnboardingExit.RECORD -> navController.openMeeting(start = true)
                         // The sample, loaded into the library, opens as the lap's
                         // recording — the checklist's own walk-through, without its pause.
                         OnboardingExit.SAMPLE -> scope.launch {
@@ -366,7 +393,14 @@ private fun DemoNavigation(navController: NavHostController, container: AppConta
             DemoMode.Screen.LIBRARY, DemoMode.Screen.ACCOUNT -> Unit
             DemoMode.Screen.TRANSCRIPT, DemoMode.Screen.MOVE_TO_FOLDER, DemoMode.Screen.REPORT ->
                 navController.navigate(Route.recording(DemoMode.FEATURED_ID))
-            DemoMode.Screen.MEETING -> navController.navigate(Route.MEETING)
+            // An ended meeting lands on its result page, handed over the way
+            // the record screen hands a real one.
+            DemoMode.Screen.MEETING -> if (target.scenario.isSettled) {
+                EndedMeetings.hand(DemoMode.endedMeeting())
+                navController.navigate(Route.recording(DemoMode.FEATURED_ID))
+            } else {
+                navController.navigate(Route.meeting())
+            }
             DemoMode.Screen.IMPORT -> navController.navigate(Route.IMPORT)
             // Read straight off the seeded entry rather than the store's flow,
             // which catches up a moment after the route seeded it.
@@ -397,12 +431,23 @@ private fun QuickRecordNavigation(navController: NavHostController) {
         val onMeetingScreen = navController.currentDestination?.route == Route.MEETING
         val meeting = MeetingService.activeSession.value?.state?.value
         if (QuickRecord.shouldOpenMeeting(onMeetingScreen, meeting)) {
-            // Over the library, like every other start: the meeting's "done"
-            // lands back there. A settled meeting screen is replaced, and the
-            // new one clears its outcome and records again.
-            navController.navigate(Route.MEETING) { popUpTo(Route.HOME) }
+            // Over the library, like every other start. A settled meeting
+            // screen is replaced, and the new one records again at once: the
+            // tile is a press of Start.
+            navController.openMeeting(start = true)
         }
     }
+}
+
+/**
+ * Onto the record screen, over the library. A meeting whose outcome was left
+ * on screen (still on the phone, too short) is let go first: this visit is for
+ * the next one, not for reading an old one's status again. A meeting still in
+ * progress is not touched — the screen adopts it.
+ */
+private fun NavHostController.openMeeting(start: Boolean = false) {
+    MeetingService.activeSession.value?.let { if (isSettled(it.state.value)) MeetingService.clear() }
+    navigate(Route.meeting(start)) { popUpTo(Route.HOME) }
 }
 
 /** The picked file's own name, which becomes the recording's title. */

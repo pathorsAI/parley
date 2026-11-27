@@ -55,12 +55,7 @@ class DemoMeetingSession(
                 dropped = false,
                 interruptedBy = MeetingFailure.MIC_UNAVAILABLE,
             )
-            // Stopped and uploaded: the moment the filing suggestion arrives.
-            scenario.isSettled -> MeetingState.Finished(
-                recordingId = DemoMode.SETTLED_ID,
-                pendingUpload = false,
-                dropped = false,
-            )
+            scenario == MeetingScenario.PAUSED -> MeetingState.Paused
             else -> MeetingState.Recording
         }
     )
@@ -105,13 +100,15 @@ class DemoMeetingSession(
     fun start() {
         if (started) return
         started = true
-        if (scenario == MeetingScenario.INTERRUPTED || scenario.isSettled) {
+        if (scenario == MeetingScenario.INTERRUPTED) {
             // Over already: the whole conversation, nothing moving.
             _segments.value = script
             _elapsedMs.value = END_AT_MS
             return
         }
         _segments.value = script.take(SEEDED_LINES) + tail
+        // Paused: the clock and the words stand still, and nothing is heard.
+        if (scenario == MeetingScenario.PAUSED) return
         transcriptJob = scope.launch { runTranscript() }
         meterJob = scope.launch { runMeter() }
         if (scenario == MeetingScenario.MIC_BACK) {

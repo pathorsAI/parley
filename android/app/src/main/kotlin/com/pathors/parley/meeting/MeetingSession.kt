@@ -25,6 +25,7 @@ import com.pathors.parley.kit.RelayAudioBridge
 import com.pathors.parley.kit.SttRelayClient
 import com.pathors.parley.kit.SttRelayEvent
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.upload.EnqueueRequest
 import com.pathors.parley.upload.MeetingUploader
 import java.io.File
@@ -107,7 +108,20 @@ sealed interface MeetingState {
         val micRecoveries: Int = 0,
         /** The input it was recording from at the end, for those diagnostics. */
         val audioRoute: String? = null,
-    ) : MeetingState
+        /**
+         * The user named the meeting on the record screen, so the recording was
+         * saved under their name and the filing pass proposes no title over it.
+         */
+        val namedByUser: Boolean = false,
+        /**
+         * The place the user picked on the record screen, which the recording
+         * was saved into; null = the app's default destination. Non-null also
+         * means the filing pass does not second-guess the folder.
+         */
+        val chosenDestination: SaveDestination? = null,
+    ) : MeetingState {
+        val filedByUser: Boolean get() = chosenDestination != null
+    }
 
     /** The recording could not happen (or could not be saved). */
     data class Failed(val reason: MeetingFailure, val detail: String? = null) : MeetingState
@@ -211,6 +225,14 @@ interface LiveMeeting {
     val micRecovery: StateFlow<MicRecoveryState> get() = LiveMeetingDefaults.HOLDING
 
     /**
+     * The input it is recording from, in the route vocabulary of
+     * `feedback/AudioRouteLabel` (built-in, Bluetooth, wired, USB); null before
+     * the microphone first opened, and for a stand-in with no microphone. Read
+     * when the record screen's microphone menu draws, not observed.
+     */
+    val inputRoute: String? get() = null
+
+    /**
      * True when the device is low enough on storage that the recording is
      * heading for [MeetingFailure.STORAGE_FULL]. A warning, not a failure: the
      * recording is still running and there is still time to free some room.
@@ -287,6 +309,13 @@ class MeetingSession(
      * opens — so a word added mid-meeting is in the next leg's hints.
      */
     private val hintTerms: () -> List<String> = { emptyList() },
+    /**
+     * The name and folder chosen on the record screen ([MeetingDraft]), read
+     * when the meeting is saved — so a name typed in the last minute counts.
+     */
+    private val choices: () -> MeetingChoices = { MeetingChoices() },
+    /** The choices are in the queue with the recording: the next meeting starts without them. */
+    private val onChoicesSaved: () -> Unit = {},
 ) : LiveMeeting {
     private val mic = MicCapture(context)
 
@@ -307,6 +336,8 @@ class MeetingSession(
 
     /** Straight through from the microphone; the session adds nothing to it. */
     override val micRecovery: StateFlow<MicRecoveryState> get() = mic.micRecovery
+
+    override val inputRoute: String? get() = mic.activeRoute
 
     private val _storageLow = MutableStateFlow(false)
     override val storageLow: StateFlow<Boolean> = _storageLow.asStateFlow()
@@ -995,21 +1026,29 @@ class MeetingSession(
             }
 
             _state.value = MeetingState.Uploading
+            val chosen = choices()
             val id = try {
                 uploader.enqueue(
                     EnqueueRequest(
                         audio = audio,
-                        title = title,
+                        title = chosen.typedTitle ?: title,
                         durationMs = encoder.durationMs.toDouble(),
                         segments = finalSegments(),
                         startedAtMs = startedAtMs,
                         source = RecordingSource.LIVE,
+                        // Null leaves it to the default save location.
+                        destination = chosen.folder?.destination,
+                        namedByUser = chosen.named,
+                        filedByUser = chosen.filed,
                     )
                 )
             } catch (e: Throwable) {
                 _state.value = MeetingState.Failed(MeetingFailure.UPLOAD_FAILED, e.message)
                 return@withLock
             }
+            // Saved under them (or dropped as too short): the next meeting
+            // starts unnamed and unfiled.
+            onChoicesSaved()
 
             val result = if (id == null) null else runCatching { uploader.drain() }.getOrNull()
             // Whether *this* recording reached the cloud — not whether the
@@ -1031,7 +1070,7 @@ class MeetingSession(
                     audioRoute = mic.activeRoute,
                 ),
             )
-            _state.value = withUploadRefused(terminal, outcome.refused)
+            _state.value = withChoices(withUploadRefused(terminal, outcome.refused), chosen)
         }
 
     /**

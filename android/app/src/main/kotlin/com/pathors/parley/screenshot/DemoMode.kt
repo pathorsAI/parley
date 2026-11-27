@@ -22,9 +22,13 @@ import com.pathors.parley.kit.StudyArtifact
 import com.pathors.parley.study.RecordingStudy
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.SaveDestination
+import com.pathors.parley.meeting.ChosenFolder
+import com.pathors.parley.meeting.EndedMeeting
 import com.pathors.parley.meeting.ImportFailure
 import com.pathors.parley.meeting.ImportState
 import com.pathors.parley.meeting.ImportTranscript
+import com.pathors.parley.meeting.MeetingChoices
+import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.onboarding.SampleRecordingStore
 import java.util.Calendar
 import java.util.Locale
@@ -70,7 +74,10 @@ import kotlinx.serialization.json.putJsonObject
  * drafts (`library-overview-drafts`, the overview scrolled to them;
  * `library-drafts`, the full list; `library-draft` and `library-draft-short`,
  * a draft's read-only page), `transcript`,
- * `record` (alias `meeting`), `account`
+ * `record` (alias `meeting`; a meeting in progress), `record-idle` (the record
+ * screen before a meeting), `record-paused`, `settled` (the result page an
+ * ended meeting opens, filing card on top), `adjust` (the same, its folder
+ * picker open), `account`
  * (alias `settings`), `movetofolder` (the transcript with the folder picker
  * open over sixteen folders — a review frame, not a store frame, the same one
  * iOS has), the import screen's endings (`import-partial`, `import-offline`,
@@ -176,6 +183,12 @@ object DemoMode {
      */
     enum class MeetingScenario(val route: String) {
         LIVE("live"),
+
+        /** The record screen before any meeting — iOS `parley://demo/record-idle`. Its own route, `record-idle`. */
+        IDLE("idle"),
+
+        /** [LIVE], paused — iOS `parley://demo/record-paused`. Its own route, `record-paused`. */
+        PAUSED("paused"),
         MIC_SILENCED("mic-silenced"),
         MIC_RECOVERING("mic-recovering"),
 
@@ -189,8 +202,9 @@ object DemoMode {
         INTERRUPTED("interrupted"),
 
         /**
-         * Stopped and uploaded, with the filing suggestion on offer — iOS
-         * `parley://demo/settled`. Also its own top-level route, `settled`.
+         * Ended and uploaded: the result page, with the filing suggestion on
+         * top — iOS `parley://demo/settled`. Also its own top-level route,
+         * `settled`.
          */
         SETTLED("settled"),
 
@@ -198,7 +212,7 @@ object DemoMode {
         ADJUST("adjust"),
         ;
 
-        /** The meeting is over and uploaded, and the filing offer is up. */
+        /** The meeting is over and uploaded: the result page, with the filing offer up. */
         val isSettled: Boolean get() = this == SETTLED || this == ADJUST
 
         companion object {
@@ -322,7 +336,7 @@ object DemoMode {
             in ONBOARDING_ROUTES -> Screen.LIBRARY
             "library", "recordings", in LIBRARY_ROUTES -> Screen.LIBRARY
             "transcript", "recording" -> Screen.TRANSCRIPT
-            "record", "meeting", in FILING_ROUTES -> Screen.MEETING
+            "record", "meeting", in MEETING_ROUTES -> Screen.MEETING
             "account", "settings" -> Screen.ACCOUNT
             "movetofolder" -> Screen.MOVE_TO_FOLDER
             in REPORT_ROUTES -> Screen.REPORT
@@ -341,7 +355,7 @@ object DemoMode {
         _navigation.value = Navigation(
             screen = screen,
             serial = serial,
-            scenario = FILING_ROUTES[route]
+            scenario = MEETING_ROUTES[route]
                 ?: MeetingScenario.fromRoute(uri.getQueryParameter(QUERY_SCENARIO)),
             report = REPORT_ROUTES[route],
             library = LIBRARY_ROUTES[route] ?: LibraryPage.OVERVIEW,
@@ -1203,9 +1217,6 @@ object DemoMode {
 
     // ── filing suggestion fixture ────────────────────────────────────────────
 
-    /** The recording the settled meeting screen has just uploaded. */
-    const val SETTLED_ID = "demo-settled"
-
     /**
      * What the live meeting is called when it lands: the clock name every
      * phone recording starts with, and the thing the suggestion replaces.
@@ -1238,10 +1249,46 @@ object DemoMode {
         ),
     )
 
-    /** The top-level routes that land on the meeting screen in a filing scenario. */
-    private val FILING_ROUTES = mapOf(
+    /**
+     * The top-level routes that name a meeting scenario: the record screen
+     * before a meeting and paused, and the result page an ended meeting opens.
+     */
+    private val MEETING_ROUTES = mapOf(
+        "record-idle" to MeetingScenario.IDLE,
+        "record-paused" to MeetingScenario.PAUSED,
         MeetingScenario.SETTLED.route to MeetingScenario.SETTLED,
         MeetingScenario.ADJUST.route to MeetingScenario.ADJUST,
+    )
+
+    /**
+     * The demo meeting as the record screen names and files it while it
+     * records — iOS `ScreenshotDemo.seedLive`: the featured recording's name,
+     * and its Renewals folder.
+     */
+    fun liveChoices(locale: Locale = Locale.getDefault()): MeetingChoices = MeetingChoices(
+        title = recordings(locale).first { it.id == FEATURED_ID }.title,
+        folder = ChosenFolder(
+            destination = SaveDestination(folderId = RENEWALS_FOLDER_ID),
+            label = t(locale, "Renewals", "續約"),
+        ),
+    )
+
+    /**
+     * The meeting that has just landed, as the record screen hands it to its
+     * result page: the featured recording, named on the record screen while it
+     * recorded but left without a folder (so the card offers folders, and no
+     * rename), every turn final. iOS `ScreenshotDemo.endedMeetingFixture`.
+     */
+    fun endedMeeting(locale: Locale = Locale.getDefault()): EndedMeeting = EndedMeeting(
+        recordingId = FEATURED_ID,
+        finished = MeetingState.Finished(
+            recordingId = FEATURED_ID,
+            pendingUpload = false,
+            dropped = false,
+            namedByUser = true,
+        ),
+        segments = liveScript(locale),
+        elapsedMs = 1_122_000L,
     )
 
     // ── import fixture ───────────────────────────────────────────────────────

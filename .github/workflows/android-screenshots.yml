@@ -1,11 +1,13 @@
 name: Android onboarding screenshots
 
 # Boots an emulator, installs the debug build and captures every onboarding
-# step and the Library's pages in demo mode (android/scripts/demo-screenshots.sh),
-# so they can be reviewed from a PR without a local Android toolchain. Slower
-# than android-ci.yml (an emulator boot), so it runs only when the onboarding or
-# Library UI or their strings change, or by hand. Two artifacts: the onboarding
-# set (`onboarding-screenshots`) and the Library set (`library-screenshots`).
+# step, the Library's pages and the record screen in demo mode
+# (android/scripts/demo-screenshots.sh), so they can be reviewed from a PR
+# without a local Android toolchain. Slower than android-ci.yml (an emulator
+# boot), so it runs only when that UI or its strings change, or by hand. Three
+# artifacts: the onboarding set (`onboarding-screenshots`), the Library set
+# (`library-screenshots`) and the record set (`record-screenshots`: before,
+# during and paused, and End's result page).
 
 on:
   workflow_dispatch:
@@ -18,6 +20,12 @@ on:
       - "android/app/src/main/kotlin/com/pathors/parley/ui/Library*.kt"
       - "android/app/src/main/kotlin/com/pathors/parley/ui/Folder*.kt"
       - "android/app/src/main/kotlin/com/pathors/parley/ui/GettingStartedList.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/Meeting*.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/Live*.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/RecordingDetail*.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/FilingSuggestionCard.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/ui/ParleyRoot.kt"
+      - "android/app/src/main/kotlin/com/pathors/parley/screenshot/DemoMeetingSession.kt"
       - "android/app/src/main/kotlin/com/pathors/parley/ui/Format.kt"
       - "android/app/src/main/kotlin/com/pathors/parley/ui/theme/**"
       - "android/app/src/main/kotlin/com/pathors/parley/screenshot/DemoMode.kt"
@@ -35,7 +43,7 @@ permissions:
 
 jobs:
   capture:
-    name: Capture onboarding and Library
+    name: Capture onboarding, Library and Record
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -94,4 +102,12 @@ jobs:
         with:
           name: library-screenshots
           path: screenshots/library/
+          retention-days: 14
+
+      - name: Upload the record screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: record-screenshots
+          path: screenshots/record/
           retention-days: 14
