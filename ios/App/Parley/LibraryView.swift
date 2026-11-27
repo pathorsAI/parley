@@ -138,6 +138,8 @@ struct LibraryView: View {
             // checklist, which lives in Meetings; the overview then takes the
             // request on appearing (`takeChecklistRequest`).
             .onChange(of: router.checklistRequest) { _, _ in section = .meetings }
+            // A tap on the Library tab: back to the overview, like home.
+            .onChange(of: router.libraryRootRequest) { _, _ in path = [] }
             // The title, actions and search are the page's own (`TabPageHeader`,
             // as on every tab); the title stays for VoiceOver and the back
             // button of pages pushed from here, which bring their bar back.

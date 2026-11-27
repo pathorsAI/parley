@@ -187,7 +187,9 @@ struct MainTabs: View {
     #endif
 
     var body: some View {
-        TabView(selection: $router.tab) {
+        TabView(
+            selection: Binding(get: { router.tab }, set: { router.selectFromTabBar($0) })
+        ) {
             LiveView()
                 .tabItem { Label("Record", systemImage: "record.circle") }
                 .tag(AppTab.record)
