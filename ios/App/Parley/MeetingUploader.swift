@@ -149,6 +149,10 @@ final class MeetingUploader {
         /// started from the record button, and on every manifest written
         /// before it existed; all of those save "".
         var meetingContext: String?
+        /// The agenda as the meeting left it — a draft's todos, ticked during
+        /// the meeting (`MeetingRecorder.agenda`). Lands in the recording's
+        /// `agenda`. Nil when there was none, and on older manifests.
+        var agenda: [AgendaItem]?
 
         /// Both new fields decode with a default, because this manifest is
         /// written to disk and read back by a *later build of the app*. Someone
@@ -159,7 +163,7 @@ final class MeetingUploader {
         enum CodingKeys: String, CodingKey {
             case id, startedAt, durationMs, segments, defaultSave, source, title
             case queuedAt, failureCount, lastError, parking, audioUploadedAt
-            case namedByUser, filedByUser, meetingContext
+            case namedByUser, filedByUser, meetingContext, agenda
         }
 
         init(
@@ -199,6 +203,7 @@ final class MeetingUploader {
             namedByUser = try container.decodeIfPresent(Bool.self, forKey: .namedByUser) ?? false
             filedByUser = try container.decodeIfPresent(Bool.self, forKey: .filedByUser) ?? false
             meetingContext = try container.decodeIfPresent(String.self, forKey: .meetingContext)
+            agenda = try container.decodeIfPresent([AgendaItem].self, forKey: .agenda)
         }
 
         /// The name this recording lands under.
@@ -230,7 +235,8 @@ final class MeetingUploader {
         defaultSave: SaveDestination,
         title: String? = nil,
         filedByUser: Bool = false,
-        meetingContext: String = ""
+        meetingContext: String = "",
+        agenda: [AgendaItem] = []
     ) async throws -> Queued? {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             queue.async { [self] in
@@ -259,6 +265,8 @@ final class MeetingUploader {
         if !meetingContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             pending.meetingContext = meetingContext
         }
+        let items = agenda.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if !items.isEmpty { pending.agenda = items }
         try Self.persist(pending, audioAt: fileURL)
         // Saved on the phone is saved: whatever the upload does next, the
         // meeting is safe and the queue will deliver it.
@@ -819,6 +827,8 @@ final class MeetingUploader {
             "analyzed": false,
         ]
         if let folderId { raw["folderId"] = folderId }
+        // The desktop's `agendaField`: only when there is one.
+        if let agenda = pending.agenda, !agenda.isEmpty { raw["agenda"] = agenda.map(\.metaValue) }
         // Named and filed by the user while recording: the filing question is
         // answered, and the flag is how every platform knows not to ask it.
         if pending.namedByUser && pending.filedByUser { raw["filingSuggested"] = true }

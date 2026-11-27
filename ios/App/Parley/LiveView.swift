@@ -549,7 +549,10 @@ struct LiveView: View {
         .sheet(isPresented: $showingDraft) {
             if let meetingDraft = recorder.meetingDraft {
                 NavigationStack {
-                    MeetingDraftDetailView(draft: meetingDraft.draft, folder: meetingDraft.folder)
+                    // The agenda is the meeting's, tickable; the rest is the draft.
+                    MeetingDraftDetailView(
+                        draft: meetingDraft.draft, folder: meetingDraft.folder,
+                        agenda: $recorder.agenda)
                         .toolbar {
                             ToolbarItem(placement: .confirmationAction) {
                                 Button("Done") { showingDraft = false }
@@ -1277,6 +1280,8 @@ struct LiveView: View {
                     title: start.title, folder: start.folder)
                 recorder.meetingContext = start.context
                 recorder.meetingDraft = (start.draft, start.folderName)
+        recorder.agenda = start.draft.todos.map(AgendaItem.init)
+                recorder.agenda = start.draft.todos.map(AgendaItem.init)
                 router.markDraftStarted(start.draftId)
                 return
             }

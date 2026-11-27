@@ -155,6 +155,10 @@ final class MeetingRecorder: ObservableObject {
     /// live screen's 查看會議草稿 sheet. nil for a meeting started from the
     /// record button. Cleared with the title.
     @Published var meetingDraft: (draft: CloudMeetingDraft, folder: String?)?
+    /// The agenda of the draft the meeting was started from, ticked while
+    /// it runs — the desktop's meeting `todos`. Saved into the recording's
+    /// `agenda`; the draft itself is never written. Cleared with the title.
+    @Published var agenda: [AgendaItem] = []
     /// When this meeting started, for the date on the live screen's heading.
     @Published private(set) var startedAt: Date?
 
@@ -547,6 +551,7 @@ final class MeetingRecorder: ObservableObject {
         meetingFolder = nil
         meetingContext = ""
         meetingDraft = nil
+        agenda = []
         status = nil
         phase = .idle
     }
@@ -920,6 +925,7 @@ final class MeetingRecorder: ObservableObject {
             meetingFolder = nil
             meetingContext = ""
             meetingDraft = nil
+            agenda = []
             return
         }
         self.uploader = nil
@@ -932,6 +938,7 @@ final class MeetingRecorder: ObservableObject {
             meetingFolder = nil
             meetingContext = ""
             meetingDraft = nil
+            agenda = []
         }
 
         let queued: MeetingUploader.Queued
@@ -941,7 +948,7 @@ final class MeetingRecorder: ObservableObject {
                     segments: segments,
                     defaultSave: meetingFolder?.destination ?? app.defaultSave,
                     title: meetingTitle, filedByUser: meetingFolder != nil,
-                    meetingContext: meetingContext)
+                    meetingContext: meetingContext, agenda: agenda)
             else {
                 status = String(localized: "That recording was too short to keep")
                 return

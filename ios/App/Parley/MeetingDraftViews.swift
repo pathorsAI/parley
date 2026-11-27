@@ -295,6 +295,11 @@ struct MeetingDraftDetailView: View {
     /// start button: the record screen's sheet, for the meeting already
     /// started from it.
     var onStart: (() -> Void)?
+    /// The meeting's agenda, when the page is the record screen's sheet for a
+    /// meeting started from this draft: tickable, and the ticks are the
+    /// meeting's (saved with the recording), never the draft's. nil = the
+    /// Library's read-only page, showing the draft's todos as they are.
+    var agenda: Binding<[AgendaItem]>?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
@@ -313,23 +318,15 @@ struct MeetingDraftDetailView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    if !agenda.isEmpty {
+                    if let agenda {
+                        if !agenda.wrappedValue.isEmpty { tickableAgenda(agenda) }
+                    } else if !draftAgenda.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             OverviewHeading(title: "Agenda")
-                            HairlineList(items: agenda) { item in
-                                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                                    Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
-                                        .foregroundStyle(
-                                            item.done ? Theme.primary : Color(.tertiaryLabel))
-                                        .accessibilityHidden(true)
-                                    Text(verbatim: item.text)
-                                        .font(.parley.subheadline)
-                                        .foregroundStyle(Color(.label))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .padding(.vertical, 10)
-                                .accessibilityElement(children: .combine)
-                                .accessibilityAddTraits(item.done ? .isSelected : [])
+                            HairlineList(items: draftAgenda) { item in
+                                agendaRow(text: item.text, done: item.done)
+                                    .accessibilityElement(children: .combine)
+                                    .accessibilityAddTraits(item.done ? .isSelected : [])
                             }
                         }
                     }
@@ -380,7 +377,43 @@ struct MeetingDraftDetailView: View {
         draft.meetingContext.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var agenda: [CloudDraftTodo] {
+    /// The meeting's to-do list: a tap ticks or unticks, the desktop's
+    /// `toggleAgendaItem`.
+    private func tickableAgenda(_ agenda: Binding<[AgendaItem]>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            OverviewHeading(title: "Agenda")
+            HairlineList(items: agenda.wrappedValue) { item in
+                Button {
+                    if let i = agenda.wrappedValue.firstIndex(where: { $0.id == item.id }) {
+                        agenda.wrappedValue[i] = agenda.wrappedValue[i].toggled()
+                    }
+                } label: {
+                    agendaRow(text: item.text, done: item.done)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(item.done ? .isSelected : [])
+            }
+        }
+    }
+
+    /// One agenda line: a check circle, then the item — struck through and
+    /// greyed once done.
+    private func agendaRow(text: String, done: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(done ? Theme.primary : Color(.tertiaryLabel))
+                .accessibilityHidden(true)
+            Text(verbatim: text)
+                .font(.parley.subheadline)
+                .foregroundStyle(done ? Color(.secondaryLabel) : Color(.label))
+                .strikethrough(done, color: Color(.secondaryLabel))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 10)
+    }
+
+    private var draftAgenda: [CloudDraftTodo] {
         draft.todos.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 

@@ -1012,6 +1012,7 @@
                 recorder.meetingTitle = draft.title
                 recorder.meetingContext = draft.meetingContext
                 recorder.meetingDraft = (draft, folders.first { $0.id == draft.meetingFolderId }?.name)
+                recorder.agenda = draft.todos.map(AgendaItem.init)
             }
         }
     }
