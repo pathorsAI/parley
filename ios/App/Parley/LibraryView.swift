@@ -369,11 +369,16 @@ struct LibraryView: View {
                             .padding(.horizontal, 20)
                             .id(Self.checklistID)
                     }
-                    if scope == nil {
-                        draftSections
+                    // 即將開始的會議 → 資料夾 → 會議草稿 → 最近錄音.
+                    if scope == nil, hasDrafts(.startingSoon) {
+                        draftSection(.startingSoon)
                             .padding(.horizontal, 20)
                     }
                     foldersSection
+                    if scope == nil, hasDrafts(.later) {
+                        draftSection(.later)
+                            .padding(.horizontal, 20)
+                    }
                     recentSection
                         .padding(.horizontal, 20)
                 }
@@ -410,14 +415,21 @@ struct LibraryView: View {
         }
     }
 
-    /// 即將開始的會議 and 會議草稿, above the folders: the meetings the desktop
-    /// prepared, each opening a read-only page. Nothing at all when there are
-    /// no drafts.
-    private var draftSections: some View {
-        OverviewDraftSections(drafts: drafts, folderName: personalFolderName) { draft, row in
-            NavigationLink(value: LibraryRoute.draft(draft.id)) { row }
-                .buttonStyle(.plain)
+    /// 即將開始的會議 (above the folders) or 會議草稿 (under them): the
+    /// meetings the desktop prepared, each opening a read-only page. Nothing
+    /// at all when the part has no drafts.
+    private func draftSection(_ part: OverviewDraftSections<NavigationLinkRow>.Part) -> some View {
+        OverviewDraftSections(drafts: drafts, part: part, folderName: personalFolderName) { draft, row in
+            NavigationLinkRow(id: draft.id, row: row)
         }
+    }
+
+    /// Whether a draft section has anything, so an empty one leaves no gap.
+    /// Read when the overview renders; the section itself re-splits every
+    /// 30 s, so a draft crossing into the hour moves at the next render.
+    private func hasDrafts(_ part: OverviewDraftSections<NavigationLinkRow>.Part) -> Bool {
+        let split = MeetingDraftSchedule.split(drafts, now: Date().timeIntervalSince1970 * 1000)
+        return part == .startingSoon ? !split.startingSoon.isEmpty : !split.later.isEmpty
     }
 
     /// A personal folder's name, for a draft's folder. The overview's folders
@@ -2133,3 +2145,14 @@ private struct RecordingCard: View {
             .environmentObject(TabRouter())
     }
 #endif
+
+/// A draft row that opens the draft's read-only page.
+private struct NavigationLinkRow: View {
+    let id: String
+    let row: DraftRow
+
+    var body: some View {
+        NavigationLink(value: LibraryRoute.draft(id)) { row }
+            .buttonStyle(.plain)
+    }
+}

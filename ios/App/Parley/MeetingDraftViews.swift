@@ -19,7 +19,12 @@ import SwiftUI
 /// meeting moves up into 即將開始 and its "in 25 min" counts down while the
 /// page is open.
 struct OverviewDraftSections<Row: View>: View {
+    /// Which of the overview's two draft sections this is: they sit apart,
+    /// 即將開始的會議 above the folders and 會議草稿 under them.
+    enum Part { case startingSoon, later }
+
     let drafts: [CloudMeetingDraft]
+    let part: Part
     let folderName: (String?) -> String?
     /// Wraps a row in whatever opens it (a navigation link on the overview).
     @ViewBuilder var link: (CloudMeetingDraft, DraftRow) -> Row
@@ -28,14 +33,14 @@ struct OverviewDraftSections<Row: View>: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             let now = context.date.timeIntervalSince1970 * 1000
             let split = MeetingDraftSchedule.split(drafts, now: now)
-            if !split.startingSoon.isEmpty || !split.later.isEmpty {
-                VStack(alignment: .leading, spacing: 28) {
-                    if !split.startingSoon.isEmpty {
-                        section("Starting soon", split.startingSoon, now: now)
-                    }
-                    if !split.later.isEmpty {
-                        section("Meeting drafts", split.later, now: now)
-                    }
+            switch part {
+            case .startingSoon:
+                if !split.startingSoon.isEmpty {
+                    section("Starting soon", split.startingSoon, now: now)
+                }
+            case .later:
+                if !split.later.isEmpty {
+                    section("Meeting drafts", split.later, now: now)
                 }
             }
         }
