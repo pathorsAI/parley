@@ -32,6 +32,19 @@ final class TabRouter: ObservableObject {
         tab = .library
     }
 
+    /// Bumped each time the Library tab is tapped: the Library goes back to
+    /// its overview, whatever was pushed over it (a folder, the full list, a
+    /// recording) — as a tab bar does at home. Only a tap: a switch made in
+    /// code (the checklist, a meeting that just ended) carries its own
+    /// destination.
+    @Published private(set) var libraryRootRequest = 0
+
+    /// The tab bar's own selection: a tap on Library also asks for its root.
+    func selectFromTabBar(_ tab: AppTab) {
+        if tab == .library { libraryRootRequest += 1 }
+        self.tab = tab
+    }
+
     /// Bumped each time a meeting's upload settles and its result page should
     /// open: the phone's version of the desktop's End, which finishes saving
     /// and then opens the recording's report (`src/lib/meeting/controls.ts`
