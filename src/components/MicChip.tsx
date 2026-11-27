@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Mic } from "lucide-react";
+import { Check, ChevronDown, Mic, MicOff } from "lucide-react";
 import { toast } from "sonner";
 import { isMeetingActive, useStore } from "../lib/store";
 import { useLiveMeeting } from "../lib/meeting/liveSession";
@@ -144,6 +144,8 @@ export function MicChip({ shrink = false }: Readonly<{ shrink?: boolean }> = {})
   // window holds it (the main window's live store, the meeting window's mirror).
   const meetingActive = useLiveMeeting((s) => isMeetingActive(s.meetingStatus));
   const paused = useLiveMeeting((s) => s.meetingStatus === "paused");
+  // Muted mid-meeting: the chip says so instead of showing a (flat) level.
+  const muted = useLiveMeeting((s) => isMeetingActive(s.meetingStatus) && s.meetingMicMuted);
   const [devices, setDevices] = useState<string[]>([]);
   const [perms, setPerms] = useState<Permissions | null>(null);
   const [testing, setTesting] = useState(false);
@@ -151,7 +153,7 @@ export function MicChip({ shrink = false }: Readonly<{ shrink?: boolean }> = {})
 
   const deviceName = inputDevice || t("settings.transcription.systemDefault");
   let levelSource: string | null = null;
-  if (meetingActive && !paused) levelSource = "me";
+  if (meetingActive && !paused && !muted) levelSource = "me";
   else if (testing) levelSource = "test";
   const level = useSourceLevel(levelSource);
 
@@ -224,9 +226,17 @@ export function MicChip({ shrink = false }: Readonly<{ shrink?: boolean }> = {})
           title={t("mic.chip.title", { name: deviceName })}
           className={`inline-flex h-7 min-w-0 ${shrink ? "shrink" : "shrink-0"} cursor-pointer items-center gap-1.5 rounded-full border bg-background px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted aria-expanded:bg-muted`}
         >
-          <Mic className="size-3.5 shrink-0" />
+          {muted ? (
+            <MicOff className="size-3.5 shrink-0 text-recording" />
+          ) : (
+            <Mic className="size-3.5 shrink-0" />
+          )}
           <span className="min-w-0 max-w-[150px] truncate">{deviceName}</span>
-          <ChipMeter level={level} />
+          {muted ? (
+            <span className="shrink-0 text-recording">{t("titlebar.muted")}</span>
+          ) : (
+            <ChipMeter level={level} />
+          )}
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>

@@ -58,6 +58,21 @@ export interface NewDraftFields {
   playbook: MeetingPlaybook;
 }
 
+/** The fields an MCP client may change on a saved draft; absent ones stay. */
+export type DraftPatch = Partial<
+  Pick<
+    MeetingDraft,
+    | "title"
+    | "meetingAt"
+    | "meetingEndAt"
+    | "reminderLeadMin"
+    | "meetingContext"
+    | "meetingFolderId"
+    | "todos"
+    | "playbook"
+  >
+>;
+
 /** The prep fields a draft fills in when it is loaded. */
 function prepFromDraft(d: MeetingDraft) {
   return {
@@ -173,6 +188,9 @@ export interface PrepSlice {
   /** File a draft made elsewhere (an MCP client) straight into the list,
    *  leaving the prep alone — so it works mid-meeting too. */
   addDraft: (fields: NewDraftFields) => MeetingDraft;
+  /** Change a saved draft in the list (an MCP client's edit); null when there
+   *  is no such draft. The prep fields are left alone, as with a cloud merge. */
+  updateDraft: (id: string, patch: DraftPatch) => MeetingDraft | null;
   /** Note that this draft's reminder fired for its `meetingAt`. Per-device
    *  state: deliberately leaves `updatedAt` alone (it is not synced). */
   markDraftReminded: (id: string, at: number) => void;
@@ -392,6 +410,22 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
     log.info("store: draft added", { id: draft.id, timed: draft.meetingAt != null });
     set((s) => ({ drafts: [...s.drafts, draft] }));
     return draft;
+  },
+  updateDraft: (id, patch) => {
+    let updated: MeetingDraft | null = null;
+    set((s) => {
+      const prev = s.drafts.find((d) => d.id === id);
+      if (!prev) return {};
+      const next: MeetingDraft = { ...prev, ...patch, updatedAt: Date.now() };
+      // A moved time (or lead) is a new reminder.
+      if (next.meetingAt !== prev.meetingAt || next.reminderLeadMin !== prev.reminderLeadMin) {
+        next.remindedFor = null;
+      }
+      updated = next;
+      log.info("store: draft updated", { id, timed: next.meetingAt != null });
+      return { drafts: s.drafts.map((d) => (d.id === id ? next : d)) };
+    });
+    return updated;
   },
   markDraftReminded: (id, at) =>
     set((s) => ({ drafts: s.drafts.map((d) => (d.id === id ? { ...d, remindedFor: at } : d)) })),

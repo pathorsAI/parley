@@ -384,7 +384,10 @@ fn local_cases() -> Value {
         ["create_meeting_draft", { "agenda": "not a list" }],
         ["create_meeting_draft", { "questions": [1] }],
         ["create_meeting_draft", { "branches": [{ "when": "too expensive" }] }],
-        ["create_meeting_draft", { "topics": "not a list" }]
+        ["create_meeting_draft", { "topics": "not a list" }],
+        ["update_meeting_draft", { "title": "No id" }],
+        ["update_meeting_draft", { "id": "d1", "branches": [{ "when": "too expensive" }] }],
+        ["delete_meeting_draft", {}]
     ]"#,
     )
     .unwrap()
@@ -401,6 +404,8 @@ fn rpc_cases() -> Value {
         ["list_meeting_drafts", {}],
         ["create_meeting_draft", { "title": "Pricing call", "startAt": "2026-11-03T14:00:00+08:00", "context": "BATNA: renew with the current vendor", "agenda": ["Confirm volume"] }],
         ["create_meeting_draft", { "title": "Renewal", "agenda": ["Confirm volume"], "questions": ["What does volume look like next year?"], "branches": [{ "when": "too expensive", "then": "Ask what they compare against" }], "topics": ["Their expansion plans"] }],
+        ["update_meeting_draft", { "id": "d1", "startAt": null, "topics": ["Hiring plans"], "branches": [], "agenda": null }],
+        ["delete_meeting_draft", { "id": "d1" }],
         ["rename_folder", { "id": "f1", "name": "Renamed" }],
         ["delete_folder", { "id": "f1" }],
         ["delete_folder", { "id": "fail-me" }],

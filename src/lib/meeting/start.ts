@@ -186,6 +186,15 @@ async function openCaptureSession(settings: Settings, request: TranscriptionRequ
       vocabulary: request.vocabulary,
       meetingId,
     });
+    // start_meeting arms every meeting unmuted. A mute pressed while it was in
+    // flight may have reached the backend first and been reset by it: send the
+    // live store's state again now that the start has landed.
+    const live = useLiveStore.getState();
+    if (live.meetingMicMuted && live.liveMeetingId === meetingId) {
+      ipc.setMeetingMicMuted({ muted: true }).catch((error) =>
+        log.error("meeting: mic mute re-sync failed", { error: String(error) }),
+      );
+    }
   } catch (e) {
     // Nothing is recording, so no recording event will settle a save.
     if (meetingId) liveSaves.forget(meetingId);

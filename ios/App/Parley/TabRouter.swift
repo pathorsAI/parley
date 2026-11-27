@@ -30,4 +30,39 @@ final class TabRouter: ObservableObject {
         checklistRequest += 1
         tab = .library
     }
+
+    /// Bumped each time a meeting's upload settles and its result page should
+    /// open: the phone's version of the desktop's End, which finishes saving
+    /// and then opens the recording's report (`src/lib/meeting/controls.ts`
+    /// `endMeeting`). A counter for the same reasons as `checklistRequest`:
+    /// two meetings in a row are two changes, and a Library built for the
+    /// first time by this very switch still has to act on a request it was not
+    /// around to see change.
+    @Published private(set) var endedMeetingRequest = 0
+    /// What the latest `endedMeetingRequest` is about. Not published itself:
+    /// it is always written just before the counter, and the counter is what
+    /// the Library watches.
+    private(set) var endedMeeting: EndedMeeting?
+
+    /// Switch to the Library and open the result page of the meeting that has
+    /// just landed in the cloud.
+    func openEndedMeeting(_ meeting: EndedMeeting) {
+        endedMeeting = meeting
+        endedMeetingRequest += 1
+        tab = .library
+    }
+}
+
+/// A meeting that ended and landed in the cloud, as its result page needs it:
+/// the recording itself, plus what only the record screen knew about it —
+/// whether it was named or filed live (the filing card skips those halves)
+/// and how the microphone held up (the `mic_recovery` prompt).
+struct EndedMeeting {
+    let settled: MeetingRecorder.Settled
+    /// Nil only if the recorder never noted the meeting as finished, which a
+    /// settled upload always does first. Optional so a missing one costs the
+    /// prompt, never the handoff.
+    let finished: MeetingRecorder.FinishedMeeting?
+
+    var id: String { settled.id }
 }

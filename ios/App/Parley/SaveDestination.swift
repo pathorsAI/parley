@@ -31,3 +31,24 @@ struct SaveDestination: Codable, Equatable {
         return String(localized: "Personal")
     }
 }
+
+extension SaveDestination {
+    /// A picker's pick as a place to save a new recording. Nil for a folder
+    /// that does not exist yet: whoever confirmed the pick creates it first,
+    /// and saves into the folder that came back.
+    init?(_ destination: FolderDestination) {
+        switch destination {
+        case .root(let orgId):
+            self.init(scope: orgId == nil ? "personal" : "org", orgId: orgId, folderId: nil)
+        case .folder(let id, let orgId):
+            self.init(scope: orgId == nil ? "personal" : "org", orgId: orgId, folderId: id)
+        case .newFolder:
+            return nil
+        }
+    }
+
+    /// The same place, as the folder picker names it.
+    var folderDestination: FolderDestination {
+        .current(orgId: isOrg ? orgId : nil, folderId: folderId)
+    }
+}

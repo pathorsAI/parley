@@ -36,11 +36,19 @@ public actor FilingPass {
     /// still unanswered. nil when there is nothing to offer — the pass already
     /// ran and was answered, there was no transcript, the model had nothing,
     /// or something failed along the way (best-effort, like the pass itself).
+    ///
+    /// `named` / `filed`: the user already gave the recording its name or its
+    /// folder while it was being recorded, so that half is not asked about —
+    /// see `FilingSuggestion.answering(named:filed:)`. Both answered, the
+    /// model is not asked at all.
     public func run(
-        id: String, cloud: CloudClient, language: FilingSuggester.Language = .current
+        id: String, cloud: CloudClient, language: FilingSuggester.Language = .current,
+        named: Bool = false, filed: Bool = false
     ) async -> FilingSuggestion? {
         if let running = inFlight[id] { return await running.value }
-        let task = Task { await Self.perform(id: id, cloud: cloud, language: language) }
+        let task = Task {
+            await Self.perform(id: id, cloud: cloud, language: language, named: named, filed: filed)
+        }
         inFlight[id] = task
         let result = await task.value
         inFlight[id] = nil
@@ -52,28 +60,42 @@ public actor FilingPass {
     /// the meta afterwards, and the recording screen presents it when the
     /// recording is opened.
     public nonisolated func start(
-        id: String, cloud: CloudClient, language: FilingSuggester.Language = .current
+        id: String, cloud: CloudClient, language: FilingSuggester.Language = .current,
+        named: Bool = false, filed: Bool = false
     ) {
-        Task { _ = await self.run(id: id, cloud: cloud, language: language) }
+        Task {
+            _ = await self.run(id: id, cloud: cloud, language: language, named: named, filed: filed)
+        }
     }
 
     static func perform(
-        id: String, cloud: CloudClient, language: FilingSuggester.Language
+        id: String, cloud: CloudClient, language: FilingSuggester.Language,
+        named: Bool = false, filed: Bool = false
     ) async -> FilingSuggestion? {
+        guard !(named && filed) else { return nil }
         do {
             let meta = try await cloud.recordingMeta(id: id)
-            if meta.filingSuggested { return meta.filingSuggestion }
+            if meta.filingSuggested {
+                return meta.filingSuggestion?.answering(named: named, filed: filed)
+            }
 
             let folders = try await cloud.listFolders().filter { $0.orgId == nil }
             guard
-                let suggestion = try await FilingSuggester.suggest(
+                let answer = try await FilingSuggester.suggest(
                     meta: meta, folders: folders, language: language, cloud: cloud)
             else { return nil }
+            // Persisted without the half the user already answered, so no
+            // screen — this phone's recording page, the desktop — ever offers
+            // to rename over a name they typed. The flag is written even when
+            // nothing is left: the pass has been spent either way.
+            let suggestion = answer.answering(named: named, filed: filed)
 
             var fresh = try await cloud.recordingMeta(id: id)
             // Another device finished its own pass while this one ran. Its
             // answer is the one already synced, so it is the one to show.
-            if fresh.filingSuggested { return fresh.filingSuggestion }
+            if fresh.filingSuggested {
+                return fresh.filingSuggestion?.answering(named: named, filed: filed)
+            }
             fresh.filingSuggestion = suggestion
             fresh.filingSuggested = true
             do {

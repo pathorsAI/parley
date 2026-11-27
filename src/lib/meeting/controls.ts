@@ -79,6 +79,29 @@ export function toggleMeetingPause(): void {
   }
 }
 
+/**
+ * Mute/unmute this computer's microphone in the live meeting: the store first
+ * (instant UI), then the backend, which zero-fills the mic side while the
+ * other side keeps recording. Always the LIVE store — the meeting's own state,
+ * whichever window the press came from (the meeting window routes it here
+ * through `meetingCommand`). A no-op when no meeting is active. A mute pressed
+ * while `start_meeting` is still in flight could reach the backend before the
+ * start resets the flag; `openCaptureSession` re-sends it once the start
+ * lands, so the UI and the backend cannot end up split.
+ */
+export function toggleMeetingMicMute(): void {
+  const store = useLiveStore.getState();
+  if (!isMeetingActive(store.meetingStatus)) return;
+  const muted = !store.meetingMicMuted;
+  log.info(muted ? "meeting: mic mute requested" : "meeting: mic unmute requested");
+  store.setMeetingMicMuted(muted);
+  if (meetingUsesRealPipeline(useStore.getState().settings)) {
+    ipc.setMeetingMicMuted({ muted }).catch((e) =>
+      log.error("meeting: mic mute toggle failed", { error: String(e) }),
+    );
+  }
+}
+
 /** Cancel: discard everything (the backend drops the recording instead of
  *  encoding it), back to idle. */
 export async function cancelActiveMeeting(): Promise<void> {

@@ -15,7 +15,7 @@ vi.mock("../log", () => ({ log: mocks.log, attachConsoleOnce: vi.fn() }));
 
 import { useLiveStore, useStore } from "../store";
 import type { MeetingStatus } from "../types";
-import { cancelActiveMeeting, endMeeting, recoverOrphanedMeeting, stopBackendMeeting, toggleMeetingPause } from "./controls";
+import { cancelActiveMeeting, endMeeting, recoverOrphanedMeeting, stopBackendMeeting, toggleMeetingMicMute, toggleMeetingPause } from "./controls";
 import { liveSaves } from "../history/history";
 
 const base = useStore.getState().settings;
@@ -26,7 +26,7 @@ function setup(opts: { key: string; tauri?: boolean; status?: MeetingStatus }) {
     cloudAuth: null,
   });
   // The meeting itself is the live store's.
-  useLiveStore.setState({ meetingStatus: opts.status ?? "recording", isFinalizingMeeting: false });
+  useLiveStore.setState({ meetingStatus: opts.status ?? "recording", isFinalizingMeeting: false, meetingMicMuted: false });
   if (opts.tauri === false) delete (globalThis as Record<string, unknown>).__TAURI_INTERNALS__;
   else (globalThis as Record<string, unknown>).__TAURI_INTERNALS__ = {};
 }
@@ -99,6 +99,37 @@ describe("toggleMeetingPause", () => {
     toggleMeetingPause();
     expect(useLiveStore.getState().meetingStatus).toBe("paused");
     expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe("toggleMeetingMicMute", () => {
+  it("mutes then unmutes the live meeting, telling the backend each time", () => {
+    setup({ key: "sk" });
+    toggleMeetingMicMute();
+    expect(useLiveStore.getState().meetingMicMuted).toBe(true);
+    // Muting is not pausing: the meeting keeps recording the other side.
+    expect(useLiveStore.getState().meetingStatus).toBe("recording");
+    toggleMeetingMicMute();
+    expect(useLiveStore.getState().meetingMicMuted).toBe(false);
+    expect(commands()).toEqual([
+      ["set_meeting_mic_muted", { muted: true }],
+      ["set_meeting_mic_muted", { muted: false }],
+    ]);
+  });
+
+  it("does nothing without an active meeting", () => {
+    setup({ key: "sk" });
+    useLiveStore.setState({ meetingStatus: "idle" });
+    toggleMeetingMicMute();
+    expect(useLiveStore.getState().meetingMicMuted).toBe(false);
+    expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
+  it("is cleared when the meeting stops", () => {
+    setup({ key: "sk" });
+    toggleMeetingMicMute();
+    useLiveStore.getState().stopMeeting();
+    expect(useLiveStore.getState().meetingMicMuted).toBe(false);
   });
 });
 

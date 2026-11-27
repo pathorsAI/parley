@@ -25,15 +25,16 @@ export const COMPACT_BELOW = { width: 360, height: 400 } as const;
 /** The mini window ("小窗"): one row — clock, tab icons, expand — over what
  *  the tab it shrank from shows. Its width is fixed; its height follows that. */
 export const MINI_WIDTH = 440;
-/** The mini window's height per tab: the coach is the bare row (its answer
- *  opens under it), the transcript its last lines, the notes a small box. */
-export const MINI_HEIGHT = { coach: 48, coachAnswer: 240, transcript: 176, notes: 200 } as const;
+/** The mini window's height per tab: the coach's suggestions so far and the
+ *  transcript's last lines are the same small list, the notes a small box. */
+export const MINI_HEIGHT = { coach: 176, transcript: 176, notes: 200 } as const;
 /** One line of the mini window's transcript and notes. */
 export const MINI_LINE = 22;
-/** The least the mini window may be dragged to per tab: the coach's bare row;
- *  the transcript and notes keep one whole line under it (row 48 + border 1
- *  + 8px padding above and below). */
-export const MINI_MIN_HEIGHT = { coach: 48, transcript: 48 + 1 + 16 + MINI_LINE, notes: 48 + 1 + 16 + MINI_LINE } as const;
+/** The least the mini window may be dragged to per tab: every tab keeps one
+ *  whole line under the row (row 48 + border 1 + 8px padding above and
+ *  below). */
+const MINI_MIN = 48 + 1 + 16 + MINI_LINE;
+export const MINI_MIN_HEIGHT = { coach: MINI_MIN, transcript: MINI_MIN, notes: MINI_MIN } as const;
 /** Docking, like a magnet: a mini window brought this close to the screen's
  *  top edge — anywhere along it — snaps to the nearest of its three spots:
  *  the top-left corner, the middle (under the notch by the camera), or the

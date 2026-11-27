@@ -3,13 +3,15 @@
 
 use serde_json::{json, Value};
 
-use crate::mcp::registry::{tool, Domain, Handler};
+use crate::mcp::registry::{tool, Domain, Field, Handler};
 
 pub(super) const DOMAIN: Domain = Domain {
     schemas,
     handlers: &[
         ("list_meeting_drafts", Handler::Forward(&[])),
         ("create_meeting_draft", Handler::ForwardWith(draft_args)),
+        ("update_meeting_draft", Handler::ForwardWith(draft_patch_args)),
+        ("delete_meeting_draft", Handler::Forward(&[Field::Required("id")])),
     ],
 };
 
@@ -50,6 +52,91 @@ fn draft_args(args: Value) -> anyhow::Result<Value> {
         "branches": branches,
         "topics": topics
     }))
+}
+
+/// A list argument's key, the check each item must pass, and how to describe
+/// the expected shape.
+type ListRule = (&'static str, fn(&Value) -> bool, &'static str);
+
+/// An update's arguments: the draft's `id`, and only the fields the call
+/// carries, so the frontend can tell "leave as is" (absent) from "clear"
+/// (`null`). The lists are checked as `draft_args` checks them; a `null` list
+/// counts as absent.
+fn draft_patch_args(args: Value) -> anyhow::Result<Value> {
+    let id = args
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("id is required"))?;
+    let mut out = serde_json::Map::new();
+    out.insert("id".to_string(), json!(id));
+    for key in ["title", "startAt", "endAt", "reminderLeadMin", "context", "folderId"] {
+        if let Some(value) = args.get(key) {
+            out.insert(key.to_string(), value.clone());
+        }
+    }
+    let lists: [ListRule; 4] = [
+        ("agenda", Value::is_string, "strings"),
+        ("questions", Value::is_string, "strings"),
+        ("branches", is_branch, "{ when, then } objects with string values"),
+        ("topics", Value::is_string, "strings"),
+    ];
+    for (key, ok, shape) in lists {
+        let list = list_arg(&args, key, ok, shape)?;
+        if !list.is_null() {
+            out.insert(key.to_string(), list);
+        }
+    }
+    Ok(Value::Object(out))
+}
+
+/// The playbook's `branches` schema, shared by create and update.
+fn branches_schema(description: &str) -> Value {
+    json!({
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {
+                "when": { "type": "string", "description": "What the other side says." },
+                "then": { "type": "string", "description": "Where to steer the conversation when they do." }
+            },
+            "required": ["when", "then"]
+        },
+        "description": description
+    })
+}
+
+/// One property of a tool's input schema.
+fn prop(kind: Value, description: &str) -> Value {
+    json!({ "type": kind, "description": description })
+}
+
+/// A property holding a list of strings.
+fn strings(description: &str) -> Value {
+    json!({ "type": "array", "items": { "type": "string" }, "description": description })
+}
+
+/// `update_meeting_draft`'s input: the draft's `id`, and any field to change.
+fn update_schema() -> Value {
+    let text = || json!("string");
+    let clearable = || json!(["string", "null"]);
+    let properties: [(&str, Value); 11] = [
+        ("id", prop(text(), "The draft to change (see list_meeting_drafts).")),
+        ("title", prop(text(), "Meeting name.")),
+        ("startAt", prop(clearable(), "Start time, ISO 8601 with a UTC offset (e.g. 2026-11-03T14:00:00+08:00). null makes the draft untimed.")),
+        ("endAt", prop(clearable(), "End time, ISO 8601. Must be after the start.")),
+        ("reminderLeadMin", prop(json!("number"), "Minutes before the start to remind the user.")),
+        ("context", prop(text(), "Background for the analysis, including any BATNA / target / bottom line. Replaces the current text.")),
+        ("folderId", prop(clearable(), "Personal folder to file the recording into (see list_folders); null for none.")),
+        ("agenda", strings("The whole agenda: the things to ask or cover in the meeting.")),
+        ("questions", strings("Items to add to the agenda (skipping any already there).")),
+        ("branches", branches_schema("Playbook: if they say `when`, steer with `then`. Replaces the whole list.")),
+        ("topics", strings("Playbook: what to bring up when the conversation runs dry, each one complete sentence the user could say as is. Replaces the whole list.")),
+    ];
+    let properties: serde_json::Map<String, Value> =
+        properties.into_iter().map(|(key, schema)| (key.to_string(), schema)).collect();
+    json!({ "type": "object", "properties": properties, "required": ["id"] })
 }
 
 fn schemas() -> Vec<Value> {
@@ -99,20 +186,37 @@ fn schemas() -> Vec<Value> {
                     "folderId": { "type": "string", "description": "Personal folder to file the recording into (see list_folders)." },
                     "agenda": { "type": "array", "items": { "type": "string" }, "description": "The things to ask or cover in the meeting; the AI ticks them as they come up and live suggestions pick from the ones still open." },
                     "questions": { "type": "array", "items": { "type": "string" }, "description": "Alias of `agenda`: its items are appended to the agenda (skipping any already there). Prefer `agenda`." },
-                    "branches": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "when": { "type": "string", "description": "What the other side says." },
-                                "then": { "type": "string", "description": "Where to steer the conversation when they do." }
-                            },
-                            "required": ["when", "then"]
-                        },
-                        "description": "Playbook: if they say `when`, steer with `then`."
-                    },
+                    "branches": branches_schema("Playbook: if they say `when`, steer with `then`."),
                     "topics": { "type": "array", "items": { "type": "string" }, "description": "Playbook: what to bring up when the conversation runs dry, each written as one complete sentence the user could say as is (e.g. '最近洗碗機旺季，你們晚上的電話是不是也變多了？'), not a bare topic — Parley shows it word for word mid-meeting." }
                 }
+            }),
+        ),
+        tool(
+            "update_meeting_draft",
+            "Update a meeting draft",
+            "Change a saved meeting draft (id from list_meeting_drafts). Only \
+             the fields you pass change. `agenda` replaces the whole checklist; \
+             an item whose text is unchanged keeps its checked state. \
+             `questions` (an alias) adds items to the agenda instead. \
+             `branches` and `topics` each replace that whole playbook list; \
+             pass an empty array to clear one. Moving `startAt` without `endAt` \
+             keeps the meeting's length; `startAt: null` makes the draft \
+             untimed. Returns the updated draft. Safe to call while a meeting \
+             is recording.",
+            update_schema(),
+        ),
+        tool(
+            "delete_meeting_draft",
+            "Delete a meeting draft",
+            "Delete a saved meeting draft (id from list_meeting_drafts). It \
+             leaves 即將開始 and its reminder is cancelled. Recordings are not \
+             affected.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "The draft to delete (see list_meeting_drafts)." }
+                },
+                "required": ["id"]
             }),
         ),
     ]

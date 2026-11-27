@@ -151,6 +151,14 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         "Pause or Resume Recording",
         "Shift+CmdOrCtrl+P",
     )?;
+    #[cfg(target_os = "macos")]
+    let meeting_mute = command_item(
+        handle,
+        "main",
+        "meeting.toggleMicMute",
+        "Mute or Unmute Microphone",
+        "Shift+CmdOrCtrl+M",
+    )?;
 
     #[cfg(target_os = "macos")]
     let shortcuts = command_item(
@@ -360,7 +368,12 @@ pub fn build<R: Runtime>(handle: &AppHandle<R>) -> tauri::Result<Menu<R>> {
                 ],
             )?,
             #[cfg(target_os = "macos")]
-            &Submenu::with_items(handle, "Meeting", true, &[&meeting_start, &meeting_pause])?,
+            &Submenu::with_items(
+                handle,
+                "Meeting",
+                true,
+                &[&meeting_start, &meeting_pause, &meeting_mute],
+            )?,
             &window_menu,
             &diagnostics,
             &help_menu,

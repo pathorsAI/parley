@@ -1821,6 +1821,30 @@
     "tool": "create_meeting_draft"
   },
   {
+    "args": {
+      "title": "No id"
+    },
+    "error": "id is required",
+    "tool": "update_meeting_draft"
+  },
+  {
+    "args": {
+      "branches": [
+        {
+          "when": "too expensive"
+        }
+      ],
+      "id": "d1"
+    },
+    "error": "branches must be an array of { when, then } objects with string values",
+    "tool": "update_meeting_draft"
+  },
+  {
+    "args": {},
+    "error": "missing string field: id",
+    "tool": "delete_meeting_draft"
+  },
+  {
     "file": "templates.json",
     "lines": [
       "{",
@@ -2068,6 +2092,47 @@
       }
     },
     "tool": "create_meeting_draft"
+  },
+  {
+    "args": {
+      "agenda": null,
+      "branches": [],
+      "id": "d1",
+      "startAt": null,
+      "topics": [
+        "Hiring plans"
+      ]
+    },
+    "result": {
+      "received": {
+        "action": "update_meeting_draft",
+        "args": {
+          "branches": [],
+          "id": "d1",
+          "startAt": null,
+          "topics": [
+            "Hiring plans"
+          ]
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "update_meeting_draft"
+  },
+  {
+    "args": {
+      "id": "d1"
+    },
+    "result": {
+      "received": {
+        "action": "delete_meeting_draft",
+        "args": {
+          "id": "d1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "delete_meeting_draft"
   },
   {
     "args": {

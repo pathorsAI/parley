@@ -122,19 +122,22 @@ function askUser(): void {
 /**
  * Run the guard for this window (the main window, once). Returns its teardown.
  * Only a RECORDING meeting is watched: a pause is the user's own silence and
- * restarts the clock on resume. Only transcribed speech (or the user's own
+ * restarts the clock on resume. A muted mic is treated the same way: in a
+ * mic-only meeting nothing can be transcribed while muted, and that silence
+ * is the user's choice, not an empty room. Only transcribed speech (or the user's own
  * "keep recording") restarts it otherwise — a reconnecting link does not: it
  * stretches the window instead (see {@link silenceStep}).
  */
 export function initSilenceGuard(): () => void {
   const unsubscribe = useLiveStore.subscribe((next, prev) => {
     const entered = next.meetingStatus === "recording" && prev.meetingStatus !== "recording";
-    if (entered || broughtSpeech(prev.segments, next.segments)) lastActivityAt = Date.now();
+    const unmuted = prev.meetingMicMuted && !next.meetingMicMuted;
+    if (entered || unmuted || broughtSpeech(prev.segments, next.segments)) lastActivityAt = Date.now();
   });
   const timer = setInterval(() => {
     const s = useLiveStore.getState();
     const now = Date.now();
-    if (s.meetingStatus !== "recording" || s.isFinalizingMeeting) return;
+    if (s.meetingStatus !== "recording" || s.isFinalizingMeeting || s.meetingMicMuted) return;
     const linkLive = s.transcriptionLink === "live";
     switch (silenceStep(now, lastActivityAt, s.silencePromptAt, linkLive)) {
       case "prompt":

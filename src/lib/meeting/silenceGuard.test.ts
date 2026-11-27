@@ -127,6 +127,7 @@ describe("initSilenceGuard", () => {
       silencePromptAt: null,
       transcriptionLink: "live",
       segments: [],
+      meetingMicMuted: false,
     });
     stop = initSilenceGuard();
     useLiveStore.setState({ meetingStatus: "recording" });
@@ -186,6 +187,19 @@ describe("initSilenceGuard", () => {
     await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS - 10_000);
     expect(useLiveStore.getState().silencePromptAt).toBeNull();
     expect(mocks.invoke).not.toHaveBeenCalled();
+  });
+
+  it("does not count time spent muted as silence", async () => {
+    useLiveStore.setState({ meetingMicMuted: true });
+    await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS * 2);
+    expect(useLiveStore.getState().silencePromptAt).toBeNull();
+    useLiveStore.setState({ meetingMicMuted: false });
+    await vi.advanceTimersByTimeAsync(SILENCE_PROMPT_MS - 10_000);
+    expect(useLiveStore.getState().silencePromptAt).toBeNull();
+    expect(mocks.invoke).not.toHaveBeenCalled();
+    // Still guarded once unmuted: a full window of silence asks again.
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(useLiveStore.getState().silencePromptAt).not.toBeNull();
   });
 
   // The overnight merge: every reconnect report used to restart the clock, so

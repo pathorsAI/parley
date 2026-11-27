@@ -468,6 +468,15 @@ const TABLE = [
     keys: [{ ...MOD, shift: true, key: "p", native: "Shift+CmdOrCtrl+P" }],
     labelKey: "cmd.meeting.togglePause",
   },
+  {
+    id: "meeting.toggleMicMute",
+    group: "meeting",
+    scope: "main",
+    // ⇧⌘M / Ctrl+Shift+M: M for mic (Teams' own mute chord). ⌘M alone is the
+    // system's Minimize, so shift is what keeps the two apart.
+    keys: [{ ...MOD, shift: true, key: "m", native: "Shift+CmdOrCtrl+M" }],
+    labelKey: "cmd.meeting.toggleMicMute",
+  },
 
   // ── replay workbench ────────────────────────────────────────────────────
   {

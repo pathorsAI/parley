@@ -42,6 +42,12 @@ pub struct MeetingState {
     /// is transcribed, recorded or billed, but the capture + sockets stay open
     /// so resume is instant. Reset on every start.
     meeting_paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Microphone mute (the titlebar mic button): while true, every mic chunk
+    /// is zero-filled at the head of the mic chain (see [`silence_if_muted`]),
+    /// so the user's own voice is neither recorded, transcribed nor scored,
+    /// while the system audio carries on and the timeline stays aligned.
+    /// Reset on every start.
+    meeting_mic_muted: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// The meeting being recorded: the id the frontend gave it (also the
     /// history entry's id and the journal's file name) and when it started.
     /// Every `meeting://recording-*` event carries them, so the frontend saves
@@ -136,6 +142,20 @@ pub fn set_meeting_paused(state: State<MeetingState>, paused: bool) {
         .meeting_paused
         .store(paused, std::sync::atomic::Ordering::SeqCst);
     log::info!("meeting: paused={paused}");
+}
+
+/// Mute / unmute this computer's microphone in the live meeting. Unlike a
+/// pause, only the mic side goes quiet: its chunks are replaced by silence of
+/// the same length before anything downstream sees them (prosody coaching,
+/// the mixer, the recording, the mic's STT session), so whispered asides never
+/// reach the recording or the transcript, while the system audio keeps being
+/// recorded and transcribed on the same timeline.
+#[tauri::command]
+pub fn set_meeting_mic_muted(state: State<MeetingState>, muted: bool) {
+    state
+        .meeting_mic_muted
+        .store(muted, std::sync::atomic::Ordering::SeqCst);
+    log::info!("meeting: mic_muted={muted}");
 }
 
 /// Refuses a meeting start that cannot work, before `start_meeting` claims
@@ -262,6 +282,7 @@ struct MeetingWiring {
     recorder: RecorderBuf,
     error_mute: std::sync::Arc<std::sync::atomic::AtomicBool>,
     paused: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    mic_muted: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl MeetingSessions {
@@ -317,9 +338,12 @@ fn arm_meeting(app: &AppHandle, state: &MeetingState, meeting_id: Option<String>
     let recorder: RecorderBuf = std::sync::Arc::new(Mutex::new(Some(Recording::new(journal))));
     *state.recorder.lock().unwrap() = recorder.clone();
     *state.current.lock().unwrap() = Some(meta);
-    // A new meeting always starts unpaused.
+    // A new meeting always starts unpaused and unmuted.
     state
         .meeting_paused
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    state
+        .meeting_mic_muted
         .store(false, std::sync::atomic::Ordering::SeqCst);
     state.tasks.lock().unwrap().clear();
     let error_mute = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -328,6 +352,7 @@ fn arm_meeting(app: &AppHandle, state: &MeetingState, meeting_id: Option<String>
         recorder,
         error_mute,
         paused: state.meeting_paused.clone(),
+        mic_muted: state.meeting_mic_muted.clone(),
     }
 }
 
@@ -386,7 +411,7 @@ fn start_meeting_captures(
         return Vec::new();
     };
     // No system capture on this platform → no far-end reference to gate on.
-    let rx = spawn_mic_prosody_tap(app, rx, None);
+    let rx = spawn_mic_prosody_tap(app, rx, None, sessions.wiring.mic_muted.clone());
     vec![run_metered_session(app, rx, sessions.session("me", true))]
 }
 
@@ -401,11 +426,16 @@ struct MeetingCaptures<'a> {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 impl MeetingCaptures<'_> {
-    /// The mic capture behind its prosody tap, or `None` if it failed to start.
-    fn mic(&self, mic: Microphone) -> Option<UnboundedReceiver<Vec<i16>>> {
+    /// The mic capture behind its prosody tap (which also applies the mute),
+    /// or `None` if it failed to start.
+    fn mic(
+        &self,
+        mic: Microphone,
+        muted: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Option<UnboundedReceiver<Vec<i16>>> {
         spawn_capture(self.coord, MicUser::Meeting, mic, self.gate.clone(), "me")
             .ok()
-            .map(|rx| spawn_mic_prosody_tap(self.app, rx, Some(self.far.clone())))
+            .map(|rx| spawn_mic_prosody_tap(self.app, rx, Some(self.far.clone()), muted.clone()))
     }
 
     /// The system-audio capture behind its far-end tap, or `None`.
@@ -425,7 +455,7 @@ impl MeetingCaptures<'_> {
         sys: S,
         sessions: &MeetingSessions,
     ) -> Vec<tauri::async_runtime::JoinHandle<()>> {
-        let rx_me = self.mic(mic);
+        let rx_me = self.mic(mic, &sessions.wiring.mic_muted);
         let rx_them = self.system(sys);
         log::info!(
             "meeting: capture started (mic: {}, system: {})",
@@ -485,7 +515,7 @@ impl MeetingCaptures<'_> {
         sys: S,
         sessions: &MeetingSessions,
     ) -> Vec<tauri::async_runtime::JoinHandle<()>> {
-        let rx_me = self.mic(mic);
+        let rx_me = self.mic(mic, &sessions.wiring.mic_muted);
         let rx_them = self.system(sys);
         log::info!(
             "meeting: capture started, separate tracks (mic: {}, system: {})",
@@ -835,6 +865,17 @@ pub fn cancel_meeting(
     Ok(())
 }
 
+/// The mic chain's mute, applied to each chunk at the head of the chain (see
+/// [`spawn_mic_prosody_tap`]): while `muted` is set the chunk becomes zeros of
+/// the SAME length. Chunks are never dropped, so the mic stream stays
+/// sample-aligned with the system audio for the mixer, the recording and the
+/// per-side transcript timelines.
+fn silence_if_muted(chunk: &mut [i16], muted: &std::sync::atomic::AtomicBool) {
+    if muted.load(std::sync::atomic::Ordering::SeqCst) {
+        chunk.fill(0);
+    }
+}
+
 /// Tee the mic ("me") PCM through a [`ProsodyAnalyzer`](crate::audio::prosody::ProsodyAnalyzer)
 /// for live delivery coaching, forwarding every chunk untouched downstream.
 /// Mirrors the sample `counter` in [`run_metered_session`]: one extra `Vec` move
@@ -850,6 +891,7 @@ fn spawn_mic_prosody_tap(
     app: &AppHandle,
     mut rx: UnboundedReceiver<Vec<i16>>,
     far: Option<std::sync::Arc<crate::audio::prosody::FarEndState>>,
+    muted: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> UnboundedReceiver<Vec<i16>> {
     let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
     let app = app.clone();
@@ -859,9 +901,14 @@ fn spawn_mic_prosody_tap(
     tap.source_started();
     tauri::async_runtime::spawn(async move {
         let mut analyzer = crate::audio::prosody::ProsodyAnalyzer::new(app, "me", far);
-        while let Some(chunk) = rx.recv().await {
-            analyzer.push(&chunk);
+        while let Some(mut chunk) = rx.recv().await {
+            // Dictation gets the raw mic: muting the meeting must not mute a
+            // voice-typing session the user starts meanwhile. Everything of
+            // the meeting's own (coaching, mixer, recording, STT) sits after
+            // the mute.
             tap.forward(&chunk);
+            silence_if_muted(&mut chunk, &muted);
+            analyzer.push(&chunk);
             if tx.send(chunk).is_err() {
                 break;
             }
@@ -919,6 +966,7 @@ mod tests {
                 recorder: Default::default(),
                 error_mute: Default::default(),
                 paused: Default::default(),
+                mic_muted: Default::default(),
             },
         }
     }
@@ -938,7 +986,30 @@ mod tests {
         assert_eq!(me.label, "me");
         assert!(me.recorder.is_none());
     }
-    use super::{encode_stopped, keep_leading, Stopped};
+    use super::{encode_stopped, keep_leading, silence_if_muted, Stopped};
+
+    #[test]
+    fn mute_zero_fills_mic_chunks_without_shortening_them() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let muted = AtomicBool::new(false);
+
+        // Unmuted: untouched.
+        let mut chunk = vec![1, -2, 3];
+        silence_if_muted(&mut chunk, &muted);
+        assert_eq!(chunk, vec![1, -2, 3]);
+
+        // Muted: same length, all silence.
+        muted.store(true, Ordering::SeqCst);
+        let mut chunk = vec![7, 8, 9, 10];
+        silence_if_muted(&mut chunk, &muted);
+        assert_eq!(chunk, vec![0, 0, 0, 0]);
+
+        // Unmuted again: passthrough restored.
+        muted.store(false, Ordering::SeqCst);
+        let mut chunk = vec![5, 6];
+        silence_if_muted(&mut chunk, &muted);
+        assert_eq!(chunk, vec![5, 6]);
+    }
 
     #[test]
     fn a_stop_too_short_to_keep_is_not_encoded() {

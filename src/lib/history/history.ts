@@ -584,6 +584,11 @@ export async function saveLiveToHistory(
     clearFinalizing();
   }
 
+  // Name it and suggest folders, unless its report is on screen (the study
+  // pipeline does it there). Queued, never awaited: neither the save nor
+  // quitting after it waits on a model call.
+  queueFilingAfterSave(entry.id);
+
   // Background: correct the speakers from the audio, THEN make the org copy —
   // in that order, so a shared copy carries the corrected labels.
   void correctSpeakersThenShare(entry, save).catch((e) =>
@@ -783,7 +788,18 @@ export async function saveUploadToHistory(session: ReplaySession): Promise<strin
     if (uploadSaveInFlight === saving) uploadSaveInFlight = null;
   }
   await applyDefaultOrgShare(id, save);
+  // Usually still on screen (the pipeline names it there); if the user has
+  // moved on, the background pass does.
+  queueFilingAfterSave(id);
   return id;
+}
+
+/** Queue the background filing pass for a just-saved entry (filingQueue.ts).
+ *  Fire-and-forget: a failure to even load the queue is logged, never thrown. */
+function queueFilingAfterSave(id: string): void {
+  import("../analysis/filingQueue")
+    .then((m) => m.queueBackgroundFiling(id))
+    .catch((e) => log.warn("history: queueing the filing pass failed", { id, error: String(e) }));
 }
 
 /** What the transcript-import dialog saves (issue #130's text-ingest path). */
