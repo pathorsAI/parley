@@ -196,16 +196,6 @@ struct LiveView: View {
         recorder.isInMeeting || recorder.phase == .finishing
     }
 
-    /// One of the heading's trailing glyph buttons: the body's size, the
-    /// label's colour, a full tap target.
-    private func headingButton<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        content()
-            .font(.parley.body)
-            .tint(Color(.label).opacity(0.8))
-            .frame(width: 40, height: 44)
-            .contentShape(Rectangle())
-    }
-
     private var copyButton: some View {
         // Copying works mid-meeting on purpose: the reason to grab a line is
         // usually that it was just said.
@@ -537,32 +527,23 @@ struct LiveView: View {
             // Room for the copy button, so a long name never runs under it.
             .padding(.trailing, 36)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // On the name's own line, centred on it.
+            .overlay(alignment: .trailing) {
+                copyButton
+                    .font(.parley.body)
+                    .tint(Color(.label).opacity(0.8))
+                    .frame(width: 40, height: 44)
+                    .contentShape(Rectangle())
+                    .offset(x: 8)
+            }
+            // The date, the folder and — for a meeting started from a draft —
+            // the draft, one row of chips on one centre line.
             HStack(spacing: 8) {
                 dateChip
                 folderChip
+                if recorder.meetingDraft != nil { draftChip }
                 Spacer(minLength: 0)
             }
-            // …and for 查看會議草稿 under it.
-            .padding(.trailing, recorder.meetingDraft == nil ? 0 : 36)
-        }
-        // The copy button, and under it — for a meeting started from a draft
-        // — the draft itself, read-only: what was prepared for this meeting,
-        // at hand while it runs.
-        .overlay(alignment: .topTrailing) {
-            VStack(spacing: 0) {
-                headingButton { copyButton }
-                if recorder.meetingDraft != nil {
-                    headingButton {
-                        Button {
-                            showingDraft = true
-                        } label: {
-                            Image(systemName: "doc.text")
-                                .accessibilityLabel(Text("View meeting draft"))
-                        }
-                    }
-                }
-            }
-            .offset(x: 8)
         }
         .sheet(isPresented: $showingDraft) {
             if let meetingDraft = recorder.meetingDraft {
@@ -641,6 +622,40 @@ struct LiveView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(Text(verbatim: label ?? String(localized: "Add to folder")))
         .accessibilityHint(Text("Choose a folder"))
+    }
+
+    /// 會議草稿: the draft this meeting was started from, read-only in a
+    /// sheet — what was prepared for it, at hand while it runs. The folder
+    /// chip's look, filled, since it always names something.
+    private var draftChip: some View {
+        Button {
+            titleFocused = false
+            showingDraft = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text")
+                    .font(.parley.caption2)
+                    .accessibilityHidden(true)
+                Text("Meeting draft")
+                    .font(.parley.caption)
+                    .lineLimit(1)
+            }
+            // A long folder name gives way, not this.
+            .fixedSize()
+            .foregroundStyle(Color(.label))
+            .padding(.horizontal, 8)
+            .frame(minHeight: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(Color(.quaternarySystemFill)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color(.separator), lineWidth: 1))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(Text("View meeting draft"))
     }
 
     /// The chip's words: the pick, else the default destination when it is
