@@ -229,29 +229,26 @@ struct DictationHistoryList: View {
         }
     }
 
-    /// Same shape as the meeting list's empty state: the glyph, the sentence,
-    /// room around it. With the switch off it says so, because "nothing here"
-    /// would otherwise read as dictations being lost.
+    /// The meeting list's empty state (`EmptyRecordsView`, the desktop's empty
+    /// box): a title and a hint. With the switch off it says so, because
+    /// "nothing here" would otherwise read as dictations being lost.
+    @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 18) {
-            Image(systemName: search.isEmpty ? "mic" : "magnifyingglass")
-                .font(.parley.title)
-                .foregroundStyle(Color(.tertiaryLabel))
-                .accessibilityHidden(true)
-            Group {
-                if !search.isEmpty {
-                    Text("No matches.")
-                } else if keepHistory {
-                    Text("What you dictate with the Parley keyboard shows up here, so you can copy it again if it didn't land.")
-                } else {
-                    Text("Voice typing history is off. Turn it on in Settings › Voice typing.")
-                }
+        Group {
+            if !search.isEmpty {
+                EmptyRecordsView(
+                    title: "No matching dictations",
+                    hint: "Try another keyword, or clear the search.")
+            } else if keepHistory {
+                EmptyRecordsView(
+                    title: "No dictations yet",
+                    hint: "What you dictate with the Parley keyboard shows up here, so you can copy it again if it didn't land.")
+            } else {
+                EmptyRecordsView(
+                    title: "Voice typing history is off",
+                    hint: "Turn it on in Settings › Voice typing.")
             }
-            .font(.parley.subheadline)
-            .foregroundStyle(Color(.secondaryLabel))
-            .multilineTextAlignment(.center)
         }
-        .frame(maxWidth: .infinity)
         .padding(.top, 56)
         .padding(.horizontal, 12)
         .padding(.bottom, 24)

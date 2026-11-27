@@ -40,7 +40,10 @@
     /// picker open over fifteen folders), `resetchecklist` (Settings'
     /// "Show the getting-started list again", pressed, landing on the Library),
     /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
-    /// `docs/design/ios-recording-page.md`), and `voicehistory` (Library ›
+    /// `docs/design/ios-recording-page.md`), `library-all` (the Library's full
+    /// list, pushed over the overview as See all opens it), `library-folder-empty`
+    /// (an empty folder's page, for the empty state), `library-org` (the
+    /// Library on the demo org's scope), and `voicehistory` (Library ›
     /// Voice typing, one entry per polish outcome), and the onboarding's steps:
     /// `onboarding-account` (run with `-ParleyDemo signedOut`), then, signed in
     /// and over the tabs, `onboarding-signed-in`, `onboarding-org` /
@@ -107,6 +110,14 @@
         /// Library switches to its Voice typing section, seeded with one
         /// history entry per polish outcome (`voicehistory`).
         @Published var showVoiceTyping = false
+        /// Library pushes its full list over the overview (`library-all`).
+        @Published var showAllRecordings = false
+        /// Library pushes one folder's page over the overview, as a folder
+        /// card opens it (`library-folder-empty`: the empty "Team syncs", for
+        /// the empty state).
+        @Published var showFolder: String?
+        /// Library switches its scope to the demo org (`library-org`).
+        @Published var showOrg = false
         /// A sheet with a focused text field, so the Parley keyboard is on
         /// screen, and an Action-Button-style demo dictation into it a moment
         /// later (`keyboardharness`). The only way to watch the keyboard's
@@ -197,6 +208,9 @@
             showSample = false
             onboarding = nil
             showVoiceTyping = false
+            showAllRecordings = false
+            showFolder = nil
+            showOrg = false
             keyboardHarness = false
             recordingID = Self.featured.id
             forcedFace = nil
@@ -212,6 +226,18 @@
                 showSettledFiling = true
                 wantsFilingAdjust = true
             case "library": tab = .library
+            case "library-all":
+                // The full list, as See all opens it over the overview.
+                tab = .library
+                showAllRecordings = true
+            case "library-org":
+                // The demo org's shared library, as the scope menu opens it.
+                tab = .library
+                showOrg = true
+            case "library-folder-empty":
+                // A folder with nothing in it, as its card opens it.
+                tab = .library
+                showFolder = "f-team"
             case "voicehistory":
                 // Review frame for the history's polish labels (1.25): one
                 // entry per outcome, plus one from before 1.25 with none.
@@ -461,6 +487,11 @@
             CloudFolder(
                 id: "f-new", name: t("New business", "新客戶"),
                 orgId: nil, createdAt: nil, updatedAt: nil),
+            // Empty, so the overview's folder row shows a card drawn without
+            // its papers, and runs past the screen edge.
+            CloudFolder(
+                id: "f-team", name: t("Team syncs", "團隊週會"),
+                orgId: nil, createdAt: nil, updatedAt: nil),
         ]
 
         /// The demo org's shared folders, so the picker shows an organization
@@ -528,6 +559,60 @@
                 snippet: t(
                     "Usage up 22% quarter on quarter; two action items carried over.",
                     "使用量季增 22%；兩項待辦順延到下一季。"),
+                folderId: nil, updatedAt: nil),
+            // Two more, so the overview's four recent rows are full and the
+            // full list behind See all has more than they show.
+            CloudRecordingSummary(
+                id: "demo-pricing",
+                title: t("Pricing follow-up — Northwind", "報價追蹤 — 北風工業"),
+                source: "live", createdAt: epoch - 8 * 86_400_000, durationMs: 742_000,
+                speakerCount: 2, findingsCount: 1, actionItemsCount: 0, hasAudio: true,
+                snippet: t(
+                    "Volume discount approved above sixty seats.",
+                    "六十席以上的量價折扣已核准。"),
+                folderId: "f-renewals", updatedAt: nil),
+            CloudRecordingSummary(
+                id: "demo-intro",
+                title: t("Intro call — Blue Harbor Hotels", "初次接觸 — 藍港酒店"),
+                source: "upload", createdAt: epoch - 12 * 86_400_000, durationMs: 1_310_000,
+                speakerCount: 2, findingsCount: 2, actionItemsCount: 3, hasAudio: true,
+                snippet: t(
+                    "Twelve properties; front desk wants call summaries in the PMS.",
+                    "旗下十二間飯店；櫃檯希望通話摘要能寫回 PMS。"),
+                folderId: "f-new", updatedAt: nil),
+        ]
+
+        /// The demo org's shared library — a different set from the personal
+        /// one, so switching the Library's scope to the org visibly changes the
+        /// page: its own folders (`orgFolders`), and these, one of them left
+        /// outside a folder.
+        static let orgRecordings: [CloudRecordingSummary] = [
+            CloudRecordingSummary(
+                id: "demo-org-pipeline",
+                title: t("Weekly pipeline review", "每週業務檢討"),
+                source: "live", createdAt: epoch - 2 * 86_400_000, durationMs: 2_410_000,
+                speakerCount: 5, findingsCount: 4, actionItemsCount: 6, hasAudio: true,
+                snippet: t(
+                    "Three deals slip to next quarter; Northwind renewal is the priority.",
+                    "三個案子延到下一季；北風續約列為優先。"),
+                folderId: "f-org-pipeline", updatedAt: nil),
+            CloudRecordingSummary(
+                id: "demo-org-account",
+                title: t("Account plan — Halcyon Labs", "客戶經營規劃 — 晴光實驗室"),
+                source: "upload", createdAt: epoch - 6 * 86_400_000, durationMs: 1_580_000,
+                speakerCount: 3, findingsCount: 3, actionItemsCount: 2, hasAudio: true,
+                snippet: t(
+                    "Expand to the second business unit after the security review.",
+                    "資安審查通過後，擴展到第二個事業部。"),
+                folderId: "f-org-accounts", updatedAt: nil),
+            CloudRecordingSummary(
+                id: "demo-org-kickoff",
+                title: t("Quarter kickoff", "季度開工會議"),
+                source: "live", createdAt: epoch - 15 * 86_400_000, durationMs: 3_120_000,
+                speakerCount: 8, findingsCount: 2, actionItemsCount: 4, hasAudio: false,
+                snippet: t(
+                    "Targets set per region; weekly reviews move to Tuesdays.",
+                    "各區目標確定；每週檢討改到週二。"),
                 folderId: nil, updatedAt: nil),
         ]
 
