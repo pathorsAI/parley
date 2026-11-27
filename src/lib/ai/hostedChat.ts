@@ -1,6 +1,8 @@
 import { log } from "../log";
 import { webviewFetch } from "./webviewFetch";
 import type { LlmFeature } from "../types";
+import { AI_TASK_META, type AiTaskRequest } from "./tasks/catalog";
+import { parleyClientHeader } from "./clientHeader";
 
 /**
  * How hosted (Parley Cloud) chat calls are throttled and retried.
@@ -275,12 +277,46 @@ const LANE_FETCH: Record<HostedChatLane, FetchFn> = {
 };
 
 /**
- * The fetch the hosted Parley provider is built with for a call billed to
- * `feature`: {@link webviewFetch} behind that call's gate (see
- * {@link hostedChatLaneFor}) and the retry policy. A caller's abort (polish
- * racing its deadline) ends any queue or backoff wait at once. BYOK providers
- * do not use it.
+ * Write the task's `parley_task` (version, params, slots) into a chat request
+ * body. The rest of the body — model, messages, response_format — is what the
+ * SDK built and stays as it is; the server ignores all of it but the last user
+ * message. A body that is not JSON passes through untouched.
  */
-export function hostedChatFetch(feature: LlmFeature | undefined): FetchFn {
-  return LANE_FETCH[hostedChatLaneFor(feature)];
+export function withParleyTask(init: RequestInit | undefined, task: AiTaskRequest): RequestInit | undefined {
+  if (typeof init?.body !== "string") return init;
+  let body: unknown;
+  try {
+    body = JSON.parse(init.body);
+  } catch {
+    return init;
+  }
+  if (!body || typeof body !== "object") return init;
+  const parley_task = { version: task.version, params: task.params, slots: task.slots };
+  return { ...init, body: JSON.stringify({ ...body, parley_task }) };
+}
+
+/**
+ * The fetch the hosted Parley provider is built with for one task:
+ * {@link webviewFetch} behind that task's gate (see {@link hostedChatLaneFor})
+ * and the retry policy, with the task's `parley_task` written into every
+ * request body (retries and format fallbacks included). A caller's abort
+ * (polish racing its deadline) ends any queue or backoff wait at once. BYOK
+ * providers do not use it.
+ */
+export function hostedChatFetch(task: AiTaskRequest): FetchFn {
+  const gated = LANE_FETCH[hostedChatLaneFor(AI_TASK_META[task.id].feature)];
+  return (input, init) => gated(input, withParleyTask(init, task));
+}
+
+/**
+ * Headers on every hosted chat call: what the task bills to, and which client
+ * build is asking (`<os>/<version>`, the same value the Rust STT client sends),
+ * so the server can tell old clients on the generic endpoint from current ones.
+ * Both are on Parley Cloud's CORS allow-list.
+ */
+export function hostedChatHeaders(task: AiTaskRequest): Record<string, string> {
+  return {
+    "X-Parley-Feature": AI_TASK_META[task.id].feature,
+    "X-Parley-Client": parleyClientHeader(),
+  };
 }

@@ -3,7 +3,8 @@ import { JSON_MODE_INSTRUCTION } from "./provider";
 import { streamObjectResilient } from "./generate";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
-import { profileContext, outputLanguageInstruction } from "./profile";
+import { profileContext, outputLanguageFor } from "./profile";
+import { aiTask, taskLanguage, type TaskLanguage } from "./tasks/catalog";
 import {
   DECISION_CATEGORIES,
   findingsFieldGuide,
@@ -88,7 +89,7 @@ const resolvedFields = {
  *  the prompt's vocabulary — in json_object mode (Groq) the key isn't
  *  server-enforced, so a mismatch makes the model emit its own key and the parse
  *  fails. Keep them aligned. */
-function schemaFor(lens: AnalysisLens) {
+export function timelineSchema(lens: AnalysisLens) {
   const shape = {
     ...baseShape,
     ...(hasSides(lens) ? { side: sideField } : {}),
@@ -104,7 +105,7 @@ function schemaFor(lens: AnalysisLens) {
  * and the RESOLVED MOMENTS block only exist under the adversarial lens — the
  * same lens whose schema asks for those fields.
  */
-function buildSystem(lens: AnalysisLens, mode: "live" | "replay"): string {
+function buildSystem(lens: AnalysisLens, mode: TimelineMode): string {
   const T = STUDY.timeline;
   return fillPrompt(T.systemTemplate, {
     intro: findingsIntro(lens, mode),
@@ -116,6 +117,13 @@ function buildSystem(lens: AnalysisLens, mode: "live" | "replay"): string {
     resolvedBlock: hasResolution(lens) ? T.resolvedBlock : "",
     modeBlock: T.mode[mode][lens],
   });
+}
+
+export type TimelineMode = "live" | "replay";
+
+/** The whole system prompt one timeline pass sends, for its lens, mode and output language. */
+export function timelineSystem(lens: AnalysisLens, mode: TimelineMode, language: TaskLanguage): string {
+  return buildSystem(lens, mode) + JSON_MODE_INSTRUCTION + outputLanguageFor(language);
 }
 
 // Any number of leading digits: a meeting past 100 minutes is cited as
@@ -260,7 +268,6 @@ export async function analyzeTimeline(opts: {
   const list = evals.length
     ? evals.map((e) => fillPrompt(T.evalEntry, { id: e.id, name: e.name, prompt: e.prompt })).join("\n\n")
     : T.noEvals;
-  const system = buildSystem(lens, mode);
   const transcriptLabel = T.transcriptLabel[mode];
 
   // Live analysis is latency-sensitive; a replay pass buys quality instead.
@@ -294,9 +301,9 @@ export async function analyzeTimeline(opts: {
   const { object, usage } = await streamObjectResilient({
     settings,
     workload,
-    feature: "meeting",
-    schema: schemaFor(lens),
-    system: system + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
+    task: aiTask("timeline", { lens, mode, language: taskLanguage(settings) }),
+    schema: timelineSchema(lens),
+    system: timelineSystem(lens, mode, taskLanguage(settings)),
     prompt: `${ctx}${T.evalsHeader}\n${list}\n\n${transcriptLabel}:\n${transcript || STUDY.noSpeech}`,
     signal,
     onPartial: (p) => {

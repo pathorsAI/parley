@@ -20,7 +20,7 @@ vi.mock("../cloud/client", () => ({
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { getModel, sdkRetryOptions } from "./provider";
-import { hostedChatFetch } from "./hostedChat";
+import { aiTask } from "./tasks/catalog";
 import { webviewFetch } from "./webviewFetch";
 
 /**
@@ -91,24 +91,35 @@ describe("getModel fetch", () => {
 
   it("builds the hosted provider with the cloud URL, session token and the gated hosted fetch", () => {
     cloud.token = "session-token";
-    getModel(settingsFor("parley", "parleyApiKey", ""), "realtime");
+    getModel(settingsFor("parley", "parleyApiKey", ""), "realtime", { task: aiTask("ask") });
     expect(oaiMock).toHaveBeenCalledTimes(1);
-    expect(oaiMock.mock.calls[0][0]).toMatchObject({
+    const opts = oaiMock.mock.calls[0][0] as { fetch?: unknown; headers?: Record<string, string> };
+    expect(opts).toMatchObject({
       name: "parley",
-      baseURL: "https://example.test/v1",
+      baseURL: "https://example.test/v1/ai/ask",
       apiKey: "session-token",
-      fetch: hostedChatFetch(undefined),
     });
+    expect(opts.headers?.["X-Parley-Feature"]).toBe("ask");
+    expect(opts.headers?.["X-Parley-Client"]).toMatch(/^(macos|windows|linux)\/\d+\.\d+\.\d+/);
+    expect(typeof opts.fetch).toBe("function");
+    expect(opts.fetch).not.toBe(webviewFetch);
   });
 
-  it("puts polish on the interactive gate and realtime-model background passes on the background gate", () => {
+  it("refuses a hosted call that names no task", () => {
+    cloud.token = "session-token";
+    expect(() => getModel(settingsFor("parley", "parleyApiKey", ""), "realtime")).toThrow(/without a task/);
+  });
+
+  it("routes each task to its own endpoint and bills it to the task's feature", () => {
     cloud.token = "session-token";
     const s = settingsFor("parley", "parleyApiKey", "");
-    getModel(s, "realtime", { feature: "voice_typing" });
-    getModel(s, "realtime", { feature: "meeting" });
-    expect(oaiMock.mock.calls[0][0]).toMatchObject({ fetch: hostedChatFetch("voice_typing") });
-    expect(oaiMock.mock.calls[1][0]).toMatchObject({ fetch: hostedChatFetch("report") });
-    expect(hostedChatFetch("voice_typing")).not.toBe(hostedChatFetch("meeting"));
+    getModel(s, "realtime", { task: aiTask("polish", { style: "tidy" }) });
+    getModel(s, "realtime", { task: aiTask("filing", { language: "en" }) });
+    const [polish, filing] = oaiMock.mock.calls.map((c) => c[0] as { baseURL: string; headers: Record<string, string> });
+    expect(polish.baseURL).toBe("https://example.test/v1/ai/polish");
+    expect(polish.headers["X-Parley-Feature"]).toBe("voice_typing");
+    expect(filing.baseURL).toBe("https://example.test/v1/ai/filing");
+    expect(filing.headers["X-Parley-Feature"]).toBe("meeting");
   });
 
   it("turns the SDK's own retries off for hosted calls only", () => {
@@ -118,7 +129,7 @@ describe("getModel fetch", () => {
 
   it("refuses to build the hosted provider while signed out", () => {
     const signedOut = settingsFor("parley", "parleyApiKey", "");
-    expect(() => getModel(signedOut, "realtime")).toThrow(/sign in/i);
+    expect(() => getModel(signedOut, "realtime", { task: aiTask("ask") })).toThrow(/sign in/i);
     expect(oaiMock).not.toHaveBeenCalled();
   });
 });

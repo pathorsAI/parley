@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "release": "node scripts/release.mjs",
+    "gen:ai-tasks": "vite-node --config vitest.config.ts scripts/gen-ai-tasks.ts",
     "test": "vitest run",
     "check:tauri-versions": "node scripts/check-tauri-versions.mjs",
     "test:watch": "vitest"

@@ -3,10 +3,11 @@ import { getModel, getProviderOptions, sdkRetryOptions } from "./provider";
 import { transcriptAsText } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
+import { aiTask } from "./tasks/catalog";
 import { log } from "../log";
 import type { Settings, TranscriptSegment } from "../types";
 
-const SYSTEM = `You are Parley, a realtime meeting copilot assisting the user ("ME") during a live interview or negotiation against the other party ("THEM").
+export const ASK_SYSTEM = `You are Parley, a realtime meeting copilot assisting the user ("ME") during a live interview or negotiation against the other party ("THEM").
 
 You are given the running transcript so far, labelled by speaker. Answer the user's question grounded strictly in what was actually said. Be concise and direct — the user is mid-meeting and skimming. If the transcript doesn't contain the answer, say so plainly rather than speculating. When useful, suggest a concrete next move (a question to ask, a point to push back on).`;
 
@@ -45,10 +46,10 @@ export async function askAboutMeeting(opts: {
   let full = "";
   try {
     const result = streamText({
-      model: getModel(settings, "realtime", { feature: "ask" }),
+      model: getModel(settings, "realtime", { task: aiTask("ask") }),
       providerOptions: getProviderOptions(settings, "realtime"),
       ...sdkRetryOptions(settings, "realtime"),
-      system: SYSTEM,
+      system: ASK_SYSTEM,
       abortSignal: signal,
       prompt: `${contextLine}Transcript so far:\n${transcript}\n\nQuestion: ${question}`,
     });

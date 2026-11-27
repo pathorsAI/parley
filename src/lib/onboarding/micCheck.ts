@@ -12,10 +12,11 @@
 import { z } from "zod";
 import { generateObjectResilient } from "../ai/generate";
 import { JSON_MODE_INSTRUCTION } from "../ai/provider";
-import { outputLanguageInstruction } from "../ai/profile";
+import { outputLanguageFor } from "../ai/profile";
+import { aiTask, taskLanguage } from "../ai/tasks/catalog";
 import { isProviderReady } from "../ai/settings";
 import { recordLlmUsage } from "../usage/log";
-import type { Settings } from "../types";
+import type { AppLanguage, Settings } from "../types";
 import { addEntry, applyReplacements, listEntries, whenDictionaryReady } from "../dictionary";
 import { cleanLines, removeBackgroundLines } from "./memoryImport";
 
@@ -166,6 +167,11 @@ const SYSTEM =
   "included) and product names, each spelled as the user most likely writes it; one name per entry.\n" +
   "Never invent anything that wasn't said.\n";
 
+/** The whole system prompt the self-introduction summary sends. */
+export function summarizeIntroSystem(language: AppLanguage): string {
+  return SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageFor(language);
+}
+
 /** Turn the transcript into background lines, terms and profile fields. */
 export async function summarizeIntro(opts: {
   settings: Settings;
@@ -179,9 +185,9 @@ export async function summarizeIntro(opts: {
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
-    feature: "meeting",
+    task: aiTask("summarize_intro", { language: taskLanguage(settings) }),
     schema: introSchema,
-    system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
+    system: summarizeIntroSystem(taskLanguage(settings)),
     prompt: `TRANSCRIPT:\n${transcript}`,
     signal,
   });
@@ -429,6 +435,11 @@ const NAME_EDIT_SYSTEM =
   "and as it is now (\"to\"), e.g. 東昇 → 東森. Otherwise, or if the edit added or removed other words, " +
   'return empty strings.\n';
 
+/** The system prompt of the name-edit check (no language: it answers with names, not prose). */
+export function findNameEditSystem(): string {
+  return NAME_EDIT_SYSTEM + JSON_MODE_INSTRUCTION;
+}
+
 /**
  * The name the user corrected, for edits the dictation rule (detectCorrection)
  * can't place: Chinese has no word boundaries, so a one-character fix (東昇 →
@@ -449,9 +460,9 @@ export async function findNameEdit(opts: {
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
-    feature: "meeting",
+    task: aiTask("find_name_edit"),
     schema: nameEditSchema,
-    system: NAME_EDIT_SYSTEM + JSON_MODE_INSTRUCTION,
+    system: findNameEditSystem(),
     prompt: `BEFORE:\n${before}\n\nAFTER:\n${after}`,
     signal,
   });

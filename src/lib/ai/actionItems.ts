@@ -4,7 +4,8 @@ import { JSON_MODE_INSTRUCTION } from "./provider";
 import { streamObjectResilient } from "./generate";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
-import { profileContext, outputLanguageInstruction } from "./profile";
+import { profileContext, outputLanguageFor } from "./profile";
+import { aiTask, taskLanguage, type TaskLanguage } from "./tasks/catalog";
 import { parseClockMs } from "./timeline";
 import { actionsIntro } from "../analysis/lens";
 import { fillPrompt, meetingContextBlock, STUDY } from "./studyPrompt";
@@ -37,7 +38,7 @@ const itemSchema = z.object({
 // Key is "actions" to match the prompt's vocabulary — in json_object mode (Groq)
 // the key isn't server-enforced, so a mismatch makes the model emit its own and
 // the parse fails. Keep schema key + prompt aligned (cf. timeline's "moments").
-const schema = z.object({ actions: z.array(itemSchema) });
+export const actionItemsSchema = z.object({ actions: z.array(itemSchema) });
 
 /** The system prompt for one lens — text in shared/prompts/study.json (`actionItems.*`). */
 function systemFor(lens: AnalysisLens): string {
@@ -46,6 +47,11 @@ function systemFor(lens: AnalysisLens): string {
     intro: actionsIntro(lens),
     flavour: lens === "decision" ? A.flavour.decision : A.flavour.default,
   });
+}
+
+/** The whole system prompt one action-items pass sends. */
+export function actionItemsSystem(lens: AnalysisLens, language: TaskLanguage): string {
+  return systemFor(lens) + JSON_MODE_INSTRUCTION + outputLanguageFor(language);
 }
 
 /** A (possibly half-streamed) raw action item — every field may be absent. */
@@ -132,9 +138,9 @@ export async function generateActionItems(opts: {
   const { object, usage } = await streamObjectResilient({
     settings,
     workload: "deep",
-    feature: "meeting",
-    schema,
-    system: systemFor(lens) + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
+    task: aiTask("action_items", { lens, language: taskLanguage(settings) }),
+    schema: actionItemsSchema,
+    system: actionItemsSystem(lens, taskLanguage(settings)),
     prompt: `${ctx}${A.findingsHeader}\n${findingsList}\n\n${A.transcriptHeader}\n${transcript}`,
     signal,
     onPartial: (p) => {

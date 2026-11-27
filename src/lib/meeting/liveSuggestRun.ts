@@ -4,6 +4,7 @@
 // — unless the conversation has moved past it by the time it lands. Runs in the
 // MAIN window, against the live store; the meeting window mirrors the card.
 
+import { parleyClientHeader } from "../ai/clientHeader";
 import { useEffect } from "react";
 import { CLOUD_ENABLED } from "../flags";
 import { log } from "../log";
@@ -90,7 +91,11 @@ function createEngine() {
     try {
       const res = await cloudFetch("/v1/live/suggest", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Parley-Feature": "live_suggestions" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-Parley-Feature": "live_suggestions",
+          "X-Parley-Client": parleyClientHeader(),
+        },
         body: JSON.stringify(body),
         signal: ctrl.signal,
       });

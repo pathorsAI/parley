@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { streamObjectResilient } from "./generate";
+import { aiTask } from "./tasks/catalog";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { log } from "../log";
@@ -25,7 +26,7 @@ import type {
 // what the model reads — and the phones send no schema at all. Everything the
 // model should know about each field is already in the shared rules and JSON
 // instruction, so descriptions here would only be desktop-only extra prompt.
-const schema = z.object({
+export const filingSchema = z.object({
   title: z.string(),
   folders: z.array(z.object({ name: z.string(), isNew: z.boolean(), reason: z.string() })),
 });
@@ -234,8 +235,8 @@ export async function suggestFiling(opts: {
     const { object, usage } = await streamObjectResilient({
       settings,
       workload: "realtime",
-      feature: "meeting",
-      schema,
+      task: aiTask("filing", { language: filingLanguage(settings) }),
+      schema: filingSchema,
       system: filingSystemPrompt(filingLanguage(settings)),
       prompt: filingUserMessage({
         meetingContext,

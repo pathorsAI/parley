@@ -4,13 +4,14 @@ import { generateObjectResilient } from "./generate";
 import { transcriptWithTimestamps, useStore, meetingBriefText } from "../store";
 import { recordLlmUsage } from "../usage/log";
 import { profileContext } from "./profile";
+import { aiTask } from "./tasks/catalog";
 import type { Settings, TodoItem, TranscriptSegment } from "../types";
 import { parseClock, type AgendaCheck } from "../meeting/agenda";
 import { commitAgendaCheck, planAgendaCheck, type AgendaCursor } from "../meeting/agendaDelta";
 import { formatClock } from "../analysis/transcriptText";
 import { labelContextOf, speakerLabel } from "../speakers/labels";
 
-const schema = z.object({
+export const todosSchema = z.object({
   done: z
     .array(
       z.object({
@@ -33,6 +34,14 @@ const DELTA_NOTE =
   " Every listed item is still open. You only see what was said since the last check, after a few " +
   "earlier lines given for context: judge each item by the new lines (an item may begin in the " +
   "context and conclude in the new lines). Items not covered by them stay open.";
+
+/** "full": a one-off check over the whole transcript; "delta": the live meeting's pass over new lines only. */
+export type TodosScope = "full" | "delta";
+
+/** The whole system prompt one agenda check sends. */
+export function todosSystem(scope: TodosScope): string {
+  return SYSTEM + (scope === "delta" ? DELTA_NOTE : "") + JSON_MODE_INSTRUCTION;
+}
 
 type AgendaPrompt = { body: string; plan: ReturnType<typeof planAgendaCheck> };
 
@@ -94,6 +103,7 @@ export async function checkTodos(opts: {
   const prompt = cursor ? deltaPrompt(cursor, segments, open, names) : fullPrompt(segments, names);
   if (!prompt) return [];
   const { body, plan } = prompt;
+  const scope: TodosScope = plan ? "delta" : "full";
 
   const list = open.map((t) => `- [${t.id}] ${t.text}`).join("\n");
   const mc = meetingBriefText(useStore.getState()).trim();
@@ -102,9 +112,9 @@ export async function checkTodos(opts: {
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
-    feature: "meeting",
-    schema,
-    system: SYSTEM + (plan ? DELTA_NOTE : "") + JSON_MODE_INSTRUCTION,
+    task: aiTask("todos", { scope }),
+    schema: todosSchema,
+    system: todosSystem(scope),
     prompt: `${ctx}Checklist (id and text):\n${list}\n\n${body}`,
   });
   void recordLlmUsage(settings, "realtime", "todo", usage);

@@ -7,14 +7,20 @@ import { profileContext } from "./profile";
 import { MEETING_KINDS } from "../analysis/lens";
 import { log } from "../log";
 import { meetingContextBlock, STUDY } from "./studyPrompt";
+import { aiTask } from "./tasks/catalog";
 import { createDeadline, MEETING_KIND_DEADLINE_MS } from "./deadline";
 import type { MeetingKind, Settings, TranscriptSegment } from "../types";
 
-const schema = z.object({
+export const meetingKindSchema = z.object({
   kind: z
     .enum(["internal", "sales", "pricing", "rivalry"])
     .describe("Which of the four kinds this meeting is."),
 });
+
+/** The system prompt — one for every meeting, whatever the language. */
+export function meetingKindSystem(): string {
+  return STUDY.meetingKind.system + JSON_MODE_INSTRUCTION;
+}
 
 /** Type guard for a model-supplied kind string. */
 function isKind(v: unknown): v is MeetingKind {
@@ -54,9 +60,9 @@ export async function detectMeetingKind(opts: {
     const { object, usage } = await streamObjectResilient({
       settings,
       workload: "realtime",
-      feature: "meeting",
-      schema,
-      system: STUDY.meetingKind.system + JSON_MODE_INSTRUCTION,
+      task: aiTask("meeting_kind"),
+      schema: meetingKindSchema,
+      system: meetingKindSystem(),
       prompt: `${ctx}${STUDY.meetingKind.transcriptHeader}\n${transcript}`,
       signal: deadline.signal,
     });

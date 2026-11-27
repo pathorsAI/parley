@@ -1,12 +1,13 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
-import type { LlmFeature, LlmWorkload, Settings } from "../types";
+import type { LlmWorkload, Settings } from "../types";
 import { PROVIDER_BY_ID, isReasoningModel, normalizeBaseUrl, type ProviderInfo } from "./providers";
 import { cloudToken, CLOUD_URL } from "../cloud/client";
 import { CLOUD_ENABLED } from "../flags";
 import { webviewFetch } from "./webviewFetch";
-import { hostedChatFetch } from "./hostedChat";
+import { hostedChatFetch, hostedChatHeaders } from "./hostedChat";
+import type { AiTaskRequest } from "./tasks/catalog";
 import { STUDY } from "./studyPrompt";
 
 export { isReasoningModel } from "./providers";
@@ -41,9 +42,16 @@ export const JSON_MODE_INSTRUCTION: string = STUDY.jsonModeInstruction;
  * Anthropic, Groq and OpenRouter allow the header anyway; nothing is lost there.
  *
  * Do not add custom headers here without checking the endpoint's CORS
- * allow-list first. `X-Parley-Feature` is on Parley Cloud's, so it rides only on
- * the hosted provider; a BYOK endpoint's allow-list would not have it and the
- * preflight would fail in exactly the same way.
+ * allow-list first. `X-Parley-Feature` and `X-Parley-Client` are on Parley
+ * Cloud's, so they ride only on the hosted provider; a BYOK endpoint's
+ * allow-list would not have them and the preflight would fail in exactly the
+ * same way.
+ *
+ * Hosted calls go to the call's task endpoint, `/v1/ai/<task>/chat/completions`
+ * (tasks/catalog.ts): the server owns that task's system prompt, output format,
+ * model and limits, and reads only the user message plus the request's
+ * `parley_task` (params and slots). BYOK providers get exactly the request they
+ * always did and never see the task.
  */
 export function getModel(
   settings: Settings,
@@ -64,8 +72,9 @@ export function getModel(
      * lane's model.
      */
     modelId?: string;
-    /** The feature this call bills to on Parley Cloud. Ignored by BYOK providers. */
-    feature?: LlmFeature;
+    /** Which Parley Cloud task this call is. Required for the hosted provider;
+     *  ignored by BYOK providers. */
+    task?: AiTaskRequest;
   }
 ): LanguageModel {
   const provider = settings.llmProviders[workload];
@@ -104,15 +113,22 @@ export function getModel(
         "Parley Cloud sign-in required — sign in from Settings → Account to use the Parley provider",
       );
     }
+    // Every hosted call names its task: the generic /v1/chat/completions
+    // entry is closed to this build (the server refuses a current client
+    // there), so a call site that forgot one must fail here, in development,
+    // and not in front of a user.
+    const task = opts?.task;
+    if (!task) throw new Error("Parley Cloud call without a task (pass `task` to getModel)");
     const parley = createOpenAICompatible({
       name: info.id,
-      baseURL: `${CLOUD_URL}/v1`,
+      baseURL: `${CLOUD_URL}/v1/ai/${task.id}`,
       apiKey: token,
-      headers: opts?.feature ? { "X-Parley-Feature": opts.feature } : undefined,
+      headers: hostedChatHeaders(task),
       supportsStructuredOutputs: opts?.forceJsonObject ? false : info.supportsStructuredOutputs ?? false,
       // A per-lane gate + bounded 429/502 retries for every hosted chat call
-      // (hostedChat.ts) — the cloud's provider budget is shared by all users.
-      fetch: hostedChatFetch(opts?.feature),
+      // (hostedChat.ts) — the cloud's provider budget is shared by all users —
+      // and the task's params and slots written into the body.
+      fetch: hostedChatFetch(task),
     });
     return parley.chatModel(modelId);
   }

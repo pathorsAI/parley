@@ -1,3 +1,4 @@
+import { aiTask } from "./tasks/catalog";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { APICallError } from "ai";
@@ -54,7 +55,7 @@ function stallingStream(abortSignal: AbortSignal | undefined) {
 }
 
 const call = (extra: Partial<Parameters<typeof streamObjectResilient>[0]> = {}) =>
-  streamObjectResilient({ settings, workload: "deep", schema, system: "s", prompt: "p", ...extra });
+  streamObjectResilient({ settings, workload: "deep", schema, system: "s", prompt: "p", task: aiTask("ask"), ...extra });
 
 afterEach(() => {
   model.current = null;

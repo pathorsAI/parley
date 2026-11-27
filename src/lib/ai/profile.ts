@@ -1,4 +1,4 @@
-import type { Settings } from "../types";
+import type { AppLanguage, Settings } from "../types";
 import { fillPrompt, STUDY } from "./studyPrompt";
 
 /** Just the "who am I" facts, with no transcript-attribution instruction. */
@@ -41,6 +41,12 @@ export function profileContext(settings: Settings): string {
  * their original language. Text: shared/prompts/study.json (`outputLanguage`).
  */
 export function outputLanguageInstruction(settings: Settings): string {
+  return outputLanguageFor(settings.language === "zh-TW" ? "zh-TW" : "en");
+}
+
+/** {@link outputLanguageInstruction} for a language rather than the settings
+ *  holding it — what the AI task registry generator enumerates. */
+export function outputLanguageFor(language: AppLanguage): string {
   const { template, names } = STUDY.outputLanguage;
-  return fillPrompt(template, { language: names[settings.language === "zh-TW" ? "zh-TW" : "en"] });
+  return fillPrompt(template, { language: names[language] });
 }
