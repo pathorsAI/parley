@@ -182,6 +182,7 @@ struct MainTabs: View {
     @AppStorage(OnboardingFlag.afterSignInKey) private var onboardingAfterSignIn = false
     @AppStorage(OnboardingFlag.completedKey) private var onboardingCompleted = false
     @AppStorage(OnboardingFlag.stepKey) private var onboardingSavedStep = ""
+    @AppStorage(OnboardingFlag.rerunKey) private var onboardingRerun = false
     #if DEBUG
         @ObservedObject private var demo = ScreenshotDemo.shared
     #endif
@@ -222,18 +223,22 @@ struct MainTabs: View {
     }
 
     /// Which step to open the wizard on, or nil when there is none to show:
-    /// where it was left, but never before the signed-in confirmation.
+    /// where it was left, but never before the signed-in confirmation — except
+    /// on a re-run from Settings, which starts from the welcome, as the
+    /// desktop's "Re-run onboarding" does.
     private var onboardingStart: OnboardingStep? {
         #if DEBUG
             if let scenario = demo.onboarding, scenario.isAfterSignIn { return scenario.step }
         #endif
         guard onboardingAfterSignIn else { return nil }
+        if onboardingRerun, onboardingSavedStep == OnboardingStep.intro.rawValue { return .intro }
         let saved = OnboardingStep(rawValue: onboardingSavedStep) ?? .account
         return saved.index < OnboardingStep.account.index ? .account : saved
     }
 
     private func finishOnboarding(_ exit: OnboardingExit) {
         onboardingAfterSignIn = false
+        onboardingRerun = false
         onboardingCompleted = true
         onboardingSavedStep = ""
         #if DEBUG

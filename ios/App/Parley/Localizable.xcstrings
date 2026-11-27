@@ -5560,6 +5560,23 @@
         }
       }
     },
+    "Re-run onboarding" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Re-run onboarding"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新執行引導設定"
+          }
+        }
+      }
+    },
     "Re-transcribe" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -6955,23 +6972,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "看潤飾後"
-          }
-        }
-      }
-    },
-    "Show the getting-started list again" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Show the getting-started list again"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "再顯示起步清單"
           }
         }
       }

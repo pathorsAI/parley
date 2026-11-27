@@ -56,6 +56,10 @@ enum OnboardingFlag {
     /// The step to resume on, so leaving for Settings to allow the microphone
     /// does not bounce the user back to the start.
     static let stepKey = "onboarding.step"
+    /// Set by Settings' "Re-run onboarding", so a signed-in wizard may open on
+    /// the welcome rather than at the signed-in confirmation; cleared when the
+    /// wizard is left.
+    static let rerunKey = "onboarding.rerun"
     /// The speaker background (the desktop's `settings.userBackground`),
     /// seeded by the microphone check and edited on the context step.
     static let backgroundKey = "onboarding.userBackground"
