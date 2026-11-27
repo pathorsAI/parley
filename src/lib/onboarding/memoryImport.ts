@@ -14,14 +14,15 @@
 import { z } from "zod";
 import { generateObjectResilient } from "../ai/generate";
 import { JSON_MODE_INSTRUCTION } from "../ai/provider";
-import { outputLanguageInstruction } from "../ai/profile";
+import { outputLanguageFor } from "../ai/profile";
+import { aiTask, taskLanguage } from "../ai/tasks/catalog";
 import { recordLlmUsage } from "../usage/log";
 import { isProviderReady } from "../ai/settings";
 import { describeAiError } from "../ai/errors";
 import { log } from "../log";
 import * as ipc from "../ipc/commands";
 import type { MemoryFile } from "../ipc/commands";
-import type { Settings } from "../types";
+import type { AppLanguage, Settings } from "../types";
 // Type-only: micCheck imports this module, so its addTerms comes in as a
 // dependency (see refreshAiMemory) rather than as a runtime import.
 import type { AddedTerm } from "./micCheck";
@@ -63,6 +64,11 @@ export interface BackgroundDraft {
   background: string[];
   /** Company, people and product names, for the dictionary. */
   terms: string[];
+}
+
+/** The whole system prompt a memory import sends, for the user's language. */
+export function draftBackgroundSystem(language: AppLanguage): string {
+  return system(BACKGROUND_TEMPLATE[language]) + JSON_MODE_INSTRUCTION + outputLanguageFor(language);
 }
 
 function system(labels: readonly string[]): string {
@@ -138,9 +144,9 @@ export async function draftBackground(opts: {
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
-    feature: "meeting",
+    task: aiTask("draft_background", { language: taskLanguage(settings) }),
     schema: backgroundDraftSchema,
-    system: system(labels) + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
+    system: draftBackgroundSystem(taskLanguage(settings)),
     prompt: `CURRENT:\n${redactSecrets(current.trim()) || "(empty)"}\n\nNOTES:\n${body}`,
     signal,
   });

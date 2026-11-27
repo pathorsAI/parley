@@ -1,3 +1,4 @@
+import { aiTask } from "./tasks/catalog";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   abortableSleep,
@@ -257,13 +258,13 @@ describe("hostedChatFetch lanes", () => {
     vi.stubGlobal("fetch", vi.fn(async () => response(200, {}, "body")));
     // Filing and delivery (realtime model, billed to "meeting") with unread
     // streamed bodies fill the background gate; a findings pass queues.
-    const filing = await hostedChatFetch("meeting")("u", {});
-    const delivery = await hostedChatFetch("meeting")("u", {});
+    const filing = await hostedChatFetch(aiTask("filing"))("u", {});
+    const delivery = await hostedChatFetch(aiTask("filing"))("u", {});
     expect(hostedChatGates.background.inFlight).toBe(2);
-    const findings = hostedChatFetch("meeting")("u", {});
+    const findings = hostedChatFetch(aiTask("filing"))("u", {});
     expect(hostedChatGates.background.queued).toBe(1);
 
-    const polish = await hostedChatFetch("voice_typing")("u", {});
+    const polish = await hostedChatFetch(aiTask("polish", { style: "tidy" }))("u", {});
     expect(await polish.text()).toBe("body");
     expect(hostedChatGates.interactive.inFlight).toBe(0);
 
@@ -278,7 +279,7 @@ describe("hostedChatFetch lanes", () => {
     vi.stubGlobal("fetch", fetch);
     const ctl = new AbortController();
     const started = Date.now();
-    const pending = hostedChatFetch("voice_typing")("u", { signal: ctl.signal });
+    const pending = hostedChatFetch(aiTask("polish", { style: "tidy" }))("u", { signal: ctl.signal });
     setTimeout(() => ctl.abort(new Error("polish deadline")), 20);
     await expect(pending).rejects.toThrow("polish deadline");
     expect(Date.now() - started).toBeLessThan(1_000);

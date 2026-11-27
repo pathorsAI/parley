@@ -3,7 +3,8 @@ import { getModel, getProviderOptions, sdkRetryOptions } from "./provider";
 import { maxOutputTokensFor } from "./generate";
 import { transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
-import { profileContext, outputLanguageInstruction } from "./profile";
+import { profileContext, outputLanguageFor } from "./profile";
+import { aiTask, taskLanguage, type TaskLanguage } from "./tasks/catalog";
 import { briefIntro, briefSections } from "../analysis/lens";
 import { log } from "../log";
 import { isCapacityFailure } from "./errors";
@@ -29,6 +30,11 @@ import type { AnalysisLens, Evaluation, Settings, TodoItem, TranscriptSegment } 
  */
 function systemFor(lens: AnalysisLens): string {
   return fillPrompt(STUDY.brief.systemTemplate, { intro: briefIntro(lens), sections: briefSections(lens) });
+}
+
+/** The whole system prompt the brief sends, for its lens and output language. */
+export function reportSystem(lens: AnalysisLens, language: TaskLanguage): string {
+  return systemFor(lens) + outputLanguageFor(language);
 }
 
 /** Usage fields worth logging when a brief comes back empty — never content. */
@@ -154,9 +160,9 @@ export async function generatePostMeetingReport(opts: {
     parent: signal,
   });
   const call = {
-    model: getModel(settings, "deep", { feature: "report" }),
+    model: getModel(settings, "deep", { task: aiTask("report", { lens, language: taskLanguage(settings) }) }),
     providerOptions: getProviderOptions(settings, "deep"),
-    system: systemFor(lens) + outputLanguageInstruction(settings),
+    system: reportSystem(lens, taskLanguage(settings)),
     prompt,
     // Reasoning models spend output tokens on hidden reasoning first; without
     // headroom they exhaust the budget before writing a word of the brief.

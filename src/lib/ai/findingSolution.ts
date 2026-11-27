@@ -3,7 +3,8 @@ import { JSON_MODE_INSTRUCTION } from "./provider";
 import { generateObjectResilient } from "./generate";
 import { formatClock, transcriptWithTimestamps } from "../store";
 import { recordLlmUsage } from "../usage/log";
-import { profileContext, outputLanguageInstruction } from "./profile";
+import { profileContext, outputLanguageFor } from "./profile";
+import { aiTask, taskLanguage, type TaskLanguage } from "./tasks/catalog";
 import type { FindingSolution, Settings, TimelineEvent, TranscriptSegment } from "../types";
 
 export type FindingSolutionMode = "live" | "replay";
@@ -28,7 +29,7 @@ const replySchema = z.object({
     ),
 });
 
-const schema = z.object({
+export const findingSolutionSchema = z.object({
   replies: z
     .array(replySchema)
     .describe("2-3 distinct ready-to-use reply options, spanning angles (rebut/reframe/trade/concede_redirect) where sensible."),
@@ -47,6 +48,11 @@ Output ONLY:
 - For each, ONE short "consideration": the key trade-off, or what the reply does for ME's position in the overall negotiation.
 
 Be terse. Do NOT explain at length what went wrong, summarize, or narrate the situation — ME already knows the moment. Ground every reply in what was actually knowable at the moment unless a section is explicitly labeled HINDSIGHT; never invent quotes or facts. Respond ENTIRELY in the language of the transcript.`;
+
+/** The whole system prompt a reply-coach call sends (the mode lives in the user message). */
+export function findingSolutionSystem(language: TaskLanguage): string {
+  return SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageFor(language);
+}
 
 function findingCutoffMs(finding: TimelineEvent, segments: TranscriptSegment[]): number {
   const spoken = segments
@@ -134,9 +140,9 @@ export async function generateFindingSolution(opts: {
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
-    feature: "meeting",
-    schema,
-    system: SYSTEM + JSON_MODE_INSTRUCTION + outputLanguageInstruction(settings),
+    task: aiTask("finding_solution", { language: taskLanguage(settings) }),
+    schema: findingSolutionSchema,
+    system: findingSolutionSystem(taskLanguage(settings)),
     prompt: buildFindingSolutionPrompt({ context: ctx, finding, segments, names, mode }),
   });
   void recordLlmUsage(settings, "realtime", "finding-solution", usage);

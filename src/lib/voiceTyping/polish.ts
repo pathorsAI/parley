@@ -3,6 +3,7 @@ import { getModel, getProviderOptions } from "../ai/provider";
 import { hasProviderKey } from "../ai/settings";
 import { logAiError } from "../ai/errors";
 import { log } from "../log";
+import { aiTask } from "../ai/tasks/catalog";
 import type { Settings, VoiceTypingPolishStyle } from "../types";
 import { isSingleClause } from "./punctuation";
 
@@ -295,18 +296,45 @@ export function polishSystemPrompt(
   speakerTerms: string[] = [],
   customInstructions: string = "",
 ): string {
-  let prompt = style === "concise" ? CONCISE_SYSTEM_PROMPT : POLISH_SYSTEM_PROMPT;
+  let prompt = polishBasePrompt(style);
+  const { terms: kept, speakerTerms: speaker, customInstructions: own } = polishSlots(
+    protectedTerms,
+    speakerTerms,
+    customInstructions,
+  );
+  if (kept.length) {
+    prompt += `\n${DICTIONARY_TERMS_LINE}${kept.join("、")}`;
+  }
+  if (speaker.length) prompt += `\n${SPEAKER_TERMS_LINE}${speaker.join("、")}`;
+  if (own) prompt += `\n\n${CUSTOM_INSTRUCTIONS_LINE}${own}`;
+  return prompt;
+}
+
+/** Introduces the user-dictionary terms (word for word what iOS sends). */
+export const DICTIONARY_TERMS_LINE = "Preserve these user-dictionary terms exactly as written: ";
+
+/** The standing prompt of a style, before any of the user's own words. */
+export function polishBasePrompt(style: VoiceTypingPolishStyle): string {
+  return style === "concise" ? CONCISE_SYSTEM_PROMPT : POLISH_SYSTEM_PROMPT;
+}
+
+/**
+ * The user content {@link polishSystemPrompt} writes into the prompt, as the
+ * `polish` task's slots: the dictionary terms not already on the speaker line
+ * (at most {@link MAX_PROTECTED_TERMS}), the speaker's own terms (trimmed,
+ * once each), and the user's own instructions (trimmed, capped).
+ */
+export function polishSlots(
+  protectedTerms: string[],
+  speakerTerms: string[] = [],
+  customInstructions: string = "",
+): { terms: string[]; speakerTerms: string[]; customInstructions: string } {
   const speaker = [...new Set(speakerTerms.map((t) => t.trim()).filter(Boolean))];
   const kept = protectedTerms
     .filter((t) => t.trim() && !speaker.includes(t.trim()))
     .slice(0, MAX_PROTECTED_TERMS);
-  if (kept.length) {
-    prompt += `\nPreserve these user-dictionary terms exactly as written: ${kept.join("、")}`;
-  }
-  if (speaker.length) prompt += `\n${SPEAKER_TERMS_LINE}${speaker.join("、")}`;
   const own = customInstructions.trim().slice(0, MAX_CUSTOM_INSTRUCTIONS_CHARS);
-  if (own) prompt += `\n\n${CUSTOM_INSTRUCTIONS_LINE}${own}`;
-  return prompt;
+  return { terms: kept, speakerTerms: speaker, customInstructions: own };
 }
 
 /**
@@ -449,6 +477,13 @@ export async function polishTranscriptOutcome(opts: {
   signal?.addEventListener("abort", onCancel, { once: true });
 
   const style = settings.voiceTypingPolishStyle;
+  const customInstructions =
+    typeof settings.voiceTypingCustomInstructions === "string" ? settings.voiceTypingCustomInstructions : "";
+  const task = aiTask(
+    "polish",
+    { style: style === "concise" ? "concise" : "tidy" },
+    polishSlots(protectedTerms, speakerTerms, customInstructions),
+  );
   let effort = hostedReasoningEffort(settings);
   try {
     let result: Awaited<ReturnType<typeof generateText>>;
@@ -457,15 +492,10 @@ export async function polishTranscriptOutcome(opts: {
         result = await generateText({
           model: getModel(settings, "realtime", {
             modelId: polishModelOverride(settings, style),
-            feature: "voice_typing",
+            task,
           }),
           providerOptions: withReasoningEffort(getProviderOptions(settings, "realtime"), effort),
-          system: polishSystemPrompt(
-            protectedTerms,
-            style,
-            speakerTerms,
-            typeof settings.voiceTypingCustomInstructions === "string" ? settings.voiceTypingCustomInstructions : "",
-          ),
+          system: polishSystemPrompt(protectedTerms, style, speakerTerms, customInstructions),
           prompt: raw,
           temperature: 0.2,
           maxOutputTokens: 2048,

@@ -100,12 +100,19 @@ describe("polish against Parley Cloud from a WebKit webview", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [input, init] = fetchSpy.mock.calls[0];
-    expect(String(input)).toBe("https://cloud.example.test/v1/chat/completions");
+    expect(String(input)).toBe("https://cloud.example.test/v1/ai/polish/chat/completions");
     const headers = new Headers(init?.headers);
     expect(headers.get("authorization")).toBe("Bearer test-token");
     expect(headers.has("user-agent")).toBe(false);
     expect(headers.get("x-parley-feature")).toBe("voice_typing");
-    expect(JSON.parse(String(init?.body)).model).toBe("parley-fast");
+    expect(headers.get("x-parley-client")).toMatch(/^(macos|windows|linux)\/\d+\.\d+\.\d+/);
+    const body = JSON.parse(String(init?.body));
+    expect(body.model).toBe("parley-fast");
+    expect(body.parley_task).toEqual({
+      version: 1,
+      params: { style: "tidy" },
+      slots: { terms: [], speakerTerms: [], customInstructions: "" },
+    });
     expect(log.info).toHaveBeenCalledWith("voice-typing: polished", expect.any(Object));
     expect(log.warn).not.toHaveBeenCalled();
   });

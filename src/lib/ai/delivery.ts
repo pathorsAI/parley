@@ -3,7 +3,8 @@ import { JSON_MODE_INSTRUCTION } from "./provider";
 import { generateObjectResilient } from "./generate";
 import { transcriptAsText, useStore, meetingBriefText } from "../store";
 import { recordLlmUsage } from "../usage/log";
-import { profileContext, outputLanguageInstruction } from "./profile";
+import { profileContext, outputLanguageFor } from "./profile";
+import { aiTask, taskLanguage, type TaskLanguage } from "./tasks/catalog";
 import { fillerWatchlist } from "../analysis/fillerWords";
 import { fillPrompt, meetingContextBlock, STUDY } from "./studyPrompt";
 import type {
@@ -21,7 +22,7 @@ export const TONE_FLAGGED: ReadonlySet<ToneVerdict> = new Set<ToneVerdict>([
   "rude",
 ]);
 
-const schema = z.object({
+export const deliverySchema = z.object({
   tone: z
     .enum(["neutral", "warm", "firm", "sharp", "aggressive", "rude"])
     .describe("Overall tone of YOUR OWN most recent contributions — not the other party's."),
@@ -48,6 +49,13 @@ const schema = z.object({
     .string()
     .describe("One short plain-language line on how the user is coming across right now."),
 });
+
+export type DeliveryMode = "live" | "post";
+
+/** The whole system prompt one delivery check sends. */
+export function deliverySystem(mode: DeliveryMode, language: TaskLanguage): string {
+  return SYSTEM(mode === "live") + outputLanguageFor(language);
+}
 
 /** How far back the LIVE check looks (ms). Whole transcript is used post-call. */
 const LIVE_RECENT_MS = 30_000;
@@ -123,9 +131,9 @@ export async function analyzeDelivery(opts: {
   const { object, usage } = await generateObjectResilient({
     settings,
     workload: "realtime",
-    feature: "meeting",
-    schema,
-    system: SYSTEM(mode === "live") + outputLanguageInstruction(settings),
+    task: aiTask("delivery", { mode, language: taskLanguage(settings) }),
+    schema: deliverySchema,
+    system: deliverySystem(mode, taskLanguage(settings)),
     prompt: `${ctx}${label}:\n${transcript}`,
     signal,
   });

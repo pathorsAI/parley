@@ -116,9 +116,14 @@ export async function runConnectionTest(
   const startedAt = Date.now();
 
   try {
-    const [{ generateText }, { getModel }] = await Promise.all([import("ai"), import("./provider")]);
+    const [{ generateText }, { getModel }, { aiTask }] = await Promise.all([
+      import("ai"),
+      import("./provider"),
+      import("./tasks/catalog"),
+    ]);
     await generateText({
-      model: getModel(settings, workload),
+      // Hosted: the `ping` task, which the server answers itself.
+      model: getModel(settings, workload, { task: aiTask("ping") }),
       prompt: "Reply with OK.",
       // Just enough to prove a completion came back; nobody reads the answer.
       maxOutputTokens: 8,
