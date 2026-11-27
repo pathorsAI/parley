@@ -65,7 +65,6 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -598,87 +597,99 @@ private fun MeetingHeading(segments: List<TranscriptSegment>, dayMs: Long, folde
     val choices by MeetingDraft.choices.collectAsState()
     val focus = LocalFocusManager.current
     val nameLabel = stringResource(R.string.meeting_name_label)
-    // The name and the chips in one column, Copy (and, for a meeting started
-    // from a draft, the draft's button under it) in another at the end, so
-    // neither the name nor the chips ever run under the buttons.
-    Row(
-        verticalAlignment = Alignment.Top,
-        modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 14.dp),
-    ) {
-        Column(Modifier.weight(1f)) {
-            // As tall as Copy beside it, so the name stays centred on it.
-            Box(Modifier.heightIn(min = 48.dp), contentAlignment = Alignment.CenterStart) {
-                BasicTextField(
-                    value = choices.title,
-                    onValueChange = MeetingDraft::setTitle,
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.titleLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 44.dp)
-                        .semantics { contentDescription = nameLabel },
-                    decorationBox = { field ->
-                        Box(contentAlignment = Alignment.CenterStart) {
-                            if (choices.title.isEmpty()) {
-                                Text(
-                                    text = stringResource(R.string.meeting_name_placeholder),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.outline,
-                                    maxLines = 1,
-                                )
-                            }
-                            field()
+    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(
+                value = choices.title,
+                onValueChange = MeetingDraft::setTitle,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.titleLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 44.dp)
+                    .semantics { contentDescription = nameLabel },
+                decorationBox = { field ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (choices.title.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.meeting_name_placeholder),
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.outline,
+                                maxLines = 1,
+                            )
                         }
-                    },
-                )
-            }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                DateChip(dayMs)
+                        field()
+                    }
+                },
+            )
+            TranscriptCopy(segments)
+        }
+        // One line: the day and the folder at the start and, for a meeting
+        // started from a draft, a link to the draft at the far end. The link
+        // is measured first and never shrinks; the folder chip gets what is
+        // left (a long folder name truncates) and the rest is empty space.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            DateChip(dayMs)
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                 FolderChip(choices.folder, folders, onOpen = { focus.clearFocus() })
             }
-        }
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            TranscriptCopy(segments)
             choices.draft?.let { snapshot ->
-                ViewDraftButton(snapshot, onOpen = { focus.clearFocus() })
+                DraftLink(snapshot, onOpen = { focus.clearFocus() })
             }
         }
     }
 }
 
 /**
- * Under Copy, for a meeting started from a meeting draft only: the draft,
- * read-only in a sheet ([MeetingDraftSheet]) — its context and agenda are what
- * the meeting was prepared with, and the reason to look is usually mid-meeting.
- * Copy's primary ink, at an icon's size.
+ * At the far end of the chip row, for a meeting started from a meeting draft
+ * only: the draft, read-only in a sheet ([MeetingDraftSheet]) — its context and
+ * agenda are what the meeting was prepared with, and the reason to look is
+ * usually mid-meeting. Not a chip: primary-ink text with the document icon, like
+ * the app's other text links, at the chips' type and icon size.
  *
  * The screenshot demo's `record-draft` opens the sheet on arrival
  * ([DemoMode.Navigation.draftSheet]).
  */
 @Composable
-private fun ViewDraftButton(snapshot: DraftSnapshot, onOpen: () -> Unit) {
+private fun DraftLink(snapshot: DraftSnapshot, onOpen: () -> Unit) {
     var open by rememberSaveable { mutableStateOf(false) }
     val navigation by DemoMode.navigation.collectAsState()
     LaunchedEffect(navigation?.serial) {
         if (DemoMode.isActive && navigation?.draftSheet == true) open = true
     }
-    IconButton(
-        onClick = {
-            onOpen()
-            open = true
-        },
+    val spoken = stringResource(R.string.meeting_view_draft)
+    Row(
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .widthIn(min = 48.dp)
+            .clickable(role = Role.Button) {
+                onOpen()
+                open = true
+            }
+            .clearAndSetSemantics { contentDescription = spoken }
+            .padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = LibraryIcons.Description,
-            contentDescription = stringResource(R.string.meeting_view_draft),
+            contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = stringResource(R.string.meeting_draft_chip),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            softWrap = false,
         )
     }
     if (open) {

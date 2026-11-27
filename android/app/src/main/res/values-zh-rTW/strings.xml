@@ -443,6 +443,7 @@
     <string name="draft_page_title">會議草稿</string>
     <string name="draft_edit_on_desktop">會議草稿請在電腦版 Parley 編輯。</string>
     <string name="meeting_view_draft">查看會議草稿</string>
+    <string name="meeting_draft_chip">會議草稿</string>
     <!-- A meeting draft's button (the desktop's home.upcoming.start): start recording this meeting. -->
     <string name="draft_start">開始</string>
     <plurals name="library_folder_card_count">

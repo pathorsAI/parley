@@ -450,8 +450,10 @@
     <string name="draft_agenda">Agenda</string>
     <string name="draft_page_title">Meeting draft</string>
     <string name="draft_edit_on_desktop">Drafts are edited in Parley on the desktop.</string>
-    <!-- Record screen: the icon under Copy that opens the draft a meeting was started from. -->
+    <!-- Record screen: what the meeting-draft link says to accessibility services; it opens the draft a meeting was started from. -->
     <string name="meeting_view_draft">View meeting draft</string>
+    <!-- Record screen: the text link at the end of the chip row for a meeting started from a draft. -->
+    <string name="meeting_draft_chip">Meeting draft</string>
     <!-- A meeting draft's button (the desktop's home.upcoming.start): start recording this meeting. -->
     <string name="draft_start">Start</string>
     <plurals name="library_folder_card_count">

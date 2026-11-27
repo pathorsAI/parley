@@ -215,7 +215,7 @@ object DemoMode {
 
         /**
          * [LIVE], started from a meeting draft: named and filed after it, with
-         * the record screen's "view the meeting draft" button. The draft is
+         * the record screen's meeting-draft link. The draft is
          * the one 開始 was pressed on ([Navigation.draftChoices]), or the 北風
          * draft ([draftChoices]). `record-draft` also opens its sheet.
          */
