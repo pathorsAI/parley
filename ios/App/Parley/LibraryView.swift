@@ -443,7 +443,11 @@ struct LibraryView: View {
             drafts: shownDrafts, part: part, limit: limit, seeAll: seeAll,
             showsHeading: showsHeading, folderName: personalFolderName
         ) { draft, row in
-            NavigationLinkRow(id: draft.id, row: row) { startMeeting(from: draft) }
+            // 開始 on the row only where the meeting is about to happen; a
+            // later draft is started from its page.
+            NavigationLinkRow(
+                id: draft.id, row: row,
+                onStart: part == .startingSoon ? { startMeeting(from: draft) } : nil)
         }
     }
 
@@ -2254,19 +2258,19 @@ private struct RecordingCard: View {
     }
 #endif
 
-/// A draft row that opens the draft's read-only page, with the desktop's 開始
-/// at its trailing edge — beside the link, not inside it, so a tap on 開始
-/// never also opens the page.
+/// A draft row that opens the draft's read-only page — with, on 即將開始的會議,
+/// a 開始 at its trailing edge for a quick start: beside the link, not inside
+/// it, so a tap on 開始 never also opens the page.
 private struct NavigationLinkRow: View {
     let id: String
     let row: DraftRow
-    let onStart: () -> Void
+    let onStart: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
             NavigationLink(value: LibraryRoute.draft(id)) { row }
                 .buttonStyle(.plain)
-            DraftStartButton(action: onStart)
+            if let onStart { DraftStartButton(action: onStart) }
         }
     }
 }
