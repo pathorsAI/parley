@@ -1,5 +1,6 @@
 package com.pathors.parley.ui
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
@@ -15,6 +16,7 @@ import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.feedback.FeedbackTrigger
 import com.pathors.parley.feedback.ProblemSignals
 import com.pathors.parley.feedback.RecordingContext
+import com.pathors.parley.kit.CloudMeetingDraft
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.LapMotion
@@ -170,6 +172,13 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
          * diagnostics?" is showing. See [considerSyncPrompts].
          */
         val syncPrompts: Set<String> = emptySet(),
+        /**
+         * The account's meeting drafts, read-only (#774). Personal only: the
+         * cloud keeps drafts per account, not per organization, so an
+         * organization's scope has none. Empty when they could not be loaded —
+         * a draft list that failed is not worth an error over the library.
+         */
+        val drafts: List<CloudMeetingDraft> = emptyList(),
     ) {
         val isPersonal: Boolean get() = scopeOrgId == null
 
@@ -299,6 +308,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     folders = folders,
                     folderFilter = LibraryFolders.reconcile(it.folderFilter, folders),
                     personalLoaded = true,
+                    drafts = if (scope == null) DemoMode.drafts() else emptyList(),
                 )
             }
             return
@@ -314,7 +324,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 coroutineScope {
                     val recordings = async { recordingsFor(scope) }
                     val folders = async { runCatchingCancellable { foldersFor(scope) }.getOrNull() }
-                    recordings.await() to folders.await()
+                    val drafts = async { draftsFor(scope) }
+                    Triple(recordings.await(), folders.await(), drafts.await())
                 }
             }
             _state.update { current ->
@@ -325,10 +336,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     scopeOrgId = scope,
                 )
                 result.fold(
-                    onSuccess = { (recordings, folders) ->
+                    onSuccess = { (recordings, folders, drafts) ->
                         val live = folders ?: keptFolders
                         base.copy(
                             recordings = recordings,
+                            drafts = drafts,
                             folders = live,
                             folderFilter = LibraryFolders.reconcile(current.folderFilter, live),
                             error = null,
@@ -345,6 +357,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                                 emptyList()
                             },
                             folders = keptFolders,
+                            drafts = if (previous.scopeOrgId == scope) current.drafts else emptyList(),
                             error = classify(error, orgScope = scope != null),
                         )
                     },
@@ -354,7 +367,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             // a personal library that arrives full of recordings nobody on
             // this phone made.
             if (scope == null) {
-                result.getOrNull()?.let { (recordings, _) ->
+                result.getOrNull()?.let { (recordings, _, _) ->
                     container.gettingStarted.noteLibraryLoaded(recordings.size)
                 }
             }
@@ -430,6 +443,26 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         } else {
             container.cloud.orgFolders(scope)
         }
+
+    /**
+     * The account's drafts for the personal scope, none for an organization's.
+     * A failure is logged — its status or its kind, never a draft's content —
+     * and the overview goes on without the two draft sections, as iOS does.
+     */
+    private suspend fun draftsFor(scope: String?): List<CloudMeetingDraft> {
+        if (scope != null) return emptyList()
+        return try {
+            container.cloud.listDrafts()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: CloudException) {
+            Log.w(DRAFTS_LOG_TAG, "drafts: load failed, status ${e.status}")
+            emptyList()
+        } catch (e: Exception) {
+            Log.w(DRAFTS_LOG_TAG, "drafts: load failed, ${e.javaClass.simpleName}")
+            emptyList()
+        }
+    }
 
     private fun demoRecordingsFor(scope: String?): List<RecordingSummary> {
         if (scope == null && DemoMode.isLibraryEmpty) return emptyList()
@@ -1253,6 +1286,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 }
+
+private const val DRAFTS_LOG_TAG = "Drafts"
 
 /**
  * [runCatching] that lets cancellation through. A scope switch cancels the load

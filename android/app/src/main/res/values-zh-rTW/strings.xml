@@ -414,6 +414,23 @@
     <string name="library_overview_see_all">查看全部</string>
     <string name="library_recent_empty">還沒有錄音——開一場會議，或匯入一段錄音。</string>
     <string name="library_use_sample">用範例錄音</string>
+    <!-- Meeting drafts on the Library overview, read-only (#774): the iOS wording (#772). -->
+    <string name="library_drafts_starting_soon">即將開始的會議</string>
+    <string name="library_drafts_title">會議草稿</string>
+    <string name="draft_no_time">未定</string>
+    <string name="draft_no_time_set">尚未設定會議時間</string>
+    <string name="draft_in_minutes">%1$d 分鐘後</string>
+    <string name="draft_in_hours">%1$d 小時後</string>
+    <plurals name="draft_in_days">
+        <item quantity="other">%1$d 天後</item>
+    </plurals>
+    <string name="draft_past_start">已過開始時間</string>
+    <string name="draft_missed">已過期</string>
+    <string name="draft_untitled">未命名的會議</string>
+    <string name="draft_context">補充背景</string>
+    <string name="draft_agenda">議程</string>
+    <string name="draft_page_title">會議草稿</string>
+    <string name="draft_edit_on_desktop">會議草稿請在電腦版 Parley 編輯。</string>
     <plurals name="library_folder_card_count">
         <item quantity="other">%1$d 筆錄音</item>
     </plurals>

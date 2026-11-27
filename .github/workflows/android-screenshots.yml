@@ -21,6 +21,7 @@ on:
       - "android/app/src/main/kotlin/com/pathors/parley/ui/Format.kt"
       - "android/app/src/main/kotlin/com/pathors/parley/ui/theme/**"
       - "android/app/src/main/kotlin/com/pathors/parley/screenshot/DemoMode.kt"
+      - "android/parleykit/src/main/kotlin/com/pathors/parley/kit/MeetingDrafts.kt"
       - "android/app/src/main/res/values*/strings.xml"
       - "android/scripts/demo-screenshots.sh"
       - ".github/workflows/android-screenshots.yml"

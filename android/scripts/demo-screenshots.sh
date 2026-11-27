@@ -25,8 +25,14 @@ ONBOARDING_ROUTES=(
   onboarding-perms onboarding-mic onboarding-context onboarding-done
 )
 # The Library: its overview, the full list behind See all, an empty folder's
-# page, and the organization's overview (DemoMode.LibraryPage).
-LIBRARY_ROUTES=(library library-all library-folder-empty library-org)
+# page, the organization's overview, then the meeting drafts — the overview
+# scrolled down to them, the full list behind 會議草稿's See all, and two
+# drafts' read-only pages: one with context and an agenda, one with only a
+# time and a folder (DemoMode.LibraryPage).
+LIBRARY_ROUTES=(
+  library library-all library-folder-empty library-org
+  library-overview-drafts library-drafts library-draft library-draft-short
+)
 # Seconds after launch: one frame inside each welcome beat
 # (LapMotion.WelcomeSchedule starts: 0 / 1.8 / 3.4 / 6.4 / 8.3 / 11.0).
 WELCOME_AT=(1 2.8 5 7.4 9.8 13)

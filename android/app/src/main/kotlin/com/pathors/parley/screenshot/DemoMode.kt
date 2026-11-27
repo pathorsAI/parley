@@ -11,6 +11,8 @@ import com.pathors.parley.cloud.OrgRole
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.kit.CloudDraftTodo
+import com.pathors.parley.kit.CloudMeetingDraft
 import com.pathors.parley.kit.FilingFolderSuggestion
 import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.GettingStartedState
@@ -24,6 +26,7 @@ import com.pathors.parley.meeting.ImportFailure
 import com.pathors.parley.meeting.ImportState
 import com.pathors.parley.meeting.ImportTranscript
 import com.pathors.parley.onboarding.SampleRecordingStore
+import java.util.Calendar
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,7 +66,10 @@ import kotlinx.serialization.json.putJsonObject
  *
  * Routes: `library` (the overview it opens on), `library-all` (the full list,
  * as See all opens it), `library-folder-empty` (an empty folder's page, for its
- * empty state), `library-org` (the organization's library), `transcript`,
+ * empty state), `library-org` (the organization's library), the meeting
+ * drafts (`library-overview-drafts`, the overview scrolled to them;
+ * `library-drafts`, the full list; `library-draft` and `library-draft-short`,
+ * a draft's read-only page), `transcript`,
  * `record` (alias `meeting`), `account`
  * (alias `settings`), `movetofolder` (the transcript with the folder picker
  * open over sixteen folders — a review frame, not a store frame, the same one
@@ -247,6 +253,21 @@ object DemoMode {
 
         /** The overview of the organization's library, as the scope switcher opens it. */
         ORG("library-org"),
+
+        /**
+         * The personal overview scrolled down to its meeting drafts, so
+         * 即將開始的會議, the folders and 會議草稿 with its 查看全部 are in one frame.
+         */
+        OVERVIEW_DRAFTS("library-overview-drafts"),
+
+        /** Every 會議草稿, as 查看全部 opens it over the overview. */
+        DRAFTS("library-drafts"),
+
+        /** [DRAFT_FULL_ID]'s read-only page: a draft with context and an agenda. */
+        DRAFT("library-draft"),
+
+        /** [DRAFT_SHORT_ID]'s read-only page: a draft with only a time and a folder. */
+        DRAFT_SHORT("library-draft-short"),
     }
 
     /**
@@ -580,6 +601,116 @@ object DemoMode {
      */
     fun saveDestination(): SaveDestination =
         SaveDestination(orgId = ORG_ID, folderId = PIPELINE_FOLDER_ID)
+
+    // ── meeting drafts ───────────────────────────────────────────────────────
+
+    /** The draft `library-draft` opens: the meeting starting soon, with context and an agenda. */
+    const val DRAFT_FULL_ID = "demo-draft-northwind"
+
+    /** The draft `library-draft-short` opens: the weekly sync, only a time and a folder. */
+    const val DRAFT_SHORT_ID = "demo-draft-weekly"
+
+    /**
+     * The overview's meeting drafts — iOS `ScreenshotDemo.drafts`, draft for
+     * draft: one starting within the hour, so 即將開始的會議 shows, and five
+     * for 會議草稿 — tomorrow, later in the week, and one with no time yet —
+     * one more than the section shows, so 查看全部 is there to open.
+     *
+     * Relative to [nowMs] rather than to the fixed epoch the recordings use,
+     * because which section a draft sits in depends on the clock. Read-only,
+     * as on a real phone.
+     */
+    fun drafts(
+        locale: Locale = Locale.getDefault(),
+        nowMs: Long = System.currentTimeMillis(),
+    ): List<CloudMeetingDraft> {
+        val minute = 60_000L
+        val day = 24 * 60 * minute
+        val now = nowMs / minute * minute
+        // Tomorrow and later on a round half hour, as the desktop's time
+        // picker offers them.
+        fun on(days: Int, hour: Int, minuteOfHour: Int): Long =
+            Calendar.getInstance().apply {
+                timeInMillis = now + days * day
+                set(Calendar.HOUR_OF_DAY, hour)
+                set(Calendar.MINUTE, minuteOfHour)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        fun todo(id: String, en: String, zh: String) = CloudDraftTodo(id = id, text = t(locale, en, zh))
+        return listOf(
+            CloudMeetingDraft(
+                id = DRAFT_FULL_ID,
+                title = t(locale, "Northwind renewal — pricing call", "北風工業續約 — 報價會議"),
+                meetingAt = now + 25 * minute,
+                meetingEndAt = now + 85 * minute,
+                meetingContext = t(
+                    locale,
+                    "Lin Mei-hua (procurement lead) and Chen Wei (plant manager) from Northwind. Last month " +
+                        "they asked for a two-year term at this year's price; finance can go to a 4% discount on " +
+                        "two years, not more. Their main worry is delivery lead times after the Q3 delays.",
+                    "北風工業採購主管林美華、廠長陳偉。上個月他們提出想簽兩年約、價格維持今年的水準；" +
+                        "財務那邊兩年約最多能給 4% 折扣，再多不行。他們最在意的是第三季延遲之後的交期。",
+                ),
+                todos = listOf(
+                    todo("t1", "Confirm the two-year term and start date", "確認兩年約與起約日"),
+                    todo("t2", "Walk through the new delivery schedule", "說明新的交期安排"),
+                    todo("t3", "Ask what volume they expect next year", "詢問明年預估用量"),
+                ),
+                meetingFolderId = RENEWALS_FOLDER_ID,
+                updatedAt = now - 2 * day,
+            ),
+            CloudMeetingDraft(
+                id = "demo-draft-harbor",
+                title = t(locale, "Blue Harbor Hotels — first meeting", "藍港酒店 — 初次拜訪"),
+                meetingAt = on(1, 10, 30),
+                meetingEndAt = on(1, 11, 30),
+                meetingContext = t(
+                    locale,
+                    "Referred by Northwind. Twelve properties, front desk calls handled in-house. " +
+                        "Find out who signs off on new tools.",
+                    "北風工業介紹。旗下十二間飯店，櫃台電話目前自己接。先弄清楚導入新工具由誰拍板。",
+                ),
+                todos = listOf(todo("t1", "Who decides, and by when", "誰決定、何時決定")),
+                meetingFolderId = NEW_BUSINESS_FOLDER_ID,
+                updatedAt = now - day,
+            ),
+            CloudMeetingDraft(
+                id = DRAFT_SHORT_ID,
+                title = t(locale, "Sales weekly sync", "業務週會"),
+                meetingAt = on(3, 9, 0),
+                meetingEndAt = on(3, 10, 0),
+                meetingFolderId = EMPTY_FOLDER_ID,
+                updatedAt = now - 3 * day,
+            ),
+            CloudMeetingDraft(
+                id = "demo-draft-halcyon",
+                title = t(locale, "Halcyon Labs — security review", "晴光實驗室 — 資安審查"),
+                meetingAt = on(4, 14, 0),
+                meetingEndAt = on(4, 15, 0),
+                meetingFolderId = NEW_BUSINESS_FOLDER_ID,
+                updatedAt = now - 2 * day,
+            ),
+            CloudMeetingDraft(
+                id = "demo-draft-quarterly",
+                title = t(locale, "Quarterly planning", "季度規劃"),
+                meetingAt = on(6, 13, 30),
+                meetingEndAt = on(6, 15, 0),
+                meetingFolderId = EMPTY_FOLDER_ID,
+                updatedAt = now - 5 * day,
+            ),
+            CloudMeetingDraft(
+                id = "demo-draft-meridian",
+                title = t(locale, "Meridian — contract questions", "子午線 — 合約問題"),
+                meetingContext = t(
+                    locale,
+                    "They have questions on the data-retention clause. No date yet.",
+                    "對方對資料保存條款有疑問，時間還沒約。",
+                ),
+                updatedAt = now - 4 * day,
+            ),
+        )
+    }
 
     // ── library fixtures ─────────────────────────────────────────────────────
 

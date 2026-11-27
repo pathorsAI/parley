@@ -5,8 +5,10 @@ import com.pathors.parley.kit.BatchTranscriptResponse
 import com.pathors.parley.kit.BatchTranscriptionService
 import com.pathors.parley.kit.ChatCompletions
 import com.pathors.parley.kit.ChatGate
+import com.pathors.parley.kit.CloudMeetingDraft
 import com.pathors.parley.kit.CloudChat
 import com.pathors.parley.kit.HttpStatusFailure
+import com.pathors.parley.kit.MeetingDraftJson
 import com.pathors.parley.kit.CloudDictionaryEntry
 import com.pathors.parley.kit.DictionaryPullResponse
 import com.pathors.parley.kit.DictionaryPushResponse
@@ -756,6 +758,21 @@ class CloudClient(
         val text = execute(request) { response -> bodyText(response) }
         return CloudJson.decodeFromString(DictionaryPushResponse.serializer(), text)
     }
+
+    // ── meeting drafts (read-only) ───────────────────────────────────────────
+
+    /**
+     * `GET /v1/drafts` — the account's meeting drafts, as the desktop's draft
+     * sync (`src/lib/cloud/draftSync.ts`) pulls them with no cursor; iOS
+     * `listDrafts()`. Drafts are the user's own, not an organization's.
+     * Tombstones may be in the list; `MeetingDraftSchedule.live` leaves them
+     * out. Each row is read on its own ([MeetingDraftJson]), so one bad row
+     * costs that row; a body with no `drafts` array at all is an error. The
+     * phone never writes a draft back (#774).
+     */
+    suspend fun listDrafts(): List<CloudMeetingDraft> =
+        MeetingDraftJson.parseList(getText(url("v1", "drafts")))
+            ?: throw CloudException(status = 0, message = "drafts: the response had no drafts list")
 
     // ── chat (the one-shot LLM passes) ───────────────────────────────────────
 

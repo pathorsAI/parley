@@ -74,6 +74,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -113,12 +114,15 @@ import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.isInProgress
 import com.pathors.parley.kit.GettingStartedState
+import com.pathors.parley.kit.MeetingDraftSchedule
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.playback.AudioDownloadState
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.ui.theme.ParleyTheme
 import com.pathors.parley.upload.PendingUpload
 import java.io.File
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -129,12 +133,16 @@ import kotlinx.coroutines.launch
  * the large title with import, the scope switcher and the account level with
  * it, the search field, then — over the desktop's light bars — what needs the
  * user (the upload queue, a failure), the getting-started list, the folders as
- * cards in one sideways row, and the four newest recordings. Everything else is
- * one tap away on the full list: See all opens it with its folder chips and
- * pager, unchanged; a folder card opens that folder alone. Both are pages of
- * this one screen rather than routes of their own, because they read and act
- * on the same view model state (the scope, the folders, the dialogs); the
- * system back gesture returns to the overview.
+ * cards in one sideways row, and the four newest recordings — with the
+ * meeting drafts the desktop prepared around the folders in the personal
+ * library (即將開始的會議 above them, 會議草稿 under them; read-only, #774).
+ * Everything else is one tap away on the full list: See all opens it with its
+ * folder chips and pager, unchanged; a folder card opens that folder alone; a
+ * draft opens its own read-only page, and 會議草稿's 查看全部 every draft. All
+ * are pages of this one screen rather than routes of their own, because they
+ * read and act on the same view model state (the scope, the folders, the
+ * dialogs); the system back gesture returns to the overview (from a draft, to
+ * the list it was opened from).
  *
  * Queued items sit at the top on purpose — they are the only rows that need the
  * user to do anything (stay on network), and they are the newest.
@@ -173,6 +181,11 @@ fun HomeScreen(
     var pageKey by rememberSaveable { mutableStateOf(LibraryPage.Overview.key) }
     val page = LibraryPage.parse(pageKey)
     var query by rememberSaveable { mutableStateOf("") }
+    // The page a draft's page goes back to: the overview, or the drafts list
+    // it was opened from.
+    var draftReturnKey by rememberSaveable { mutableStateOf(LibraryPage.Overview.key) }
+    // A demo request to scroll the overview down to its drafts, by serial.
+    var draftScrollRequest by remember { mutableStateOf<Long?>(null) }
 
     // The personal library with the bundled sample merged in — see
     // `SampleRecordingStore`. Everything below reads this, not the cloud's list.
@@ -202,6 +215,13 @@ fun HomeScreen(
     // Opening a page leaves the last one's search behind, and the pager's
     // folder follows the page: All for See all, the folder for its card.
     fun openPage(target: LibraryPage) {
+        if (target is LibraryPage.Draft) {
+            draftReturnKey = if (LibraryPage.parse(pageKey) == LibraryPage.Drafts) {
+                LibraryPage.Drafts.key
+            } else {
+                LibraryPage.Overview.key
+            }
+        }
         query = ""
         viewModel.selectFolder(
             when (target) {
@@ -211,13 +231,36 @@ fun HomeScreen(
         )
         pageKey = target.key
     }
-    BackHandler(enabled = page != LibraryPage.Overview) { openPage(LibraryPage.Overview) }
+    // Back from a draft returns to where it was opened; from anything else, to the overview.
+    fun goBack() {
+        val current = LibraryPage.parse(pageKey)
+        openPage(if (current is LibraryPage.Draft) LibraryPage.parse(draftReturnKey) else LibraryPage.Overview)
+    }
+    BackHandler(enabled = page != LibraryPage.Overview) { goBack() }
     // A folder page whose folder has gone (deleted here or elsewhere, or a
     // scope switch) has nothing left to show: back to the overview.
     LaunchedEffect(page, state.folders, state.loading) {
         if (page is LibraryPage.Folder && !state.loading && state.folders.none { it.id == page.id }) {
             openPage(LibraryPage.Overview)
         }
+    }
+    // Likewise a draft's page whose draft has gone (deleted on the desktop).
+    LaunchedEffect(page, state.drafts, state.loading) {
+        // Not in demo mode, where the fixtures are always there and a frame
+        // must not bounce off a state that has not caught up with its request.
+        if (page is LibraryPage.Draft && !DemoMode.isActive && !state.loading && state.drafts.none { it.id == page.id }) {
+            goBack()
+        }
+    }
+    // `library-overview-drafts`: from the top down to 即將開始的會議, once it
+    // is laid out.
+    LaunchedEffect(draftScrollRequest) {
+        if (draftScrollRequest == null) return@LaunchedEffect
+        overviewState.scrollToItem(0)
+        val index = snapshotFlow {
+            overviewState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == DRAFTS_SOON_KEY }?.index
+        }.filterNotNull().first()
+        overviewState.scrollToItem(index)
     }
 
     DemoLibraryRequest { target ->
@@ -227,13 +270,31 @@ fun HomeScreen(
         // A lap route re-seeds the fixtures under a screen that may already be
         // up, so every demo request re-reads them.
         viewModel.refresh()
+        // Each frame starts from the overview, at its top unless the frame is
+        // the one scrolled to the drafts, so a draft's page goes back to it.
+        openPage(LibraryPage.Overview)
+        val scrollsToDrafts = target.library == DemoMode.LibraryPage.OVERVIEW_DRAFTS
+        draftScrollRequest = if (scrollsToDrafts) target.serial else null
+        if (!scrollsToDrafts) coroutineScope.launch { overviewState.scrollToItem(0) }
         openPage(
             when (target.library) {
                 DemoMode.LibraryPage.ALL -> LibraryPage.All
                 DemoMode.LibraryPage.FOLDER_EMPTY -> LibraryPage.Folder(DemoMode.EMPTY_FOLDER_ID)
-                DemoMode.LibraryPage.OVERVIEW, DemoMode.LibraryPage.ORG -> LibraryPage.Overview
+                DemoMode.LibraryPage.DRAFTS -> LibraryPage.Drafts
+                DemoMode.LibraryPage.DRAFT -> LibraryPage.Draft(DemoMode.DRAFT_FULL_ID)
+                DemoMode.LibraryPage.DRAFT_SHORT -> LibraryPage.Draft(DemoMode.DRAFT_SHORT_ID)
+                DemoMode.LibraryPage.OVERVIEW,
+                DemoMode.LibraryPage.ORG,
+                DemoMode.LibraryPage.OVERVIEW_DRAFTS,
+                -> LibraryPage.Overview
             },
         )
+    }
+
+    // A draft's folder: a personal folder's name, since drafts show only
+    // when the personal library is up.
+    val draftFolderName: (String?) -> String? = { id ->
+        if (id == null || !state.isPersonal) null else state.folders.firstOrNull { it.id == id }?.name
     }
 
     val callbacks = LibraryCallbacks(
@@ -332,21 +393,42 @@ fun HomeScreen(
                 else -> FullListHeader(
                     title = when (page) {
                         is LibraryPage.Folder -> state.folders.firstOrNull { it.id == page.id }?.name.orEmpty()
+                        LibraryPage.Drafts -> stringResource(R.string.library_drafts_title)
+                        is LibraryPage.Draft -> stringResource(R.string.draft_page_title)
                         else -> stringResource(R.string.library_all_recordings)
                     },
-                    onBack = { openPage(LibraryPage.Overview) },
+                    onBack = { goBack() },
                 )
             }
-            PageSearchField(
-                query = query,
-                onQueryChange = { query = it },
-                hint = searchHint,
-                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
-            )
+            // The search is the recordings'; the drafts' pages have nothing it finds.
+            if (!page.isDraftPage) {
+                PageSearchField(
+                    query = query,
+                    onQueryChange = { query = it },
+                    hint = searchHint,
+                    modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
+                )
+            }
             val body = Modifier
                 .fillMaxWidth()
                 .weight(1f)
             when {
+                page == LibraryPage.Drafts -> MeetingDraftsList(
+                    drafts = state.drafts,
+                    folderName = draftFolderName,
+                    onOpen = { id -> openPage(LibraryPage.Draft(id)) },
+                    modifier = body,
+                )
+
+                page is LibraryPage.Draft -> {
+                    val draft = state.drafts.firstOrNull { it.id == page.id }
+                    if (draft != null) {
+                        MeetingDraftPage(draft = draft, folder = draftFolderName(draft.meetingFolderId), modifier = body)
+                    } else {
+                        Box(body)
+                    }
+                }
+
                 // Searching from the overview searches the whole library, the
                 // way the Library always has.
                 page == LibraryPage.All || (page == LibraryPage.Overview && query.isNotBlank()) -> LibraryBody(
@@ -382,6 +464,7 @@ fun HomeScreen(
                         onUseSample = { viewModel.walkThroughSample(language) },
                     ),
                     onOpen = ::openPage,
+                    draftFolderName = draftFolderName,
                     modifier = body,
                 )
             }
@@ -469,12 +552,28 @@ private sealed interface LibraryPage {
         override val key = FOLDER_PREFIX + id
     }
 
+    /** Every 會議草稿, from the overview's 查看全部. */
+    data object Drafts : LibraryPage {
+        override val key = "drafts"
+    }
+
+    /** A meeting draft's read-only page, by id. */
+    data class Draft(val id: String) : LibraryPage {
+        override val key = DRAFT_PREFIX + id
+    }
+
+    /** The drafts list or a draft: pages with no recordings, so no search field. */
+    val isDraftPage: Boolean get() = this == Drafts || this is Draft
+
     companion object {
         private const val FOLDER_PREFIX = "folder:"
+        private const val DRAFT_PREFIX = "draft:"
 
         fun parse(key: String): LibraryPage = when {
             key == All.key -> All
+            key == Drafts.key -> Drafts
             key.startsWith(FOLDER_PREFIX) -> Folder(key.removePrefix(FOLDER_PREFIX))
+            key.startsWith(DRAFT_PREFIX) -> Draft(key.removePrefix(DRAFT_PREFIX))
             else -> Overview
         }
     }
@@ -676,8 +775,11 @@ private fun HomeBottomBar(onRecord: () -> Unit) {
 /**
  * What the Library opens on — the desktop's 總覽, iOS's overview: what needs
  * the user (an import landing, a meeting still running, a failure, the upload
- * queue), the getting-started list, the folders as cards in one sideways row,
- * and the four newest recordings. Everything follows the scope switcher.
+ * queue), the getting-started list, then 即將開始的會議 → 資料夾 → 會議草稿 →
+ * 最近錄音: the folders as cards in one sideways row, the four newest
+ * recordings, and around the folders the meeting drafts (personal scope only,
+ * read-only; each part left out when it has none). Everything follows the
+ * scope switcher.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -690,9 +792,20 @@ private fun LibraryOverviewBody(
     listState: LazyListState,
     recentEmpty: RecentEmpty,
     onOpen: (LibraryPage) -> Unit,
+    draftFolderName: (String?) -> String?,
     modifier: Modifier = Modifier,
 ) {
     val recent = remember(library) { LibraryRules.recentRecordings(library) }
+    // Re-split every 30 s, so a draft crossing into the hour moves up.
+    val draftClock = rememberDraftClock()
+    val drafts = remember(state.drafts, state.isPersonal, draftClock) {
+        if (state.isPersonal) {
+            MeetingDraftSchedule.split(state.drafts, draftClock)
+        } else {
+            MeetingDraftSchedule.Split(startingSoon = emptyList(), later = emptyList())
+        }
+    }
+    val openDraft: (String) -> Unit = { id -> onOpen(LibraryPage.Draft(id)) }
     PullToRefreshBox(
         isRefreshing = state.loading,
         onRefresh = callbacks.onRefresh,
@@ -719,8 +832,35 @@ private fun LibraryOverviewBody(
                     GettingStartedList(state = it.state, header = it.header, modifier = Modifier.padding(bottom = 8.dp))
                 }
             }
+            if (drafts.startingSoon.isNotEmpty()) {
+                item(key = DRAFTS_SOON_KEY) {
+                    DraftSection(
+                        title = stringResource(R.string.library_drafts_starting_soon),
+                        drafts = drafts.startingSoon,
+                        now = draftClock,
+                        folderName = draftFolderName,
+                        onOpen = openDraft,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
             item(key = "folders") {
                 OverviewFolders(state = state, library = library, actions = callbacks.folderActions, onOpen = onOpen)
+            }
+            if (drafts.later.isNotEmpty()) {
+                item(key = "drafts-later") {
+                    // As many rows as 最近錄音 shows; the rest are a 查看全部 away.
+                    DraftSection(
+                        title = stringResource(R.string.library_drafts_title),
+                        drafts = drafts.later,
+                        now = draftClock,
+                        folderName = draftFolderName,
+                        onOpen = openDraft,
+                        limit = LibraryRules.RECENT_COUNT,
+                        onSeeAll = { onOpen(LibraryPage.Drafts) },
+                        modifier = Modifier.padding(top = 16.dp),
+                    )
+                }
             }
             item(key = "recent-heading") {
                 OverviewHeading(
@@ -763,6 +903,9 @@ private fun LibraryOverviewBody(
 
 /** The overview's side margin, iOS's 20pt. */
 private val OverviewInset = 20.dp
+
+/** 即將開始的會議's item on the overview, which `library-overview-drafts` scrolls to. */
+private const val DRAFTS_SOON_KEY = "drafts-soon"
 
 /**
  * 資料夾: the heading with + 新增資料夾 beside it (a folder is made from the

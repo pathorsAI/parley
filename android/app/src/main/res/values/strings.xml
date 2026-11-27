@@ -421,6 +421,24 @@
     <string name="library_overview_see_all">See all</string>
     <string name="library_recent_empty">No recordings yet — start a meeting or import one.</string>
     <string name="library_use_sample">Use the sample</string>
+    <!-- Meeting drafts on the Library overview, read-only (#774): the iOS wording (#772). -->
+    <string name="library_drafts_starting_soon">Starting soon</string>
+    <string name="library_drafts_title">Meeting drafts</string>
+    <string name="draft_no_time">No time</string>
+    <string name="draft_no_time_set">No time set yet</string>
+    <string name="draft_in_minutes">in %1$d min</string>
+    <string name="draft_in_hours">in %1$d hr</string>
+    <plurals name="draft_in_days">
+        <item quantity="one">in %1$d day</item>
+        <item quantity="other">in %1$d days</item>
+    </plurals>
+    <string name="draft_past_start">Past start time</string>
+    <string name="draft_missed">Missed</string>
+    <string name="draft_untitled">Untitled meeting</string>
+    <string name="draft_context">Context</string>
+    <string name="draft_agenda">Agenda</string>
+    <string name="draft_page_title">Meeting draft</string>
+    <string name="draft_edit_on_desktop">Drafts are edited in Parley on the desktop.</string>
     <plurals name="library_folder_card_count">
         <item quantity="one">%1$d recording</item>
         <item quantity="other">%1$d recordings</item>

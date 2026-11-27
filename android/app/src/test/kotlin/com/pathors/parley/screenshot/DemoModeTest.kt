@@ -1,5 +1,7 @@
 package com.pathors.parley.screenshot
 
+import com.pathors.parley.kit.MeetingDraftSchedule
+import com.pathors.parley.ui.LibraryRules
 import com.pathors.parley.ui.RecordingDetailViewModel
 import java.util.Locale
 import org.junit.Assert.assertEquals
@@ -113,6 +115,32 @@ class DemoModeTest {
             assertTrue(tail.id.endsWith("-tail"))
             assertTrue(tail.startMs > script.last().startMs)
         }
+    }
+
+    @Test
+    fun `the drafts fill both overview sections and a see-all, in both languages`() {
+        val now = 1_786_498_800_000L
+        val folderIds = DemoMode.folders(en).map { it.id }.toSet()
+        val english = DemoMode.drafts(en, now)
+        val chinese = DemoMode.drafts(zh, now)
+        assertEquals(6, english.size)
+        assertEquals(english.map { it.id }, chinese.map { it.id })
+        english.zip(chinese).forEach { (a, b) ->
+            assertTrue(a.title.isNotBlank())
+            assertNotEquals(a.title, b.title)
+            assertEquals(a.meetingContext.isBlank(), b.meetingContext.isBlank())
+            a.meetingFolderId?.let { assertTrue(it in folderIds) }
+        }
+        val split = MeetingDraftSchedule.split(english, now)
+        assertEquals(listOf(DemoMode.DRAFT_FULL_ID), split.startingSoon.map { it.id })
+        // More than the drafts section shows, so See all is there; the untimed one last.
+        assertTrue(split.later.size > LibraryRules.RECENT_COUNT)
+        assertEquals("demo-draft-meridian", split.later.last().id)
+        assertTrue(DemoMode.DRAFT_SHORT_ID in split.later.map { it.id })
+        val short = english.first { it.id == DemoMode.DRAFT_SHORT_ID }
+        assertTrue(short.meetingContext.isEmpty() && short.todos.isEmpty())
+        assertNotNull(short.meetingAt)
+        assertNotNull(short.meetingFolderId)
     }
 
     @Test
