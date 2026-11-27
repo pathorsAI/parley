@@ -218,9 +218,10 @@ struct LibraryView: View {
                 .onChange(of: demo.showOrg, initial: true) { _, show in
                     if show { scope = ScreenshotDemo.orgs.first?.id }
                 }
-                // `-ParleyDemoRoute draft` opens the first demo draft's page.
+                // `-ParleyDemoRoute draft` (or `draft-short`) opens a demo draft's page.
                 .onChange(of: demo.showDraft, initial: true) { _, show in
-                    guard show, let first = ScreenshotDemo.drafts.first else { return }
+                    guard show, let first = ScreenshotDemo.drafts.first(where: { $0.id == demo.draftID })
+                    else { return }
                     drafts = ScreenshotDemo.drafts
                     folders = ScreenshotDemo.folders
                     if !path.contains(.draft(first.id)) { path.append(.draft(first.id)) }

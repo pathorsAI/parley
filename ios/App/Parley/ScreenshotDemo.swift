@@ -121,6 +121,9 @@
         @Published var showOrg = false
         /// Library pushes the first demo draft's page over the overview (`draft`).
         @Published var showDraft = false
+        /// Which demo draft `showDraft` opens: the starting-soon one, or
+        /// (`draft-short`) the weekly sync, which has only a time and a folder.
+        var draftID = "demo-draft-northwind"
         /// A sheet with a focused text field, so the Parley keyboard is on
         /// screen, and an Action-Button-style demo dictation into it a moment
         /// later (`keyboardharness`). The only way to watch the keyboard's
@@ -238,9 +241,11 @@
                 // The demo org's shared library, as the scope menu opens it.
                 tab = .library
                 showOrg = true
-            case "draft":
-                // The meeting starting soon, opened from 即將開始的會議.
+            case "draft", "draft-short":
+                // The meeting starting soon, opened from 即將開始的會議 — or
+                // the weekly sync, a draft with nothing but a time and a folder.
                 tab = .library
+                draftID = route == "draft" ? "demo-draft-northwind" : "demo-draft-weekly"
                 showDraft = true
             case "library-folder-empty":
                 // A folder with nothing in it, as its card opens it.

@@ -51,6 +51,7 @@ ROUTES=(
   "library-folder-empty:Library > an empty folder (the empty state)"
   "library-org:Library on the demo organization's scope"
   "draft:Library > a meeting draft's read-only page"
+  "draft-short:the same page for a draft with only a time and a folder"
   "transcript:a recording's transcript"
   "summary:a recording's summary face"
   "jump:the summary, jumped to a lit transcript turn"
