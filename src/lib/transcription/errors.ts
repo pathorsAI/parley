@@ -8,7 +8,7 @@ import type { LocalFailureCode } from "./localModels";
  * - a START BLOCK, decided by `prepareTranscription` / `uploadPickBlock` before
  *   anything starts ("no-key", "signin", "no-local-model", "no-upload");
  * - a SESSION FAILURE the backend reports once it has started — the
- *   `meeting://error` / `voicetyping://error` code ("quota" | "auth" | "key" |
+ *   `meeting://error` / `voicetyping://error` code ("quota" | "auth" | "key" | "region" |
  *   "capture" | "connect", see capture.rs `Failure::classify`; the on-device
  *   "local" | "local-memory" | "local-missing", see local_stt::failure_code),
  *   or for an upload the rejected `transcribe_file` message classified by
@@ -79,6 +79,7 @@ const SESSION_FAILURE_KEY: Record<TranscriptionSurface, Record<string, Translati
     quota: "meeting.error.quota",
     auth: "meeting.error.auth",
     key: "meeting.error.key",
+    region: "meeting.error.region",
     capture: "meeting.error.capture",
     ...LOCAL_FAILURE.meeting,
   },
@@ -87,6 +88,7 @@ const SESSION_FAILURE_KEY: Record<TranscriptionSurface, Record<string, Translati
     quota: "voiceTyping.error.quota",
     auth: "voiceTyping.error.auth",
     key: "voiceTyping.error.key",
+    region: "voiceTyping.error.region",
     ...LOCAL_FAILURE.voiceTyping,
   },
   upload: { ...LOCAL_FAILURE.upload },

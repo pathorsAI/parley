@@ -29,6 +29,8 @@ export function llmFailureBlocks(key: TranslationKey, userSuppliedEndpoint: bool
   if (key === "settings.provider.test.unreachable") return userSuppliedEndpoint;
   return (
     key === "settings.provider.test.rejectedKey" ||
+    // The key is fine, but this provider will never answer from here.
+    key === "ai.fail.regionUnsupported" ||
     key === "settings.provider.test.notFound" ||
     key === "settings.provider.test.unknownModel"
   );
@@ -55,6 +57,8 @@ export async function checkModelKeys(settings: Settings): Promise<KeyProblems> {
           .then((verdict) => {
             if (verdict === "rejected") {
               problems.stt = { key: "onboarding.model.sttKeyRejected", vars: { provider: stt.label } };
+            } else if (verdict === "regionUnsupported") {
+              problems.stt = { key: "ai.fail.regionUnsupported", vars: { provider: stt.label } };
             }
           })
           .catch(() => {

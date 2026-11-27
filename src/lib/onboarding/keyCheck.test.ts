@@ -67,6 +67,19 @@ describe("checkModelKeys", () => {
     expect(llmTest).not.toHaveBeenCalled();
   });
 
+  it("reports a transcription vendor that refuses the user's region", async () => {
+    verify.mockResolvedValue("regionUnsupported");
+    const problems = await checkModelKeys({ ...soniox, transcriptionProvider: "openai", openaiApiKey: "sk-x" });
+    expect(problems.stt?.key).toBe("ai.fail.regionUnsupported");
+  });
+
+  it("holds on an AI provider that refuses the user's region", async () => {
+    verify.mockResolvedValue("accepted");
+    llmTest.mockResolvedValue({ ok: false, error: { key: "ai.fail.regionUnsupported", vars: { provider: "Groq" } } });
+    const problems = await checkModelKeys({ ...soniox, groqApiKey: "gsk_x" });
+    expect(problems.llm?.key).toBe("ai.fail.regionUnsupported");
+  });
+
   it("finds nothing wrong when the vendor can't be reached", async () => {
     verify.mockResolvedValue("unknown");
     expect(await checkModelKeys(soniox)).toEqual({});

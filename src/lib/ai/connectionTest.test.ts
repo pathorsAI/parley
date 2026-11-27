@@ -117,3 +117,35 @@ describe("classifyConnectionError", () => {
     });
   });
 });
+
+describe("classifyConnectionError — region refusals", () => {
+  const openai = { ...CTX, provider: "openai", providerLabel: "OpenAI" };
+
+  it("says the provider doesn't serve the region instead of blaming the key", () => {
+    const body = '{"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","type":"request_forbidden"}}';
+    expect(classifyConnectionError(wrapped(apiCallError(403, body)), openai)).toEqual({
+      key: "ai.fail.regionUnsupported",
+      vars: { provider: "OpenAI" },
+    });
+  });
+
+  it("reads Gemini's 400 FAILED_PRECONDITION as a region block, not an unknown model", () => {
+    const body = '[{"error":{"code":400,"message":"User location is not supported for the API use.","status":"FAILED_PRECONDITION"}}]';
+    const ctx = { ...CTX, provider: "gemini", providerLabel: "Gemini" };
+    expect(classifyConnectionError(apiCallError(400, body), ctx).key).toBe("ai.fail.regionUnsupported");
+  });
+
+  it("still reports ordinary 401/403 as a rejected key", () => {
+    expect(classifyConnectionError(apiCallError(401, '{"error":{"code":"invalid_api_key"}}'), openai).key).toBe(
+      "settings.provider.test.rejectedKey"
+    );
+    const groq = { ...CTX, provider: "groq", providerLabel: "Groq" };
+    expect(classifyConnectionError(apiCallError(401, '{"error":{"message":"Invalid API Key","code":"invalid_api_key"}}'), groq).key).toBe(
+      "settings.provider.test.rejectedKey"
+    );
+    const custom = { ...CTX, provider: "custom", providerLabel: "Custom" };
+    expect(classifyConnectionError(apiCallError(403, '{"error":{"message":"Forbidden"}}'), custom).key).toBe(
+      "settings.provider.test.rejectedKey"
+    );
+  });
+});

@@ -370,8 +370,10 @@ pub async fn connect_with_headers(
                 // relay's 402 quota / 401 expired-session) so the caller can surface
                 // an actionable message instead of an opaque "connect failed".
                 tokio_tungstenite::tungstenite::Error::Http(resp) => {
+                    // The body tells a region refusal (OpenAI from HK / mainland
+                    // China) apart from a rejected key — both are 403s.
                     let status = resp.status().as_u16();
-                    SttError::from_status(status, format!("connect failed: HTTP {status}"))
+                    SttError::from_handshake(status, resp.body().as_deref())
                 }
                 _ => anyhow!("connect failed: {e}"),
             })

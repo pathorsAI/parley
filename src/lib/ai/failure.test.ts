@@ -57,3 +57,42 @@ describe("classifyAiFailure", () => {
     expect(f.fixInSettings).toBe(false);
   });
 });
+
+describe("classifyAiFailure — region refusals", () => {
+  function sdk403(responseBody: string, statusCode = 403) {
+    const cause = Object.assign(new Error("Forbidden"), { statusCode, responseBody });
+    return Object.assign(new Error("AI_APICallError"), { cause });
+  }
+
+  it("tells a region block apart from a rejected key", () => {
+    const f = classifyAiFailure(
+      sdk403('{"type":"error","error":{"type":"forbidden","message":"Request not allowed"}}'),
+      settingsFor("anthropic", "sk-ant-x"),
+      "deep"
+    );
+    expect(f.kind).toBe("regionUnsupported");
+    expect(f.fixInSettings).toBe(true);
+  });
+
+  it("reads Groq's bare 403 Forbidden as a region block, but its 401 as a bad key", () => {
+    expect(classifyAiFailure(sdk403('{"error":{"message":"Forbidden"}}'), settingsFor("groq", "gsk_x"), "deep").kind).toBe(
+      "regionUnsupported"
+    );
+    expect(
+      classifyAiFailure(
+        sdk403('{"error":{"message":"Invalid API Key","type":"invalid_request_error","code":"invalid_api_key"}}', 401),
+        settingsFor("groq", "gsk_x"),
+        "deep"
+      ).kind
+    ).toBe("auth");
+  });
+
+  it("keeps an Anthropic permission error a key problem", () => {
+    const f = classifyAiFailure(
+      sdk403('{"type":"error","error":{"type":"permission_error","message":"This organization has been disabled."}}'),
+      settingsFor("anthropic", "sk-ant-x"),
+      "deep"
+    );
+    expect(f.kind).toBe("auth");
+  });
+});

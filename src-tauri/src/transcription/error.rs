@@ -20,6 +20,10 @@ pub enum SttErrorKind {
     Unauthorized,
     /// The provider refused the request (HTTP 403).
     Forbidden,
+    /// The provider refuses requests from the user's region (OpenAI's
+    /// `unsupported_country_region_territory`, Gemini's "User location is not
+    /// supported") — the key is fine, and a redial would fail the same way.
+    RegionUnsupported,
     /// Out of hosted quota (HTTP 402, the cloud's `quota_exceeded`).
     QuotaExceeded,
     /// The on-device model is not downloaded.
@@ -43,6 +47,7 @@ impl SttErrorKind {
             (Self::ModelMissing, _) => "local-missing",
             (Self::OutOfMemory, _) => "local-memory",
             (Self::Local, _) => "local",
+            (Self::RegionUnsupported, _) => "region",
             (Self::QuotaExceeded, true) => "quota",
             (Self::Unauthorized, true) => "auth",
             (Self::Unauthorized | Self::Forbidden, false) => "key",
@@ -80,6 +85,26 @@ impl SttError {
         Self::new(kind, message).into()
     }
 
+    /// A refused WebSocket upgrade: [`from_status`](Self::from_status), unless
+    /// the response body says the provider refuses the user's region — then
+    /// [`SttErrorKind::RegionUnsupported`], with the body's wording kept in the
+    /// message so the log shows why.
+    pub fn from_handshake(status: u16, body: Option<&[u8]>) -> anyhow::Error {
+        let message = format!("connect failed: HTTP {status}");
+        match body.map(String::from_utf8_lossy) {
+            Some(text) if mentions_unsupported_region(&text) => {
+                let detail: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                let detail: String = detail.chars().take(200).collect();
+                Self::new(
+                    SttErrorKind::RegionUnsupported,
+                    format!("{message}: {detail}"),
+                )
+                .into()
+            }
+            _ => Self::from_status(status, message),
+        }
+    }
+
     /// An on-device failure. The local catalog's errors start with "Local
     /// transcription" and name their kind (`local_stt::failure_code`); any
     /// other text (a path that could not be resolved, say) stays a plain error.
@@ -113,6 +138,22 @@ pub fn session_error_code(err: &anyhow::Error, hosted: bool) -> &'static str {
     }
 }
 
+/// Does this provider text say the request was refused because of the user's
+/// region? Only phrases nothing else produces: OpenAI's
+/// `unsupported_country_region_territory` / "Country, region, or territory not
+/// supported", and Gemini's "User location is not supported for the API use."
+/// A bare 403 is NOT one — it stays a key problem. Mirrors `src/lib/ai/region.ts`.
+pub fn mentions_unsupported_region(text: &str) -> bool {
+    let low = text.to_lowercase();
+    [
+        "unsupported_country_region_territory",
+        "country, region, or territory not supported",
+        "user location is not supported",
+    ]
+    .iter()
+    .any(|marker| low.contains(marker))
+}
+
 /// The error code for a failure known only by its text. Hosted mode routinely
 /// hits 402 (out of credits) / 401 (expired cloud session); BYOK fails on a
 /// rejected vendor key (401/403/"unauthorized"/"api key"); everything else is
@@ -128,6 +169,10 @@ pub fn classify_message(msg: &str, hosted: bool) -> &'static str {
     // "local-memory" or "local" (see local_stt::failure_code).
     if low.starts_with("local transcription") {
         crate::local_stt::failure_code(msg)
+    } else if !hosted && mentions_unsupported_region(msg) {
+        // Before the key check: these refusals are 403s / 400s, and reading
+        // them as a bad key sends the user re-pasting a key that works.
+        "region"
     } else if hosted && msg.contains("402") {
         "quota"
     } else if hosted && msg.contains("401") {
@@ -296,10 +341,41 @@ mod tests {
             (ModelMissing, "local-missing", "local-missing"),
             (OutOfMemory, "local-memory", "local-memory"),
             (Local, "local", "local"),
+            (RegionUnsupported, "region", "region"),
         ];
         for (kind, byok, hosted) in table {
             assert_eq!(kind.code(false), byok, "{kind:?}");
             assert_eq!(kind.code(true), hosted, "{kind:?}");
         }
+    }
+
+    #[test]
+    fn region_refusals_are_not_key_errors() {
+        // OpenAI realtime / batch, and Gemini Live closing the socket.
+        for msg in [
+            r#"server error: {"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported"}}"#,
+            "Country, region, or territory not supported",
+            "closed by server: 1007 User location is not supported for the API use.",
+            r#"gemini transcribe: HTTP 400 Bad Request: {"error":{"code":400,"message":"User location is not supported for the API use.","status":"FAILED_PRECONDITION"}}"#,
+        ] {
+            assert_eq!(classify_message(msg, false), "region", "{msg}");
+        }
+        // A plain 403 or bad key is still a key problem.
+        assert_eq!(classify_message("connect failed: HTTP 403", false), "key");
+        assert_eq!(classify_message("Incorrect API key provided", false), "key");
+    }
+
+    #[test]
+    fn a_refused_upgrade_reads_its_body_for_a_region_refusal() {
+        let body = br#"{"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","type":"request_forbidden"}}"#;
+        let err = SttError::from_handshake(403, Some(body));
+        assert_eq!(session_error_code(&err, false), "region");
+        assert!(err.to_string().starts_with("connect failed: HTTP 403: "));
+        // No body, or a body that says something else: unchanged.
+        let plain = SttError::from_handshake(403, None);
+        assert_eq!(plain.to_string(), "connect failed: HTTP 403");
+        assert_eq!(session_error_code(&plain, false), "key");
+        let other = SttError::from_handshake(403, Some(br#"{"error":{"message":"Forbidden"}}"#));
+        assert_eq!(session_error_code(&other, false), "key");
     }
 }

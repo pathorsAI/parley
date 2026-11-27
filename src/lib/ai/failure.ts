@@ -1,6 +1,7 @@
 import { describeAiError } from "./errors";
 import { missingProviderRequirement, type ProviderRequirement } from "./settings";
 import { PROVIDER_BY_ID } from "./providers";
+import { isRegionRefusalError } from "./region";
 import type { LlmWorkload, Settings } from "../types";
 
 /**
@@ -24,6 +25,12 @@ export type AiFailureKind =
   /** A user-supplied endpoint with no model id yet — its list is free text. */
   | "missingModel"
   | "auth"
+  /**
+   * The provider refuses requests from the user's region (OpenAI, Anthropic,
+   * Gemini, Groq from HK / mainland China) — the key is fine; the fix is
+   * another provider, e.g. Parley's hosted model.
+   */
+  | "regionUnsupported"
   | "rate"
   | "model"
   | "generic";
@@ -47,7 +54,8 @@ export function classifyAiFailure(
   const provider = settings.llmProviders[workload];
   const providerLabel = PROVIDER_BY_ID[provider]?.label ?? provider;
   const detail = describeAiError(err);
-  const kind = kindOf(detail, missingProviderRequirement(settings, workload));
+  const missing = missingProviderRequirement(settings, workload);
+  const kind = !missing && isRegionRefusalError(err, provider) ? "regionUnsupported" : kindOf(detail, missing);
   return { kind, detail, providerLabel, fixInSettings: kind !== "rate" && kind !== "generic" };
 }
 
@@ -78,6 +86,7 @@ export const AI_FAILURE_HINT_KEY = {
   missingBaseUrl: "ai.fail.missingBaseUrl",
   missingModel: "ai.fail.missingModel",
   auth: "ai.fail.auth",
+  regionUnsupported: "ai.fail.regionUnsupported",
   rate: "ai.fail.rate",
   model: "ai.fail.model",
   generic: "ai.fail.generic",
