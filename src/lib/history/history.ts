@@ -800,6 +800,11 @@ function queueFilingAfterSave(id: string): void {
   import("../analysis/filingQueue")
     .then((m) => m.queueBackgroundFiling(id))
     .catch((e) => log.warn("history: queueing the filing pass failed", { id, error: String(e) }));
+  // The same moment, the same terms: read it once for small-talk candidates
+  // about the people in it (people/extractRun.ts).
+  import("../people/extractRun")
+    .then((m) => m.queuePeopleNotes(id))
+    .catch((e) => log.warn("history: queueing the people notes pass failed", { id, error: String(e) }));
 }
 
 /** What the transcript-import dialog saves (issue #130's text-ingest path). */

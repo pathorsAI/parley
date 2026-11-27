@@ -211,9 +211,11 @@ fn schemas() -> Vec<Value> {
              EVERY draft should also carry how the meeting starts: `opening`, \
              the standard opening to read aloud, and `smallTalk`, a few lines \
              of small talk for before it. Before writing `smallTalk`, look up \
-             what is known about the attendees — search_meetings for their \
-             names and read the recent recordings with them — and build each \
-             line on something they actually said. \
+             what is known about the attendees: get_person for each of them \
+             (list_people shows who Parley has notes about), and when there \
+             are no notes, search_meetings for their names and read the \
+             recent recordings with them. Build each line on something they \
+             actually said. \
              `title` may be left out: a draft with a start time is then named \
              after it. Safe to call while a meeting is recording.",
             json!({

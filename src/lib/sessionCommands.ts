@@ -882,6 +882,99 @@ async function rpcRestoreMeetingDraft(a: RpcArgs): Promise<unknown> {
   return draftForMcp(restored);
 }
 
+// ── People notes (lib/people) ────────────────────────────────────────────────
+
+const iso = (ms: number) => new Date(ms).toISOString();
+
+async function rpcListPeople(a: RpcArgs): Promise<unknown> {
+  const { loadPeople } = await import("./people/store");
+  const { keptNotes, knownPeople } = await import("./people/notes");
+  const q = (asTrimmed(a.query) ?? "").toLowerCase();
+  return knownPeople(await loadPeople())
+    .filter((p) => !q || [p.name, p.org, ...p.aliases].some((v) => v.toLowerCase().includes(q)))
+    .map((p) => {
+      const notes = keptNotes(p);
+      return { id: p.id, name: p.name, org: p.org, aliases: p.aliases, notes: notes.length, lastSaidAt: iso(notes[0].saidAt) };
+    })
+    .sort((x, y) => y.lastSaidAt.localeCompare(x.lastSaidAt));
+}
+
+/** A person as an MCP client reads them: kept notes only, newest first. */
+async function personForMcp(p: import("./people/notes").Person) {
+  const { keptNotes } = await import("./people/notes");
+  return {
+    id: p.id,
+    name: p.name,
+    org: p.org,
+    aliases: p.aliases,
+    notes: keptNotes(p).map((n) => ({
+      id: n.id,
+      text: n.text,
+      saidAt: iso(n.saidAt),
+      recordingId: n.recordingId ?? null,
+      atMs: n.atMs ?? null,
+      quote: n.quote ?? null,
+    })),
+  };
+}
+
+async function rpcGetPerson(a: RpcArgs): Promise<unknown> {
+  const { loadPeople } = await import("./people/store");
+  const { findPerson, knownPeople } = await import("./people/notes");
+  const id = asNonEmptyString(a.id);
+  const name = asTrimmed(a.name);
+  if (!id && !name) throw new Error("id or name is required");
+  const doc = await loadPeople();
+  const known = { ...doc, people: knownPeople(doc) };
+  const person = id ? known.people.find((p) => p.id === id) : findPerson(known, name ?? "");
+  if (!person) throw new Error(`no notes about ${id ?? name} — list_people shows who Parley has notes about`);
+  return personForMcp(person);
+}
+
+async function rpcAddPersonNote(a: RpcArgs): Promise<unknown> {
+  const name = asTrimmed(a.name);
+  const text = asTrimmed(a.text);
+  if (!name) throw new Error("name is required");
+  if (!text) throw new Error("text is required");
+  const recordingId = asNonEmptyString(a.recordingId);
+  let saidAt = asTime(a.saidAt, "saidAt");
+  if (recordingId) {
+    const { listHistory } = await import("./history/history");
+    const entry = (await listHistory()).find((e) => e.id === recordingId);
+    if (!entry) throw new Error(`no local recording with id ${recordingId} — get ids from list_recordings`);
+    saidAt ??= entry.createdAt;
+  }
+  const { mutatePeople } = await import("./people/store");
+  const { withNote } = await import("./people/notes");
+  let personId: string | null = null;
+  const doc = await mutatePeople((before) => {
+    const out = withNote(
+      before,
+      { name, org: asTrimmed(a.org), text, quote: asTrimmed(a.quote), recordingId, saidAt: saidAt ?? Date.now(), status: "kept" },
+      Date.now(),
+    );
+    personId = out.person?.id ?? null;
+    return out.doc;
+  });
+  const person = doc.people.find((p) => p.id === personId);
+  if (!person) throw new Error("the note could not be saved");
+  return personForMcp(person);
+}
+
+async function rpcDeletePersonNote(a: RpcArgs): Promise<unknown> {
+  const personId = asNonEmptyString(a.personId);
+  const noteId = asNonEmptyString(a.noteId);
+  if (!personId || !noteId) throw new Error("personId and noteId are required");
+  const { loadPeople, mutatePeople } = await import("./people/store");
+  const { withoutNote } = await import("./people/notes");
+  const before = await loadPeople();
+  if (!before.people.some((p) => p.id === personId && p.notes.some((n) => n.id === noteId))) {
+    throw new Error(`no note ${noteId} on person ${personId} — get ids from get_person`);
+  }
+  await mutatePeople((doc) => withoutNote(doc, personId, noteId));
+  return { personId, noteId, deleted: true };
+}
+
 /** Every RPC action the frontend answers, keyed by the MCP tool's name. A Map,
  *  not an object: the action string comes off disk and must never resolve to
  *  something inherited from Object.prototype. */
@@ -914,6 +1007,10 @@ const RPC_HANDLERS = new Map<string, (a: RpcArgs) => Promise<unknown>>([
   ["update_meeting_draft", rpcUpdateMeetingDraft],
   ["delete_meeting_draft", rpcDeleteMeetingDraft],
   ["restore_meeting_draft", rpcRestoreMeetingDraft],
+  ["list_people", rpcListPeople],
+  ["get_person", rpcGetPerson],
+  ["add_person_note", rpcAddPersonNote],
+  ["delete_person_note", rpcDeletePersonNote],
 ]);
 
 /**

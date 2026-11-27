@@ -244,6 +244,8 @@ pub fn run() {
             commands::shared_files::get_templates_path,
             commands::shared_files::read_dictionary,
             commands::shared_files::write_dictionary,
+            commands::shared_files::read_people,
+            commands::shared_files::write_people,
             commands::shared_files::read_folders,
             commands::shared_files::write_folders,
             commands::logs::read_log_tail,

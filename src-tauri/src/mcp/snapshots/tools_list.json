@@ -1349,7 +1349,7 @@
       "title": "List meeting drafts"
     },
     {
-      "description": "Save a draft for an upcoming meeting. It appears under 即將開始 on the home screen, reminds the user before its start time, and one click starts recording with this preparation loaded. Put everything the analysis should know into `context`: who attends and their roles, the goal, history with this party. When the meeting is a negotiation or a deal, ALWAYS also write the user's BATNA (best alternative if no deal), target and bottom line into `context` as plain lines, e.g. 'BATNA: …', 'Target: …', 'Bottom line: …' — Parley has no separate fields for them. List what to ask or cover in `agenda`, one item each (a question written the way it would be said works well): the AI ticks items as they come up, and live suggestions pick from the ones still open. Optionally give the meeting a playbook as well: `branches` for steering when the other side says something specific ({ when: what they say, then: where to steer }), and `topics`, each a full sentence the user could say as is, to bring up when the conversation runs dry. Up to 30 items each. EVERY draft should also carry how the meeting starts: `opening`, the standard opening to read aloud, and `smallTalk`, a few lines of small talk for before it. Before writing `smallTalk`, look up what is known about the attendees — search_meetings for their names and read the recent recordings with them — and build each line on something they actually said. `title` may be left out: a draft with a start time is then named after it. Safe to call while a meeting is recording.",
+      "description": "Save a draft for an upcoming meeting. It appears under 即將開始 on the home screen, reminds the user before its start time, and one click starts recording with this preparation loaded. Put everything the analysis should know into `context`: who attends and their roles, the goal, history with this party. When the meeting is a negotiation or a deal, ALWAYS also write the user's BATNA (best alternative if no deal), target and bottom line into `context` as plain lines, e.g. 'BATNA: …', 'Target: …', 'Bottom line: …' — Parley has no separate fields for them. List what to ask or cover in `agenda`, one item each (a question written the way it would be said works well): the AI ticks items as they come up, and live suggestions pick from the ones still open. Optionally give the meeting a playbook as well: `branches` for steering when the other side says something specific ({ when: what they say, then: where to steer }), and `topics`, each a full sentence the user could say as is, to bring up when the conversation runs dry. Up to 30 items each. EVERY draft should also carry how the meeting starts: `opening`, the standard opening to read aloud, and `smallTalk`, a few lines of small talk for before it. Before writing `smallTalk`, look up what is known about the attendees: get_person for each of them (list_people shows who Parley has notes about), and when there are no notes, search_meetings for their names and read the recent recordings with them. Build each line on something they actually said. `title` may be left out: a draft with a start time is then named after it. Safe to call while a meeting is recording.",
       "inputSchema": {
         "properties": {
           "agenda": {
@@ -1571,6 +1571,96 @@
       },
       "name": "restore_meeting_draft",
       "title": "Restore a meeting draft"
+    },
+    {
+      "description": "List the people Parley has notes about, as { id, name, org, aliases, notes: count, lastSaidAt }, most recently noted first. Notes are short things worth bringing up as small talk or remembering (a trip, a move, a busy season), each dated and tied to the recording it came from. They live on this computer only. `query` narrows the list to names, aliases and organisations containing it.",
+      "inputSchema": {
+        "properties": {
+          "query": {
+            "description": "Part of a name or organisation.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "list_people",
+      "title": "List people"
+    },
+    {
+      "description": "One person and their notes, newest first: { id, name, org, aliases, notes: [{ id, text, saidAt, recordingId, atMs, quote }] }. Look a person up by `id` (from list_people) or by `name` (an alias works). `saidAt` is when it was said: say 'last time' or 'back in March' accordingly, and do not present an old note as news. Read this for each attendee before writing a draft's `smallTalk`.",
+      "inputSchema": {
+        "properties": {
+          "id": {
+            "description": "The person's id (see list_people).",
+            "type": "string"
+          },
+          "name": {
+            "description": "The person's name or an alias, when the id is not known.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "name": "get_person",
+      "title": "Get a person's notes"
+    },
+    {
+      "description": "Remember one thing about a person, for small talk next time: one short sentence stating the fact (e.g. '十二月要去北海道滑雪'), in the language it was said in. The person is created when Parley has none by that name; `org` tells two people with the same name apart. Give `recordingId` and `quote` when the note comes from a recording, so it stays traceable. Do not record health or medical matters, family conflict, relationships, money trouble, politics, religion, or one person's opinion of another. Returns the person with all their notes.",
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Who the note is about.",
+            "type": "string"
+          },
+          "org": {
+            "description": "Their company or team.",
+            "type": "string"
+          },
+          "quote": {
+            "description": "The words it is based on.",
+            "type": "string"
+          },
+          "recordingId": {
+            "description": "The recording it came from (see list_recordings).",
+            "type": "string"
+          },
+          "saidAt": {
+            "description": "When it was said, ISO 8601. Defaults to the recording's date, else now.",
+            "type": "string"
+          },
+          "text": {
+            "description": "The note: one sentence, up to 200 characters.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "text"
+        ],
+        "type": "object"
+      },
+      "name": "add_person_note",
+      "title": "Add a note about a person"
+    },
+    {
+      "description": "Delete one note (ids from get_person). A person with no notes left is removed.",
+      "inputSchema": {
+        "properties": {
+          "noteId": {
+            "type": "string"
+          },
+          "personId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "personId",
+          "noteId"
+        ],
+        "type": "object"
+      },
+      "name": "delete_person_note",
+      "title": "Delete a note about a person"
     }
   ]
 }
