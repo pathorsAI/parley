@@ -27,9 +27,10 @@ ONBOARDING_ROUTES=(
 )
 # The Library: its overview, the full list behind See all, an empty folder's
 # page, the organization's overview, then the meeting drafts — the overview
-# scrolled down to them, the full list behind 會議草稿's See all, and two
-# drafts' read-only pages: one with context and an agenda, one with only a
-# time and a folder (DemoMode.LibraryPage).
+# scrolled down to them, the full list behind 會議草稿's See all (every row
+# with its 開始), and two drafts' pages, 開始錄音 under the heading: one with
+# context and an agenda, one with only a time and a folder
+# (DemoMode.LibraryPage).
 LIBRARY_ROUTES=(
   library library-all library-folder-empty library-org
   library-overview-drafts library-drafts library-draft library-draft-short

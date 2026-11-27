@@ -20,6 +20,7 @@ import com.pathors.parley.kit.CloudMeetingDraft
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.GettingStartedStep
 import com.pathors.parley.kit.LapMotion
+import com.pathors.parley.kit.MeetingDraftSchedule
 import com.pathors.parley.kit.SampleManifest
 import com.pathors.parley.kit.TranscriptSearch
 import com.pathors.parley.library.FolderDirectory
@@ -340,7 +341,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         val live = folders ?: keptFolders
                         base.copy(
                             recordings = recordings,
-                            drafts = drafts,
+                            drafts = drafts.orEmpty(),
                             folders = live,
                             folderFilter = LibraryFolders.reconcile(current.folderFilter, live),
                             error = null,
@@ -445,22 +446,28 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
 
     /**
-     * The account's drafts for the personal scope, none for an organization's.
-     * A failure is logged — its status or its kind, never a draft's content —
-     * and the overview goes on without the two draft sections, as iOS does.
+     * The account's drafts for the personal scope, none for an organization's;
+     * null when they could not be loaded. A failure is logged — its status or
+     * its kind, never a draft's content — and the overview goes on without
+     * the two draft sections, as iOS does.
      */
-    private suspend fun draftsFor(scope: String?): List<CloudMeetingDraft> {
+    private suspend fun draftsFor(scope: String?): List<CloudMeetingDraft>? {
         if (scope != null) return emptyList()
         return try {
-            container.cloud.listDrafts()
+            container.cloud.listDrafts().also { drafts ->
+                // Drafts hidden on this phone (a meeting was started from
+                // them) that the cloud no longer lists are forgotten — only
+                // off a list that loaded, never off a failure's nothing.
+                container.startedDrafts.prune(MeetingDraftSchedule.live(drafts).map { it.id }.toSet())
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: CloudException) {
             Log.w(DRAFTS_LOG_TAG, "drafts: load failed, status ${e.status}")
-            emptyList()
+            null
         } catch (e: Exception) {
             Log.w(DRAFTS_LOG_TAG, "drafts: load failed, ${e.javaClass.simpleName}")
-            emptyList()
+            null
         }
     }
 

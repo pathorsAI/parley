@@ -57,4 +57,26 @@ class MeetingUploaderChoicesTest {
         assertTrue(read.namedByUser)
         assertTrue(read.filedByUser)
     }
+
+    @Test
+    fun `a draft's context lands in the meta's meetingContext`() {
+        val fromDraft = pending(named = true, filed = false).copy(meetingContext = "Renewal with Acme.\nThey want a discount.")
+        assertEquals(
+            JsonPrimitive("Renewal with Acme.\nThey want a discount."),
+            MeetingUploader.buildMeta(fromDraft).raw["meetingContext"],
+        )
+        // Started from the record button: the key is still there, empty.
+        assertEquals(JsonPrimitive(""), MeetingUploader.buildMeta(pending(named = false, filed = false)).raw["meetingContext"])
+    }
+
+    @Test
+    fun `the context survives the manifest, and an old manifest reads as none`() {
+        val written = CloudJson.encodeToString(
+            PendingUpload.serializer(),
+            pending(named = true, filed = true).copy(meetingContext = "Renewal with Acme."),
+        )
+        assertEquals("Renewal with Acme.", CloudJson.decodeFromString(PendingUpload.serializer(), written).meetingContext)
+        val old = """{"id":"rec-1","title":"Meeting","startedAtMs":1,"durationMs":2.0}"""
+        assertEquals("", CloudJson.decodeFromString(PendingUpload.serializer(), old).meetingContext)
+    }
 }

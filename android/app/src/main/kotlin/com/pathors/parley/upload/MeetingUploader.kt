@@ -68,6 +68,11 @@ data class EnqueueRequest(
     val namedByUser: Boolean = false,
     /** [destination] is a folder the user picked on the record screen, not the default. */
     val filedByUser: Boolean = false,
+    /**
+     * What the meeting was prepared with — a meeting draft's context, when it
+     * was started from one. Saved into the recording's `meetingContext`.
+     */
+    val meetingContext: String = "",
 )
 
 /** What one [MeetingUploader.drain] pass achieved. */
@@ -236,6 +241,8 @@ class MeetingUploader(
             shareFolderId = destination.orgFolderId,
             namedByUser = request.namedByUser,
             filedByUser = request.filedByUser,
+            // Blank saves "" — only a draft's context is worth carrying.
+            meetingContext = request.meetingContext.takeIf { it.isNotBlank() }.orEmpty(),
         )
         queue.enqueue(pending, request.audio)
         onSaved()
@@ -707,7 +714,7 @@ class MeetingUploader(
                 put("speakerNames", JsonObject(emptyMap()))
                 put("findings", JsonArray(emptyList()))
                 put("actionItems", JsonArray(emptyList()))
-                put("meetingContext", "")
+                put("meetingContext", pending.meetingContext)
                 put("meetingBatna", "")
                 put("meetingTarget", "")
                 put("meetingFloor", "")

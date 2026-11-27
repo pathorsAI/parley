@@ -75,6 +75,14 @@ data class PendingUpload(
      */
     val namedByUser: Boolean = false,
     val filedByUser: Boolean = false,
+    /**
+     * The context the meeting was prepared with — a meeting draft's, when it
+     * was started from one — which the meta's `meetingContext` carries. In the
+     * manifest, so a retry hours later still has it. Empty on an import, a
+     * meeting started from the record button, and every manifest written
+     * before it existed (decoded by default).
+     */
+    val meetingContext: String = "",
 )
 
 /**

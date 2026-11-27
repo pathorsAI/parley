@@ -30,6 +30,7 @@ import com.pathors.parley.kit.LexiconStore
 import com.pathors.parley.kit.BatchTranscriber
 import com.pathors.parley.kit.ParleyClientHeader
 import com.pathors.parley.library.SaveLocationStore
+import com.pathors.parley.library.StartedDrafts
 import com.pathors.parley.ime.VoiceTypingSettings
 import com.pathors.parley.meeting.ImportSession
 import com.pathors.parley.meeting.MeetingService
@@ -321,6 +322,13 @@ class AppContainer(private val app: Application) {
             .getOrNull()
         if (user != null) dictionarySync.accountChanged(user.id)
     }
+
+    /**
+     * The meeting drafts a meeting was started from on this phone, hidden
+     * from the Library because the phone never deletes a draft. Not written
+     * in demo mode.
+     */
+    val startedDrafts: StartedDrafts = StartedDrafts.device(app, persist = { !DemoMode.isActive })
 
     /** The bundled sample recording's local-only library entry. */
     val sample: SampleRecordingStore = SampleRecordingStore(

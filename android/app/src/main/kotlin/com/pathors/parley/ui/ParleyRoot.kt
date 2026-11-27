@@ -34,10 +34,14 @@ import androidx.navigation.navArgument
 import com.pathors.parley.AppContainer
 import com.pathors.parley.R
 import com.pathors.parley.meeting.EndedMeetings
+import com.pathors.parley.meeting.MeetingChoices
+import com.pathors.parley.meeting.MeetingDraft
 import com.pathors.parley.meeting.MeetingService
+import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.quickrecord.QuickRecord
 import com.pathors.parley.quickrecord.QuickRecordInbox
 import com.pathors.parley.screenshot.DemoMode
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /** The four places the app can be. */
@@ -148,6 +152,21 @@ fun ParleyRoot() {
         if (signedIn == false && !demo && quickRecord != null) QuickRecordInbox.shared.take()
     }
 
+    // A meeting started from a draft hides that draft on this phone once it is
+    // recording — never before (a start the microphone refused leaves it
+    // listed, to try again), and never by deleting it: the phone only reads
+    // drafts. Watched here rather than on the record screen, which a fast Back
+    // could leave before the microphone opens.
+    LaunchedEffect(container) {
+        MeetingService.activeSession.collectLatest { session ->
+            session?.state?.collect { state ->
+                if (state == MeetingState.Recording) {
+                    MeetingDraft.choices.value.draftId?.let(container.startedDrafts::markStarted)
+                }
+            }
+        }
+    }
+
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         // With targetSdk 35+ the window is edge-to-edge whether or not the app
         // asks: the system bars are transparent (themes.xml) and the content is
@@ -241,6 +260,7 @@ private fun ParleyNavHost(container: AppContainer) {
             HomeScreen(
                 onRecord = { navController.openMeeting() },
                 onStartRecording = { navController.openMeeting(start = true) },
+                onStartDraft = { choices -> navController.startDraft(choices) },
                 onImport = { picker.launch(arrayOf("audio/*")) },
                 onOpenRecording = { id, orgId, guided ->
                     navController.navigate(Route.recording(id, orgId, guided = guided))
@@ -448,6 +468,34 @@ private fun QuickRecordNavigation(navController: NavHostController) {
 private fun NavHostController.openMeeting(start: Boolean = false) {
     MeetingService.activeSession.value?.let { if (isSettled(it.state.value)) MeetingService.clear() }
     navigate(Route.meeting(start)) { popUpTo(Route.HOME) }
+}
+
+/**
+ * A meeting draft's 開始 — the desktop's `startDraft`
+ * (`src/components/home/DraftRow.tsx`). With a meeting already going, nothing
+ * starts: the record screen comes up over that meeting, as the desktop refuses
+ * a second meeting and brings the first one's window forward. Otherwise the
+ * draft's name, folder and context become the next meeting's ([MeetingDraft],
+ * the desktop's `takeDraft`) and the record screen opens and starts it, the
+ * way the Library's Start recording does — microphone prompt included.
+ *
+ * Demo mode has no microphone and no meeting service: the demo record screen
+ * comes up, and nothing is taken or hidden.
+ */
+private fun NavHostController.startDraft(choices: MeetingChoices) {
+    if (DemoMode.isActive) {
+        navigate(Route.meeting()) { popUpTo(Route.HOME) }
+        return
+    }
+    val running = MeetingService.activeSession.value?.state?.value
+    if (running != null && !isSettled(running)) {
+        openMeeting()
+        return
+    }
+    // A settled meeting left on screen gives way in [openMeeting], which
+    // leaves these choices alone.
+    MeetingDraft.takeDraft(choices)
+    openMeeting(start = true)
 }
 
 /** The picked file's own name, which becomes the recording's title. */

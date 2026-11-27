@@ -111,9 +111,12 @@ import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.OrgRole
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.kit.CloudMeetingDraft
 import com.pathors.parley.library.FolderFilter
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.library.SaveDestination
+import com.pathors.parley.meeting.ChosenFolder
+import com.pathors.parley.meeting.MeetingChoices
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.isInProgress
 import com.pathors.parley.kit.GettingStartedState
@@ -158,6 +161,11 @@ fun HomeScreen(
     onRecord: () -> Unit,
     /** The bottom button: onto the record screen with the meeting already started. */
     onStartRecording: () -> Unit,
+    /**
+     * A meeting draft's 開始: start a meeting under the draft's name, folder
+     * and context — or, with one already going, only bring it up.
+     */
+    onStartDraft: (MeetingChoices) -> Unit,
     onImport: () -> Unit,
     onOpenRecording: (id: String, orgId: String?, guided: Boolean) -> Unit,
 ) {
@@ -209,6 +217,14 @@ fun HomeScreen(
 
     val meetingLive = rememberMeetingLive()
 
+    // The drafts the Library lists: all but those a meeting was started from
+    // on this phone, which it hides because it never deletes a draft
+    // (`library/StartedDrafts.kt`). The demo's fixtures are always all there.
+    val startedDraftIds by container.startedDrafts.ids.collectAsState()
+    val drafts = remember(state.drafts, startedDraftIds) {
+        if (DemoMode.isActive) state.drafts else state.drafts.filterNot { it.id in startedDraftIds }
+    }
+
     // Reload whenever this screen comes back to the front: a meeting or an
     // import that finished while it was off-stage has a new row waiting in the
     // cloud, and so does a recording the desktop synced while the phone was in
@@ -249,11 +265,12 @@ fun HomeScreen(
             openPage(LibraryPage.Overview)
         }
     }
-    // Likewise a draft's page whose draft has gone (deleted on the desktop).
-    LaunchedEffect(page, state.drafts, state.loading) {
+    // Likewise a draft's page whose draft has gone (deleted on the desktop,
+    // or a meeting started from it here).
+    LaunchedEffect(page, drafts, state.loading) {
         // Not in demo mode, where the fixtures are always there and a frame
         // must not bounce off a state that has not caught up with its request.
-        if (page is LibraryPage.Draft && !DemoMode.isActive && !state.loading && state.drafts.none { it.id == page.id }) {
+        if (page is LibraryPage.Draft && !DemoMode.isActive && !state.loading && drafts.none { it.id == page.id }) {
             goBack()
         }
     }
@@ -300,6 +317,24 @@ fun HomeScreen(
     // when the personal library is up.
     val draftFolderName: (String?) -> String? = { id ->
         if (id == null || !state.isPersonal) null else state.folders.firstOrNull { it.id == id }?.name
+    }
+
+    // A draft's 開始, as the desktop's `startDraft` loads it into the prep
+    // (`prepFromDraft`): its title, trimmed; its folder when that is one of
+    // the personal folders (as the record screen's picker would offer it);
+    // and its context, which the recording's meta carries.
+    val startDraft: (CloudMeetingDraft) -> Unit = { draft ->
+        val folder = draft.meetingFolderId?.let { id ->
+            draftFolderName(id)?.let { name -> ChosenFolder(SaveDestination(folderId = id), name) }
+        }
+        onStartDraft(
+            MeetingChoices(
+                title = draft.title.trim(),
+                folder = folder,
+                meetingContext = draft.meetingContext,
+                draftId = draft.id,
+            ),
+        )
     }
 
     val callbacks = LibraryCallbacks(
@@ -419,16 +454,22 @@ fun HomeScreen(
                 .weight(1f)
             when {
                 page == LibraryPage.Drafts -> MeetingDraftsList(
-                    drafts = state.drafts,
+                    drafts = drafts,
                     folderName = draftFolderName,
                     onOpen = { id -> openPage(LibraryPage.Draft(id)) },
+                    onStart = startDraft,
                     modifier = body,
                 )
 
                 page is LibraryPage.Draft -> {
-                    val draft = state.drafts.firstOrNull { it.id == page.id }
+                    val draft = drafts.firstOrNull { it.id == page.id }
                     if (draft != null) {
-                        MeetingDraftPage(draft = draft, folder = draftFolderName(draft.meetingFolderId), modifier = body)
+                        MeetingDraftPage(
+                            draft = draft,
+                            folder = draftFolderName(draft.meetingFolderId),
+                            onStart = { startDraft(draft) },
+                            modifier = body,
+                        )
                     } else {
                         Box(body)
                     }
@@ -469,7 +510,9 @@ fun HomeScreen(
                         onUseSample = { viewModel.walkThroughSample(language) },
                     ),
                     onOpen = ::openPage,
+                    drafts = drafts,
                     draftFolderName = draftFolderName,
+                    onStartDraft = startDraft,
                     modifier = body,
                 )
             }
@@ -815,15 +858,18 @@ private fun LibraryOverviewBody(
     listState: LazyListState,
     recentEmpty: RecentEmpty,
     onOpen: (LibraryPage) -> Unit,
+    /** The drafts to list — the Library's, less those hidden on this phone. */
+    drafts: List<CloudMeetingDraft>,
     draftFolderName: (String?) -> String?,
+    onStartDraft: (CloudMeetingDraft) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val recent = remember(library) { LibraryRules.recentRecordings(library) }
     // Re-split every 30 s, so a draft crossing into the hour moves up.
     val draftClock = rememberDraftClock()
-    val drafts = remember(state.drafts, state.isPersonal, draftClock) {
+    val split = remember(drafts, state.isPersonal, draftClock) {
         if (state.isPersonal) {
-            MeetingDraftSchedule.split(state.drafts, draftClock)
+            MeetingDraftSchedule.split(drafts, draftClock)
         } else {
             MeetingDraftSchedule.Split(startingSoon = emptyList(), later = emptyList())
         }
@@ -855,14 +901,15 @@ private fun LibraryOverviewBody(
                     GettingStartedList(state = it.state, header = it.header, modifier = Modifier.padding(bottom = 8.dp))
                 }
             }
-            if (drafts.startingSoon.isNotEmpty()) {
+            if (split.startingSoon.isNotEmpty()) {
                 item(key = DRAFTS_SOON_KEY) {
                     DraftSection(
                         title = stringResource(R.string.library_drafts_starting_soon),
-                        drafts = drafts.startingSoon,
+                        drafts = split.startingSoon,
                         now = draftClock,
                         folderName = draftFolderName,
                         onOpen = openDraft,
+                        onStart = onStartDraft,
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
@@ -870,15 +917,16 @@ private fun LibraryOverviewBody(
             item(key = "folders") {
                 OverviewFolders(state = state, library = library, actions = callbacks.folderActions, onOpen = onOpen)
             }
-            if (drafts.later.isNotEmpty()) {
+            if (split.later.isNotEmpty()) {
                 item(key = "drafts-later") {
                     // As many rows as 最近錄音 shows; the rest are a 查看全部 away.
                     DraftSection(
                         title = stringResource(R.string.library_drafts_title),
-                        drafts = drafts.later,
+                        drafts = split.later,
                         now = draftClock,
                         folderName = draftFolderName,
                         onOpen = openDraft,
+                        onStart = onStartDraft,
                         limit = LibraryRules.RECENT_COUNT,
                         onSeeAll = { onOpen(LibraryPage.Drafts) },
                         modifier = Modifier.padding(top = 16.dp),

@@ -28,6 +28,21 @@ data class MeetingChoices(
     val title: String = "",
     /** Null = the app's default destination (the "Default save location" setting). */
     val folder: ChosenFolder? = null,
+    /**
+     * The context the meeting was prepared with: a meeting draft's 補充背景,
+     * when it was started from one. Not shown on the record screen; saved
+     * into the recording's `meetingContext`, as the desktop's meeting carries
+     * its prep's (`prepFromDraft`). Blank for a meeting started any other way.
+     * iOS `MeetingRecorder.meetingContext`.
+     */
+    val meetingContext: String = "",
+    /**
+     * The meeting draft this meeting was started from, or null. Once the
+     * meeting is recording the draft is hidden on this phone
+     * ([com.pathors.parley.library.StartedDrafts]) — never deleted: the phone
+     * only reads drafts.
+     */
+    val draftId: String? = null,
 ) {
     /** The name the recording is saved under, or null for its clock name. */
     val typedTitle: String? get() = title.trim().takeIf { it.isNotEmpty() }
@@ -58,6 +73,23 @@ object MeetingDraft {
     fun clear() {
         _choices.value = MeetingChoices()
     }
+
+    /**
+     * A meeting draft's 開始: the draft's name, folder and context become the
+     * next meeting's — the desktop's `takeDraft`, which loads the draft into
+     * the prep before the meeting starts. Replaces whatever was there.
+     */
+    fun takeDraft(choices: MeetingChoices) {
+        _choices.value = choices
+    }
+
+    /**
+     * A start from a draft that did not get going (the microphone refused,
+     * and the user backed out): let the draft's choices go, so the next
+     * meeting is not quietly filed under a draft it was not started from.
+     * Choices typed on the record screen are left alone.
+     */
+    fun dropDraft() = _choices.update { if (it.draftId != null) MeetingChoices() else it }
 
     /** The screenshot demo's meeting, named and filed on the record screen. */
     fun seed(choices: MeetingChoices) {

@@ -262,7 +262,12 @@ fun MeetingScreen(
             blocked = mic.blocked,
             onRequest = mic.onRequest,
             onOpenSettings = mic.onOpenSettings,
-            onCancel = { wantsStart = false },
+            onCancel = {
+                wantsStart = false
+                // A draft's start that will not happen: its name, folder and
+                // context are not the next meeting's.
+                MeetingDraft.dropDraft()
+            },
         )
         return
     }

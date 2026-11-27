@@ -310,8 +310,9 @@ class MeetingSession(
      */
     private val hintTerms: () -> List<String> = { emptyList() },
     /**
-     * The name and folder chosen on the record screen ([MeetingDraft]), read
-     * when the meeting is saved — so a name typed in the last minute counts.
+     * The name and folder chosen on the record screen ([MeetingDraft]), and
+     * the context of the draft it was started from, read when the meeting is
+     * saved — so a name typed in the last minute counts.
      */
     private val choices: () -> MeetingChoices = { MeetingChoices() },
     /** The choices are in the queue with the recording: the next meeting starts without them. */
@@ -1040,6 +1041,8 @@ class MeetingSession(
                         destination = chosen.folder?.destination,
                         namedByUser = chosen.named,
                         filedByUser = chosen.filed,
+                        // A draft's context, when it was started from one.
+                        meetingContext = chosen.meetingContext,
                     )
                 )
             } catch (e: Throwable) {

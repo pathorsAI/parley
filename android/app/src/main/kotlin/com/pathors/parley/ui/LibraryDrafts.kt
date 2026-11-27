@@ -1,7 +1,11 @@
 package com.pathors.parley.ui
 
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.indication
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -35,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -60,9 +67,10 @@ import kotlinx.coroutines.delay
 // 會議草稿 (`src/components/home/UpcomingMeetings.tsx`, `DraftRow.tsx`), the
 // full list 查看全部 opens, and a page that shows one draft. Drafts are made
 // and edited on the desktop (or by an AI over the cloud MCP); the phone shows
-// them and nothing more — no create, edit, delete, or start. `HomeScreen`
-// places the sections and owns the pages; everything here only draws and
-// reports taps.
+// them, and starts a meeting from one (開始, as the desktop's row) — never
+// create, edit or delete. Starting hides the draft on this phone rather than
+// deleting it (`library/StartedDrafts.kt`). `HomeScreen` places the sections
+// and owns the pages; everything here only draws and reports taps.
 
 /** How often the draft sections re-read the clock — the desktop's `useNow`. */
 private const val DRAFT_CLOCK_MS = 30_000L
@@ -131,6 +139,7 @@ internal fun DraftSection(
     now: Long,
     folderName: (String?) -> String?,
     onOpen: (String) -> Unit,
+    onStart: (CloudMeetingDraft) -> Unit,
     modifier: Modifier = Modifier,
     limit: Int? = null,
     onSeeAll: (() -> Unit)? = null,
@@ -151,6 +160,7 @@ internal fun DraftSection(
                 now = now,
                 folder = folderName(draft.meetingFolderId),
                 onClick = { onOpen(draft.id) },
+                onStart = { onStart(draft) },
             )
         }
     }
@@ -165,6 +175,7 @@ internal fun MeetingDraftsList(
     drafts: List<CloudMeetingDraft>,
     folderName: (String?) -> String?,
     onOpen: (String) -> Unit,
+    onStart: (CloudMeetingDraft) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val now = rememberDraftClock()
@@ -183,6 +194,7 @@ internal fun MeetingDraftsList(
                     now = now,
                     folder = folderName(draft.meetingFolderId),
                     onClick = { onOpen(draft.id) },
+                    onStart = { onStart(draft) },
                 )
             }
         }
@@ -199,16 +211,38 @@ private fun draftTitle(draft: CloudMeetingDraft): String =
 /**
  * The desktop's `DraftRow`, phone-sized — iOS `DraftRow`: the lead column
  * (16:00 today, 10/31 another day, 未定 without a time), the title, and under
- * it how soon and which folder. No 開始 button: starting a recording from a
- * draft waits for the record flow's redesign (#759).
+ * it how soon and which folder — and the desktop's 開始 at the trailing edge
+ * ([DraftStartButton]), beside the part that opens the draft rather than
+ * inside it, so a press on 開始 never also opens the page.
  */
 @Composable
-private fun DraftRow(draft: CloudMeetingDraft, now: Long, folder: String?, onClick: () -> Unit) {
+private fun DraftRow(
+    draft: CloudMeetingDraft,
+    now: Long,
+    folder: String?,
+    onClick: () -> Unit,
+    onStart: () -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        DraftRowText(draft = draft, now = now, folder = folder, onClick = onClick, modifier = Modifier.weight(1f))
+        Spacer(Modifier.width(8.dp))
+        DraftStartButton(onClick = onStart)
+    }
+}
+
+/** The row's when, what and where — the part that opens the draft's page. */
+@Composable
+private fun DraftRowText(
+    draft: CloudMeetingDraft,
+    now: Long,
+    folder: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val secondary = MaterialTheme.colorScheme.onSurfaceVariant
     val soon = draftSoon(draft, now)
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) {}
             .padding(vertical = 11.dp),
@@ -265,6 +299,84 @@ private fun DraftRow(draft: CloudMeetingDraft, now: Long, folder: String?, onCli
                 }
             }
         }
+    }
+}
+
+/**
+ * The desktop's 開始 (`DraftRow.tsx`, `home.upcoming.start`): a small outline
+ * button — the page's own fill, a hairline border, label-coloured medium text,
+ * 28 dp tall with 8 dp corners — inside a 48 dp touch target. iOS
+ * `DraftStartButton`.
+ */
+@Composable
+private fun DraftStartButton(onClick: () -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    // The press lands anywhere in the 48 dp target; the ripple stays inside
+    // the drawn button.
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            ),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .height(28.dp)
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.background, shape)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+                .indication(interaction, LocalIndication.current)
+                .padding(horizontal = 10.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.draft_start),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
+
+/**
+ * A draft page's 開始錄音 — the row's 開始 at the page's size, in the record
+ * screen's own look and words: primary ink and the record dot on a faint
+ * primary wash, full width (the Library's bottom Start recording).
+ */
+@Composable
+private fun DraftStartRecordingButton(onClick: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(primary.copy(alpha = 0.12f))
+            .clickable(role = Role.Button, onClick = onClick),
+    ) {
+        Box(
+            Modifier
+                .size(9.dp)
+                .background(primary, CircleShape),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.meeting_start),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = primary,
+        )
     }
 }
 
@@ -375,14 +487,20 @@ internal object DraftTime {
 /**
  * One draft, read-only — iOS `MeetingDraftDetailView`: its title, when, which
  * folder the recording will be filed into, the context the desktop prepared
- * (its 補充背景), and the agenda. Editing is the desktop's; the page says so at
- * the bottom rather than offering a button that cannot work.
+ * (its 補充背景), and the agenda, with 開始錄音 under the heading ([onStart]).
+ * Editing is the desktop's; the page says so at the bottom rather than
+ * offering a button that cannot work.
  *
  * The column takes the page's full width, not its content's, so a draft with
  * only a time and a folder still reads from the left edge.
  */
 @Composable
-internal fun MeetingDraftPage(draft: CloudMeetingDraft, folder: String?, modifier: Modifier = Modifier) {
+internal fun MeetingDraftPage(
+    draft: CloudMeetingDraft,
+    folder: String?,
+    onStart: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val now = rememberDraftClock()
     val context = draft.meetingContext.trim()
     val agenda = draft.todos.filter { it.text.isNotBlank() }
@@ -441,6 +559,7 @@ internal fun MeetingDraftPage(draft: CloudMeetingDraft, folder: String?, modifie
                 }
             }
         }
+        DraftStartRecordingButton(onClick = onStart)
         if (context.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 OverviewHeading(title = stringResource(R.string.draft_context))
