@@ -104,6 +104,41 @@
         }
       }
     },
+    "%lld recordings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recording"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld recordings"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 筆錄音"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld recordings in it move to Unfiled. No recording is deleted." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -583,6 +618,23 @@
         }
       }
     },
+    "Add folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New folder"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新增資料夾"
+          }
+        }
+      }
+    },
     "Add the Parley keyboard" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -612,6 +664,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "加入鍵盤"
+          }
+        }
+      }
+    },
+    "Add to folder" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add to folder"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放進資料夾"
           }
         }
       }
@@ -701,6 +770,24 @@
         }
       }
     },
+    "Agenda" : {
+      "comment" : "Heading for a meeting draft's agenda",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agenda"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "議程"
+          }
+        }
+      }
+    },
     "All" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -714,6 +801,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "全部"
+          }
+        }
+      }
+    },
+    "All filed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All filed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "都歸檔好了"
+          }
+        }
+      }
+    },
+    "All recordings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "All recordings"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全部錄音"
           }
         }
       }
@@ -855,23 +976,6 @@
         }
       }
     },
-    "Asks you to confirm, then throws the audio and transcript away." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Asks you to confirm, then throws the audio and transcript away."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "會先請你確認，然後把錄音與逐字稿直接丟掉。"
-          }
-        }
-      }
-    },
     "Audio error: %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -987,6 +1091,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "取消"
+          }
+        }
+      }
+    },
+    "Cancel meeting" : {
+      "comment" : "The live screen's close button: throws the meeting away after a confirmation",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel meeting"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消會議"
+          }
+        }
+      }
+    },
+    "Cancel this meeting?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel this meeting?"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消這場會議？"
           }
         }
       }
@@ -1208,24 +1347,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "雲端版"
-          }
-        }
-      }
-    },
-    "Compact" : {
-      "comment" : "Accessibility value: the recording controls panel is folded to one row",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Compact"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "精簡"
           }
         }
       }
@@ -2013,53 +2134,19 @@
         }
       }
     },
-    "Discard" : {
+    "Discard meeting" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Discard"
+            "value" : "Discard meeting"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "捨棄"
-          }
-        }
-      }
-    },
-    "Discard recording" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Discard recording"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "捨棄錄音"
-          }
-        }
-      }
-    },
-    "Discard this recording?" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Discard this recording?"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "捨棄這次錄音？"
+            "value" : "捨棄會議"
           }
         }
       }
@@ -2246,6 +2333,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在下載"
+          }
+        }
+      }
+    },
+    "Draft context" : {
+      "comment" : "Heading for the context prepared in a meeting draft",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Context"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "補充背景"
+          }
+        }
+      }
+    },
+    "Drafts are edited in Parley on the desktop." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drafts are edited in Parley on the desktop."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議草稿請在電腦版 Parley 編輯。"
           }
         }
       }
@@ -2454,24 +2576,6 @@
         }
       }
     },
-    "Expanded" : {
-      "comment" : "Accessibility value: the recording controls panel is fully open",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Expanded"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已展開"
-          }
-        }
-      }
-    },
     "FAQ" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2672,6 +2776,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "資料夾：%@"
+          }
+        }
+      }
+    },
+    "Folders" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Folders"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "資料夾"
           }
         }
       }
@@ -3219,6 +3340,23 @@
         }
       }
     },
+    "Keep meeting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keep meeting"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "繼續會議"
+          }
+        }
+      }
+    },
     "Keep talking — the microphone is still on and what you say is kept until the connection is back." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3609,6 +3747,40 @@
         }
       }
     },
+    "Long-press a personal recording and choose Share to organization to copy it here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Long-press a personal recording and choose Share to organization to copy it here."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在個人錄音上長按，選「分享到組織」，就會複製一份到這裡。"
+          }
+        }
+      }
+    },
+    "Long-press a recording and choose Move to… to put it here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Long-press a recording and choose Move to… to put it here."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在錄音上長按，選「移到…」，就能把它放進來。"
+          }
+        }
+      }
+    },
     "Lost the connection before anything could be typed. Tap the mic to try again." : {
       "localizations" : {
         "en" : {
@@ -3692,6 +3864,60 @@
         }
       }
     },
+    "Meeting draft" : {
+      "comment" : "Title of a meeting draft's read-only page",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting draft"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議草稿"
+          }
+        }
+      }
+    },
+    "Meeting drafts" : {
+      "comment" : "Library overview heading: the other meeting drafts",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting drafts"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議草稿"
+          }
+        }
+      }
+    },
+    "Meeting name" : {
+      "comment" : "Accessibility label of the live screen's title field",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting name"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議名稱"
+          }
+        }
+      }
+    },
     "Meeting: %1$@ (%2$@)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3756,6 +3982,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "訊息"
+          }
+        }
+      }
+    },
+    "Microphone" : {
+      "comment" : "Fallback name of the recording input",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風"
           }
         }
       }
@@ -3896,6 +4140,24 @@
         }
       }
     },
+    "Microphone: %@" : {
+      "comment" : "Accessibility label of the live screen's microphone chip; the input's name",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone: %@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "麥克風：%@"
+          }
+        }
+      }
+    },
     "Misheard words" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3909,6 +4171,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "聽錯字"
+          }
+        }
+      }
+    },
+    "Missed" : {
+      "comment" : "A meeting draft whose time slot is over",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Missed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已過期"
           }
         }
       }
@@ -4185,6 +4465,23 @@
         }
       }
     },
+    "New recordings that aren't in a folder yet show up here." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New recordings that aren't in a folder yet show up here."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新的錄音沒歸檔時會出現在這裡。"
+          }
+        }
+      }
+    },
     "New saved info" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4253,6 +4550,23 @@
         }
       }
     },
+    "No dictations yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No dictations yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有語音輸入紀錄"
+          }
+        }
+      }
+    },
     "No folders match." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4287,36 +4601,104 @@
         }
       }
     },
-    "No matches." : {
+    "No matching dictations" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No matches."
+            "value" : "No matching dictations"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沒有符合的結果。"
+            "value" : "沒有符合的語音輸入"
           }
         }
       }
     },
-    "No recordings here yet." : {
+    "No matching recordings" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "No recordings here yet."
+            "value" : "No matching recordings"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "這裡還沒有錄音。"
+            "value" : "沒有符合的錄音"
+          }
+        }
+      }
+    },
+    "No recordings in this folder yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No recordings in this folder yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這個資料夾還沒有錄音"
+          }
+        }
+      }
+    },
+    "No recordings shared in this organization yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No recordings shared in this organization yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這個組織還沒有共享的錄音"
+          }
+        }
+      }
+    },
+    "No recordings yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No recordings yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有任何錄音"
+          }
+        }
+      }
+    },
+    "No recordings yet — start a meeting or import one." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No recordings yet — start a meeting or import one."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "還沒有錄音——開一場會議,或匯入一段錄音。"
           }
         }
       }
@@ -4334,6 +4716,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "還沒有摘要。"
+          }
+        }
+      }
+    },
+    "No time" : {
+      "comment" : "A meeting draft row's time column when the draft has no time",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No time"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未定"
+          }
+        }
+      }
+    },
+    "No time set yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No time set yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未設定會議時間"
           }
         }
       }
@@ -4554,24 +4971,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 Mac 上還能讓 Claude Code 透過 MCP 直接讀整個錄音資料庫。"
-          }
-        }
-      }
-    },
-    "On a call · recording paused" : {
-      "comment" : "Live screen recording-state row while a call or another app holds the microphone",
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "On a call · recording paused"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "通話中 · 已暫停錄音"
           }
         }
       }
@@ -5181,6 +5580,24 @@
         }
       }
     },
+    "Past start time" : {
+      "comment" : "A meeting draft whose start time has passed but whose slot has not ended",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Past start time"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已過開始時間"
+          }
+        }
+      }
+    },
     "Pause" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -5198,36 +5615,20 @@
         }
       }
     },
-    "Pause recording" : {
+    "Paused" : {
+      "comment" : "Follows the elapsed time on the live screen's recording clock",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pause recording"
+            "value" : "Paused"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暫停錄音"
-          }
-        }
-      }
-    },
-    "Paused · nothing is being recorded" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Paused · nothing is being recorded"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "已暫停 · 目前沒有在錄音"
+            "value" : "已暫停"
           }
         }
       }
@@ -5641,6 +6042,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在讀取音訊檔…"
+          }
+        }
+      }
+    },
+    "Recent recordings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recent recordings"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "最近錄音"
           }
         }
       }
@@ -6261,37 +6679,20 @@
         }
       }
     },
-    "Resize controls" : {
-      "comment" : "Accessibility label for the grabber that resizes the recording controls panel",
+    "Resume" : {
+      "comment" : "Resumes a paused meeting",
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Resize controls"
+            "value" : "Resume"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "調整控制區高度"
-          }
-        }
-      }
-    },
-    "Resume recording" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Resume recording"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "繼續錄音"
+            "value" : "繼續"
           }
         }
       }
@@ -6564,6 +6965,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "搜尋語音輸入"
+          }
+        }
+      }
+    },
+    "See all" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "See all"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看全部"
           }
         }
       }
@@ -7350,6 +7768,24 @@
         }
       }
     },
+    "Start" : {
+      "comment" : "A meeting draft's button on the Library: start recording this meeting",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始"
+          }
+        }
+      }
+    },
     "Start Parley voice typing right where you are, without switching apps." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -7398,6 +7834,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "開始語音輸入"
+          }
+        }
+      }
+    },
+    "Start a meeting or import a recording, and each one lines up here by date." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start a meeting or import a recording, and each one lines up here by date."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開一場會議或匯入一段錄音，之後每一場都會依日期排在這裡。"
           }
         }
       }
@@ -7517,6 +7970,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "啟動方式"
+          }
+        }
+      }
+    },
+    "Starting soon" : {
+      "comment" : "Library overview heading: meeting drafts starting within the hour or under way",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starting soon"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "即將開始的會議"
           }
         }
       }
@@ -8045,23 +8516,6 @@
         }
       }
     },
-    "The audio and transcript are thrown away. Nothing is saved or uploaded." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The audio and transcript are thrown away. Nothing is saved or uploaded."
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "錄音與逐字稿會直接丟掉，不會儲存或上傳。"
-          }
-        }
-      }
-    },
     "The connection dropped before sign-in finished. Check your network and try again." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8280,6 +8734,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "範例錄音已不在錄音庫裡。"
+          }
+        }
+      }
+    },
+    "The transcript and recording will be discarded — nothing is saved and no analysis runs. This cannot be undone." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The transcript and recording will be discarded — nothing is saved and no analysis runs. This cannot be undone."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "逐字稿與錄音將直接捨棄——不會存檔、也不會產生分析報告。此動作無法復原。"
           }
         }
       }
@@ -8641,6 +9112,23 @@
         }
       }
     },
+    "Transcription dropped — reconnecting… The recording is still running. What's said during a short drop catches up in the transcript; a longer gap is kept in the recording but won't appear in the live transcript." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcription dropped — reconnecting… The recording is still running. What's said during a short drop catches up in the transcript; a longer gap is kept in the recording but won't appear in the live transcript."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轉錄連線中斷，正在重新連線…錄音仍在進行。短暫中斷時說的話會補進逐字稿；斷線較久的部分仍完整保留在錄音裡，只是不會出現在即時逐字稿。"
+          }
+        }
+      }
+    },
     "Transcription hours" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8675,6 +9163,40 @@
         }
       }
     },
+    "Try another keyword, or clear the search to go back to folders." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try another keyword, or clear the search to go back to folders."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "換個關鍵字，或清除搜尋回到資料夾。"
+          }
+        }
+      }
+    },
+    "Try another keyword, or clear the search." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try another keyword, or clear the search."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "換個關鍵字，或清除搜尋。"
+          }
+        }
+      }
+    },
     "Try the sample" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8688,6 +9210,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "體驗範例"
+          }
+        }
+      }
+    },
+    "Turn it on in Settings › Voice typing." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn it on in Settings › Voice typing."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可到「設定 › 語音輸入」開啟。"
           }
         }
       }
@@ -8738,6 +9277,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未歸檔"
+          }
+        }
+      }
+    },
+    "Untitled meeting" : {
+      "comment" : "Placeholder of the live screen's title field",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Untitled meeting"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未命名的會議"
           }
         }
       }
@@ -8844,6 +9401,23 @@
         }
       }
     },
+    "Use the sample" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use the sample"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用範例錄音"
+          }
+        }
+      }
+    },
     "Use your own API keys or a model on your computer; your data goes only to the providers you choose. Local is set up in the desktop app." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -8908,6 +9482,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "檢視"
+          }
+        }
+      }
+    },
+    "View meeting draft" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View meeting draft"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看會議草稿"
           }
         }
       }
@@ -8980,19 +9570,19 @@
         }
       }
     },
-    "Voice typing history is off. Turn it on in Settings › Voice typing." : {
+    "Voice typing history is off" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Voice typing history is off. Turn it on in Settings › Voice typing."
+            "value" : "Voice typing history is off"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "語音輸入紀錄已關閉。可到「設定 › 語音輸入」開啟。"
+            "value" : "語音輸入紀錄已關閉"
           }
         }
       }
@@ -9672,6 +10262,75 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "iPhone 麥克風"
+          }
+        }
+      }
+    },
+    "in %lld days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "in %lld day"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "in %lld days"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 天後"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "in %lld hr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "in %lld hr"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 小時後"
+          }
+        }
+      }
+    },
+    "in %lld min" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "in %lld min"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 分鐘後"
           }
         }
       }

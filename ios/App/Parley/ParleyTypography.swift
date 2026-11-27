@@ -89,6 +89,13 @@ struct ParleyTypography {
         Font.custom(Face.displaySemibold, size: size, relativeTo: .largeTitle).monospacedDigit()
     }
 
+    /// The elapsed time in the live screen's recording-clock pill: the display
+    /// face at a line's size, scaling with the text around it rather than with
+    /// the large titles, tabular so the pill does not breathe as it ticks.
+    var clock: Font {
+        Font.custom(Face.displaySemibold, size: 15, relativeTo: .subheadline).monospacedDigit()
+    }
+
     // MARK: - Escape hatch
 
     /// For the rare size the scale doesn't cover. Prefer a named role; if you

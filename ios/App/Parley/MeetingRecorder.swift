@@ -127,11 +127,47 @@ final class MeetingRecorder: ObservableObject {
     /// until an upload settles, and nil again the moment the next meeting
     /// starts.
     ///
-    /// This is the beat the filing suggestion hangs off, rather than the
-    /// microphone stopping: renaming or re-filing a recording is a write
-    /// against something the server has to already hold, so the earliest
-    /// honest moment to offer one is here. See `FilingSuggestionModel`.
+    /// This is the beat the record screen hands the meeting to its result
+    /// page on (`TabRouter.openEndedMeeting`), and so the beat the filing
+    /// suggestion hangs off, rather than the microphone stopping: opening a
+    /// recording, renaming or re-filing it are all things the server has to
+    /// already hold it for. Cleared by `clearEndedMeeting` once handed over.
+    /// See `FilingSuggestionModel`.
     @Published private(set) var settled: Settled?
+
+    /// The meeting's name, as typed on the live screen while it records. Blank
+    /// lands the recording under its clock name, as before. Written by the
+    /// view and read once, by `upload`, so the recording is saved under it —
+    /// the same as the desktop, whose meeting window saves `meetingTitle`.
+    @Published var meetingTitle = ""
+    /// Where the user said this meeting goes, picked on the live screen. Nil
+    /// = the app's default destination (`AppState.defaultSave`). Saved
+    /// straight into, like the title: a choice that waited for the filing
+    /// card after stop would be lost to a locked phone or a failed pass.
+    @Published var meetingFolder: ChosenFolder?
+    /// The context the meeting was prepared with: a draft's 補充背景, when
+    /// the meeting was started from one (`TabRouter.startDraft`). Not shown
+    /// on the live screen; saved into the recording's `meetingContext`, as
+    /// the desktop's meeting carries its prep's. Blank for a meeting started
+    /// from the record button. Cleared with the title.
+    var meetingContext = ""
+    /// The draft the meeting was started from, and its folder's name, for the
+    /// live screen's 查看會議草稿 sheet. nil for a meeting started from the
+    /// record button. Cleared with the title.
+    @Published var meetingDraft: (draft: CloudMeetingDraft, folder: String?)?
+    /// The agenda of the draft the meeting was started from, ticked while
+    /// it runs — the desktop's meeting `todos`. Saved into the recording's
+    /// `agenda`; the draft itself is never written. Cleared with the title.
+    @Published var agenda: [AgendaItem] = []
+    /// When this meeting started, for the date on the live screen's heading.
+    @Published private(set) var startedAt: Date?
+
+    /// A folder picked for the meeting in progress, with the label the picker
+    /// drew it under (the chip shows that, not a lookup).
+    struct ChosenFolder: Equatable {
+        let destination: SaveDestination
+        let label: String
+    }
 
     /// How many times this meeting's microphone had to be rebuilt and came
     /// back — an interruption survived, a route change, a media-server reset.
@@ -155,6 +191,28 @@ final class MeetingRecorder: ObservableObject {
         let micRecoveries: Int
         let transcriptSegments: Int
         let lastSegmentEndMs: UInt64
+
+        /// Whether this meeting's microphone dropped often enough to ask about,
+        /// and the prompt has not been used up on it. Shared by the two places
+        /// the prompt can appear: the result page, for a meeting whose upload
+        /// settled, and the record screen for one that did not.
+        @MainActor var offersMicRecoveryPrompt: Bool {
+            FeedbackConditions.isMicRecoveryWorthAsking(micRecoveries)
+                && FeedbackCenter.shared.mayOffer(.micRecovery, recordingId: id)
+        }
+
+        /// Send the `mic_recovery` report for this meeting.
+        @MainActor func sendMicRecoveryReport() {
+            let context = FeedbackDiagnostics.Context(
+                recordingId: id, recordingDurationMs: Int(durationMs),
+                transcriptSegments: transcriptSegments,
+                lastSegmentEndMs: Int(lastSegmentEndMs),
+                micRecoveries: micRecoveries)
+            let id = id
+            Task {
+                await FeedbackCenter.shared.send(.micRecovery, recordingId: id, context: context)
+            }
+        }
     }
 
     /// A recording the cloud has accepted. Carries the transcript too: the pass
@@ -165,6 +223,13 @@ final class MeetingRecorder: ObservableObject {
         let title: String
         let folderId: String?
         let segments: [TranscriptSegment]
+        /// The user named the meeting, or picked its folder, while it was
+        /// recording: the filing card does not offer that half again.
+        var named = false
+        var filed = false
+        /// The meeting went to an organization (a shared copy), which the
+        /// phone can neither rename nor re-file — no card at all.
+        var sharedToOrg = false
     }
 
     /// The live transcript's side of the meeting. None of these ends the
@@ -247,7 +312,13 @@ final class MeetingRecorder: ObservableObject {
         // waits on it (see `Haptics`).
         Haptics.prepareForRecording()
         status = String(localized: "Starting…")
-        clock = RecordingClock(startedAt: Date())
+        let now = Date()
+        clock = RecordingClock(startedAt: now)
+        startedAt = now
+        // Not the title or the folder: the Record screen offers both before
+        // the meeting starts, and what was typed there is this meeting's.
+        // They are cleared once the last meeting has been saved under them
+        // (`upload`), and by a discard.
         segments = []
         // Whatever the last meeting left on screen belongs to the last meeting.
         settled = nil
@@ -475,8 +546,35 @@ final class MeetingRecorder: ObservableObject {
         segments = []
         settled = nil
         clock = nil
+        startedAt = nil
+        meetingTitle = ""
+        meetingFolder = nil
+        meetingContext = ""
+        meetingDraft = nil
+        agenda = []
         status = nil
         phase = .idle
+    }
+
+    /// Put the record screen back to "before a meeting" once the meeting that
+    /// just ended has been handed to its result page: its transcript, its
+    /// settled upload, its finished note and its status line all belong to
+    /// that page now, and leaving them here would make the Record tab read as
+    /// the last meeting's screen instead of the next one's.
+    ///
+    /// The title and folder are not touched: `upload` already cleared them,
+    /// and anything in them now was typed for the next meeting. A meeting in
+    /// progress is never cleared — a new one may have started between the
+    /// handoff being asked for and this running.
+    func clearEndedMeeting() {
+        guard !isInMeeting, phase != .finishing else { return }
+        segments = []
+        settled = nil
+        finished = nil
+        status = nil
+        clock = nil
+        startedAt = nil
+        transcription = .idle
     }
 
     // MARK: relay
@@ -823,17 +921,34 @@ final class MeetingRecorder: ObservableObject {
         guard let uploader else {
             phase = .idle
             status = nil
+            meetingTitle = ""
+            meetingFolder = nil
+            meetingContext = ""
+            meetingDraft = nil
+            agenda = []
             return
         }
         self.uploader = nil
         phase = .uploading
-        defer { phase = .idle }
+        defer {
+            phase = .idle
+            // Saved under them (or kept on the phone under them): the next
+            // meeting starts unnamed and unfiled.
+            meetingTitle = ""
+            meetingFolder = nil
+            meetingContext = ""
+            meetingDraft = nil
+            agenda = []
+        }
 
         let queued: MeetingUploader.Queued
         do {
             guard
                 let filed = try await uploader.finishAndQueue(
-                    segments: segments, defaultSave: app.defaultSave)
+                    segments: segments,
+                    defaultSave: meetingFolder?.destination ?? app.defaultSave,
+                    title: meetingTitle, filedByUser: meetingFolder != nil,
+                    meetingContext: meetingContext, agenda: agenda)
             else {
                 status = String(localized: "That recording was too short to keep")
                 return
@@ -877,7 +992,10 @@ final class MeetingRecorder: ObservableObject {
                 ?? String(localized: "Synced to the cloud")
             settled = Settled(
                 id: outcome.recordingId, title: outcome.title,
-                folderId: outcome.folderId, segments: segments)
+                folderId: outcome.folderId, segments: segments,
+                named: !meetingTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                filed: meetingFolder != nil,
+                sharedToOrg: outcome.sharedToOrgName != nil)
         } catch let e as CloudError where e.status == 402 {
             status = String(
                 localized:
@@ -908,30 +1026,31 @@ final class MeetingRecorder: ObservableObject {
     }
 
     #if DEBUG
-        /// ScreenshotDemo: the beat after a meeting — the transcript complete,
-        /// the upload landed, nothing running. `settled` is deliberately left
-        /// nil: the filing suggestion is seeded straight into its own model
-        /// (`FilingSuggestionModel.seedDemo`) rather than through the pass,
-        /// which would need the network the demo exists to avoid.
-        func seedDemoSettled(segments: [TranscriptSegment], status: String) {
-            self.segments = segments
-            self.status = status
-            phase = .idle
-            transcription = .idle
-            clock = nil
-        }
-
         /// ScreenshotDemo: put the screen in the state worth capturing — a
-        /// meeting already in progress — with no microphone and no network.
-        func seedDemo(segments: [TranscriptSegment], status: String) {
+        /// meeting already in progress, named and filed on the live screen —
+        /// with no microphone and no network. `paused` seeds the paused state.
+        func seedDemo(
+            segments: [TranscriptSegment], status: String, paused: Bool = false,
+            title: String = "", folder: ChosenFolder? = nil
+        ) {
             self.segments = segments
             self.status = status
-            phase = .recording
             transcription = .live
+            meetingTitle = title
+            meetingFolder = folder
             // 18:42 on the clock, matching the featured recording's duration, so
             // the captured frame shows a meeting well under way rather than one
             // that started the instant the screenshot was taken.
-            clock = RecordingClock(startedAt: Date(timeIntervalSinceNow: -1_122))
+            let started = Date(timeIntervalSinceNow: -1_122)
+            startedAt = started
+            clock = RecordingClock(startedAt: started)
+            if paused {
+                phase = .paused
+                clock?.pause(at: Date())
+                micLevel = 0
+                return
+            }
+            phase = .recording
             // A simulator has no microphone, so the waveform would sit on its
             // silence line. Feed it a fixed speech-shaped level pattern at the
             // real chunk rate instead: bursts and pauses, the same every run, so

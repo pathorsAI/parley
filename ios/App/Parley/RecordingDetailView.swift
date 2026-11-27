@@ -43,6 +43,13 @@ struct RecordingDetailView: View {
     /// The recording the guided lap is about — the sample, or the user's only
     /// recording. The guide bar is drawn only on it. See `GuidedLap`.
     let isLapRecording: Bool
+    /// Set when this page was opened because its meeting just ended on the
+    /// record screen (`TabRouter.openEndedMeeting`). The page is then that
+    /// meeting's result, as the desktop's report is after End: the filing
+    /// suggestion runs for it here (`FilingSuggestionModel.consider`), at the
+    /// top like the desktop's `FilingRow`, and the `mic_recovery` prompt is
+    /// asked here. Opened any other way, neither happens.
+    let endedMeeting: EndedMeeting?
 
     enum Intent {
         case read
@@ -171,8 +178,9 @@ struct RecordingDetailView: View {
     /// The recording moved out of this library; pop once the picker is gone.
     @State private var leaveAfterMove = false
 
-    /// The pending filing suggestion, if the recording carries one — shown above
-    /// the face switcher. See `FilingSuggestionCard`.
+    /// The filing suggestion — the ended meeting's (`endedMeeting`), or else
+    /// the one the recording carries pending — shown above the face switcher.
+    /// See `FilingSuggestionCard`.
     @StateObject private var filing = FilingSuggestionModel()
     /// The offer has been answered on this screen; do not present it again
     /// when the folder list lands.
@@ -187,6 +195,8 @@ struct RecordingDetailView: View {
     @State private var lapTick = 0
     /// What the last filing on this screen did, for the bar's ✓ line.
     @State private var lastFiling: (folder: String, renamed: Bool)?
+    /// The ended meeting the `mic_recovery` prompt is about, while it is up.
+    @State private var micPrompt: MeetingRecorder.FinishedMeeting?
 
     // MARK: feedback prompts
 
@@ -210,6 +220,7 @@ struct RecordingDetailView: View {
     init(
         summary: CloudRecordingSummary, orgId: String?, intent: Intent = .read,
         isLapRecording: Bool = false,
+        endedMeeting: EndedMeeting? = nil,
         onFolderChange: ((String?) -> Void)? = nil,
         onTitleChange: ((String) -> Void)? = nil
     ) {
@@ -217,6 +228,7 @@ struct RecordingDetailView: View {
         self.orgId = orgId
         self.intent = intent
         self.isLapRecording = isLapRecording
+        self.endedMeeting = endedMeeting
         self.onFolderChange = onFolderChange
         self.onTitleChange = onTitleChange
         _playback = StateObject(wrappedValue: PlaybackController(recordingId: summary.id))
@@ -283,6 +295,7 @@ struct RecordingDetailView: View {
         }
         .task {
             wireFiling()
+            considerEndedMeeting()
             await loadFolders()
             presentSuggestion()
         }
@@ -679,6 +692,20 @@ struct RecordingDetailView: View {
                 if orgId == nil {
                     FilingSuggestionCard(model: filing, highlighted: cardHighlighted)
                 }
+                if let micPrompt {
+                    FeedbackPromptCard(
+                        trigger: .micRecovery,
+                        recordingId: micPrompt.id,
+                        text: Text(
+                            "The microphone dropped \(micPrompt.micRecoveries) times during this recording."),
+                        send: {
+                            self.micPrompt = nil
+                            micPrompt.sendMicRecoveryReport()
+                        },
+                        close: { withAnimation { self.micPrompt = nil } })
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 6)
+                }
                 // Pinned with the player rather than put in the transcript:
                 // the strip is about the whole recording, and it has to be
                 // readable from the summary face too.
@@ -791,6 +818,10 @@ struct RecordingDetailView: View {
                 meta?.title = title
                 onTitleChange?(title)
             }
+            // A meeting that just ended was handed here from the Record tab,
+            // and the Library may be listing it under the name it landed
+            // with; reload it, as the record screen's card used to ask.
+            if endedMeeting != nil, title != nil || filed != nil { app.noteLibraryChanged() }
             if let filed {
                 let folderId = filed.folderId
                 currentFolderId = folderId
@@ -808,12 +839,39 @@ struct RecordingDetailView: View {
         }
     }
 
+    /// The page was opened for a meeting that just ended: run (or join) the
+    /// filing pass for it, and ask about the microphone if it kept dropping.
+    /// `consider` spends the pass once per recording and keeps the
+    /// `named`/`filed` rules, so a half answered on the live screen is not
+    /// asked again.
+    private func considerEndedMeeting() {
+        guard let endedMeeting, orgId == nil else { return }
+        #if DEBUG
+            if ScreenshotDemo.servesFixtures {
+                ScreenshotDemo.seedEndedMeetingFiling(filing)
+                return
+            }
+        #endif
+        filing.consider(endedMeeting.settled, app: app)
+        if micPrompt == nil, let finished = endedMeeting.finished,
+            finished.id == summary.id, finished.offersMicRecoveryPrompt
+        {
+            micPrompt = finished
+        }
+    }
+
     /// Offer the recording's pending suggestion, once the meta is here — and
     /// again when the folders land, so the sample's chips can include the
     /// user's own recent folders. Personal scope only: an org recording cannot
     /// be renamed or re-filed from the phone.
+    ///
+    /// Not for a meeting that just ended: its pass is `considerEndedMeeting`'s,
+    /// which also writes what it finds into the meta — reading that back here
+    /// would offer the same suggestion a second way, without the live
+    /// screen's `named`/`filed` answers.
     private func presentSuggestion() {
-        guard orgId == nil, !suggestionRetired, let meta, var suggestion = meta.filingSuggestion
+        guard orgId == nil, endedMeeting == nil, !suggestionRetired, let meta,
+            var suggestion = meta.filingSuggestion
         else { return }
         if isSample, let manifest = SampleRecordingStore.shared.manifest,
             let composed = manifest.filingSuggestion(existingFolders: folders)

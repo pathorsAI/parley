@@ -34,14 +34,18 @@
     /// routed frame came out as the launch tab behind a modal. A launch
     /// argument never leaves the process.
     ///
-    /// Routes: `record`, `settled`, `adjust`, `library`, `transcript`,
+    /// Routes: `record`, `record-paused`, `settled`, `adjust`, `library`, `transcript`,
     /// `keyboard`, `settings`, `dictation`, and some that are not store frames
     /// but review frames: `movetofolder` (the transcript with the folder
     /// picker open over fifteen folders), `resetchecklist` (Settings'
     /// "Show the getting-started list again", pressed, landing on the Library),
     /// `summary` / `jump` / `nosummary` (the recording page's two faces — see
-    /// `docs/design/ios-recording-page.md`), and `voicehistory` (Library ›
-    /// Voice typing, one entry per polish outcome), and the onboarding's steps:
+    /// `docs/design/ios-recording-page.md`), `library-all` (the Library's full
+    /// list, pushed over the overview as See all opens it), `library-folder-empty`
+    /// (an empty folder's page, for the empty state), `library-org` (the
+    /// Library on the demo org's scope), `voicehistory` (Library ›
+    /// Voice typing, one entry per polish outcome), `draft` (a meeting
+    /// draft's read-only page, pushed over the overview), and the onboarding's steps:
     /// `onboarding-account` (run with `-ParleyDemo signedOut`), then, signed in
     /// and over the tabs, `onboarding-signed-in`, `onboarding-org` /
     /// `onboarding-invited` / `onboarding-joined`, `onboarding-perms`,
@@ -55,11 +59,19 @@
         @Published var showTranscript = false
         /// Settings scrolls the voice-keyboard section into view.
         @Published var focusKeyboardSection = false
-        /// The record screen seeds a finished, uploaded recording with a filing
-        /// suggestion on it instead of a meeting in progress.
-        @Published var showSettledFiling = false
-        /// The filing suggestion's Adjust sheet, open. Flipped by `seedSettled`
-        /// rather than by the route, because the card watches this and cannot
+        /// The Record tab before any meeting, nothing seeded (`record-idle`).
+        @Published var showIdleRecord = false
+        /// A meeting that has just landed, handed to its result page through
+        /// the real `TabRouter.openEndedMeeting` (`settled`, `adjust`).
+        /// `MainTabs` passes it on; the Library takes it like any other.
+        @Published var endedMeeting: EndedMeeting?
+        /// The record screen's meeting in progress is seeded paused.
+        var showPausedMeeting = false
+        /// `record-draft`: the meeting was started from the 北風 draft, and
+        /// its 查看會議草稿 sheet is up.
+        var showDraftMeeting = false
+        /// The filing suggestion's Adjust sheet, open. Flipped by
+        /// `seedEndedMeetingFiling` rather than by the route, because the card watches this and cannot
         /// know which of the two `task`s SwiftUI ran first — set from the route
         /// it can open onto a model that has not been seeded yet.
         @Published var openFilingAdjust = false
@@ -107,6 +119,19 @@
         /// Library switches to its Voice typing section, seeded with one
         /// history entry per polish outcome (`voicehistory`).
         @Published var showVoiceTyping = false
+        /// Library pushes its full list over the overview (`library-all`).
+        @Published var showAllRecordings = false
+        /// Library pushes one folder's page over the overview, as a folder
+        /// card opens it (`library-folder-empty`: the empty "Team syncs", for
+        /// the empty state).
+        @Published var showFolder: String?
+        /// Library switches its scope to the demo org (`library-org`).
+        @Published var showOrg = false
+        /// Library pushes the first demo draft's page over the overview (`draft`).
+        @Published var showDraft = false
+        /// Which demo draft `showDraft` opens: the starting-soon one, or
+        /// (`draft-short`) the weekly sync, which has only a time and a folder.
+        var draftID = "demo-draft-northwind"
         /// A sheet with a focused text field, so the Parley keyboard is on
         /// screen, and an Action-Button-style demo dictation into it a moment
         /// later (`keyboardharness`). The only way to watch the keyboard's
@@ -125,7 +150,8 @@
         /// whether the lit turn stays lit so the frame can be taken.
         var jumpOnOpen: UInt64?
         var holdsLitTurn = false
-        /// `adjust` asks for the sheet; `seedSettled` is what grants it.
+        /// `adjust` asks for the sheet; `seedEndedMeetingFiling` is what grants
+        /// it.
         private var wantsFilingAdjust = false
 
         /// `-ParleyDemo signedIn` seeds an account; `-ParleyDemo signedOut` runs
@@ -188,7 +214,10 @@
         func route(_ route: String) -> Bool {
             showTranscript = false
             focusKeyboardSection = false
-            showSettledFiling = false
+            endedMeeting = nil
+            showIdleRecord = false
+            showPausedMeeting = false
+            showDraftMeeting = false
             openFilingAdjust = false
             wantsFilingAdjust = false
             openFolderPicker = false
@@ -197,6 +226,10 @@
             showSample = false
             onboarding = nil
             showVoiceTyping = false
+            showAllRecordings = false
+            showFolder = nil
+            showOrg = false
+            showDraft = false
             keyboardHarness = false
             recordingID = Self.featured.id
             forcedFace = nil
@@ -204,14 +237,42 @@
             holdsLitTurn = false
             switch route {
             case "record": tab = .record
+            case "record-idle":
+                // The Record tab before a meeting: nothing seeded.
+                tab = .record
+                showIdleRecord = true
+            case "record-draft":
+                tab = .record
+                showDraftMeeting = true
+            case "record-paused":
+                tab = .record
+                showPausedMeeting = true
             case "settled":
-                tab = .record
-                showSettledFiling = true
+                tab = .library
+                endedMeeting = Self.endedMeetingFixture
             case "adjust":
-                tab = .record
-                showSettledFiling = true
+                tab = .library
                 wantsFilingAdjust = true
+                endedMeeting = Self.endedMeetingFixture
             case "library": tab = .library
+            case "library-all":
+                // The full list, as See all opens it over the overview.
+                tab = .library
+                showAllRecordings = true
+            case "library-org":
+                // The demo org's shared library, as the scope menu opens it.
+                tab = .library
+                showOrg = true
+            case "draft", "draft-short":
+                // The meeting starting soon, opened from 即將開始的會議 — or
+                // the weekly sync, a draft with nothing but a time and a folder.
+                tab = .library
+                draftID = route == "draft" ? "demo-draft-northwind" : "demo-draft-weekly"
+                showDraft = true
+            case "library-folder-empty":
+                // A folder with nothing in it, as its card opens it.
+                tab = .library
+                showFolder = "f-team"
             case "voicehistory":
                 // Review frame for the history's polish labels (1.25): one
                 // entry per outcome, plus one from before 1.25 with none.
@@ -461,6 +522,11 @@
             CloudFolder(
                 id: "f-new", name: t("New business", "新客戶"),
                 orgId: nil, createdAt: nil, updatedAt: nil),
+            // Empty, so the overview's folder row shows a card drawn without
+            // its papers, and runs past the screen edge.
+            CloudFolder(
+                id: "f-team", name: t("Team syncs", "團隊週會"),
+                orgId: nil, createdAt: nil, updatedAt: nil),
         ]
 
         /// The demo org's shared folders, so the picker shows an organization
@@ -493,6 +559,76 @@
                         id: "f-picker-\(i)", name: t(names.0, names.1),
                         orgId: nil, createdAt: nil, updatedAt: nil)
                 }
+        }
+
+        // MARK: meeting drafts
+
+        /// The overview's drafts: one starting within the hour, so
+        /// 即將開始的會議 shows, and three for 會議草稿 — tomorrow, later in the
+        /// week, and one with no time yet. Relative to the moment the app
+        /// launches rather than to `epoch`, because which section a draft sits
+        /// in depends on the clock. Read-only, as on a real phone.
+        static var drafts: [CloudMeetingDraft] {
+            let now = (Date().timeIntervalSince1970 * 1000 / 60_000).rounded(.down) * 60_000
+            let minute = 60_000.0
+            let day = 24 * 60 * minute
+            // Tomorrow and later on a round half hour, as the desktop's time
+            // picker offers them.
+            func on(_ days: Double, _ hour: Int, _ minute: Int) -> Double {
+                let date = Date(timeIntervalSince1970: (now + days * day) / 1000)
+                let at = Calendar.current.date(
+                    bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
+                return at.timeIntervalSince1970 * 1000
+            }
+            func todo(_ id: String, _ en: String, _ zh: String) -> CloudDraftTodo {
+                CloudDraftTodo(id: id, text: t(en, zh))
+            }
+            return [
+                CloudMeetingDraft(
+                    id: "demo-draft-northwind",
+                    title: t("Northwind renewal — pricing call", "北風工業續約 — 報價會議"),
+                    meetingAt: now + 25 * minute, meetingEndAt: now + 85 * minute,
+                    meetingContext: t(
+                        "Lin Mei-hua (procurement lead) and Chen Wei (plant manager) from Northwind. Last month they asked for a two-year term at this year's price; finance can go to a 4% discount on two years, not more. Their main worry is delivery lead times after the Q3 delays.",
+                        "北風工業採購主管林美華、廠長陳偉。上個月他們提出想簽兩年約、價格維持今年的水準；財務那邊兩年約最多能給 4% 折扣，再多不行。他們最在意的是第三季延遲之後的交期。"),
+                    todos: [
+                        todo("t1", "Confirm the two-year term and start date", "確認兩年約與起約日"),
+                        todo("t2", "Walk through the new delivery schedule", "說明新的交期安排"),
+                        todo("t3", "Ask what volume they expect next year", "詢問明年預估用量"),
+                    ],
+                    meetingFolderId: "f-renewals", updatedAt: now - 2 * day),
+                CloudMeetingDraft(
+                    id: "demo-draft-harbor",
+                    title: t("Blue Harbor Hotels — first meeting", "藍港酒店 — 初次拜訪"),
+                    meetingAt: on(1, 10, 30), meetingEndAt: on(1, 11, 30),
+                    meetingContext: t(
+                        "Referred by Northwind. Twelve properties, front desk calls handled in-house. Find out who signs off on new tools.",
+                        "北風工業介紹。旗下十二間飯店，櫃台電話目前自己接。先弄清楚導入新工具由誰拍板。"),
+                    todos: [todo("t1", "Who decides, and by when", "誰決定、何時決定")],
+                    meetingFolderId: "f-new", updatedAt: now - day),
+                CloudMeetingDraft(
+                    id: "demo-draft-weekly",
+                    title: t("Sales weekly sync", "業務週會"),
+                    meetingAt: on(3, 9, 0), meetingEndAt: on(3, 10, 0),
+                    meetingFolderId: "f-team", updatedAt: now - 3 * day),
+                CloudMeetingDraft(
+                    id: "demo-draft-halcyon",
+                    title: t("Halcyon Labs — security review", "晴光實驗室 — 資安審查"),
+                    meetingAt: on(4, 14, 0), meetingEndAt: on(4, 15, 0),
+                    meetingFolderId: "f-new", updatedAt: now - 2 * day),
+                CloudMeetingDraft(
+                    id: "demo-draft-quarterly",
+                    title: t("Quarterly planning", "季度規劃"),
+                    meetingAt: on(6, 13, 30), meetingEndAt: on(6, 15, 0),
+                    meetingFolderId: "f-team", updatedAt: now - 5 * day),
+                CloudMeetingDraft(
+                    id: "demo-draft-meridian",
+                    title: t("Meridian — contract questions", "子午線 — 合約問題"),
+                    meetingContext: t(
+                        "They have questions on the data-retention clause. No date yet.",
+                        "對方對資料保存條款有疑問，時間還沒約。"),
+                    updatedAt: now - 4 * day),
+            ]
         }
 
         // MARK: library fixtures
@@ -529,9 +665,74 @@
                     "Usage up 22% quarter on quarter; two action items carried over.",
                     "使用量季增 22%；兩項待辦順延到下一季。"),
                 folderId: nil, updatedAt: nil),
+            // Two more, so the overview's four recent rows are full and the
+            // full list behind See all has more than they show.
+            CloudRecordingSummary(
+                id: "demo-pricing",
+                title: t("Pricing follow-up — Northwind", "報價追蹤 — 北風工業"),
+                source: "live", createdAt: epoch - 8 * 86_400_000, durationMs: 742_000,
+                speakerCount: 2, findingsCount: 1, actionItemsCount: 0, hasAudio: true,
+                snippet: t(
+                    "Volume discount approved above sixty seats.",
+                    "六十席以上的量價折扣已核准。"),
+                folderId: "f-renewals", updatedAt: nil),
+            CloudRecordingSummary(
+                id: "demo-intro",
+                title: t("Intro call — Blue Harbor Hotels", "初次接觸 — 藍港酒店"),
+                source: "upload", createdAt: epoch - 12 * 86_400_000, durationMs: 1_310_000,
+                speakerCount: 2, findingsCount: 2, actionItemsCount: 3, hasAudio: true,
+                snippet: t(
+                    "Twelve properties; front desk wants call summaries in the PMS.",
+                    "旗下十二間飯店；櫃檯希望通話摘要能寫回 PMS。"),
+                folderId: "f-new", updatedAt: nil),
+        ]
+
+        /// The demo org's shared library — a different set from the personal
+        /// one, so switching the Library's scope to the org visibly changes the
+        /// page: its own folders (`orgFolders`), and these, one of them left
+        /// outside a folder.
+        static let orgRecordings: [CloudRecordingSummary] = [
+            CloudRecordingSummary(
+                id: "demo-org-pipeline",
+                title: t("Weekly pipeline review", "每週業務檢討"),
+                source: "live", createdAt: epoch - 2 * 86_400_000, durationMs: 2_410_000,
+                speakerCount: 5, findingsCount: 4, actionItemsCount: 6, hasAudio: true,
+                snippet: t(
+                    "Three deals slip to next quarter; Northwind renewal is the priority.",
+                    "三個案子延到下一季；北風續約列為優先。"),
+                folderId: "f-org-pipeline", updatedAt: nil),
+            CloudRecordingSummary(
+                id: "demo-org-account",
+                title: t("Account plan — Halcyon Labs", "客戶經營規劃 — 晴光實驗室"),
+                source: "upload", createdAt: epoch - 6 * 86_400_000, durationMs: 1_580_000,
+                speakerCount: 3, findingsCount: 3, actionItemsCount: 2, hasAudio: true,
+                snippet: t(
+                    "Expand to the second business unit after the security review.",
+                    "資安審查通過後，擴展到第二個事業部。"),
+                folderId: "f-org-accounts", updatedAt: nil),
+            CloudRecordingSummary(
+                id: "demo-org-kickoff",
+                title: t("Quarter kickoff", "季度開工會議"),
+                source: "live", createdAt: epoch - 15 * 86_400_000, durationMs: 3_120_000,
+                speakerCount: 8, findingsCount: 2, actionItemsCount: 4, hasAudio: false,
+                snippet: t(
+                    "Targets set per region; weekly reviews move to Tuesdays.",
+                    "各區目標確定；每週檢討改到週二。"),
+                folderId: nil, updatedAt: nil),
         ]
 
         static var featured: CloudRecordingSummary { recordings[0] }
+
+        /// What the Library lists: the fixtures, with the featured one still
+        /// unfiled while it is the meeting that has just ended (`settled`,
+        /// `adjust`) — a recording that lands with its home still on offer,
+        /// which is the state the filing card is about.
+        static var libraryRecordings: [CloudRecordingSummary] {
+            guard shared.endedMeeting != nil else { return recordings }
+            var list = recordings
+            list[0].folderId = nil
+            return list
+        }
 
         /// The fixture `showTranscript` pushes.
         static var pushed: CloudRecordingSummary {
@@ -733,37 +934,53 @@
 
         // MARK: live screen
 
-        /// The record screen, in whichever of its two states the route asked
-        /// for: a meeting in progress, or one that has just landed with a filing
-        /// suggestion on it. One entry point so `LiveView` does not have to know
-        /// the routes.
-        static func seedRecordScreen(_ recorder: MeetingRecorder, filing: FilingSuggestionModel) {
-            guard servesFixtures else { return }
-            if shared.showSettledFiling {
-                seedSettled(recorder, filing: filing)
-            } else {
-                seedLive(recorder)
+        /// The record screen with a meeting in progress, unless the route asked
+        /// for it before a meeting (`record-idle`) or for a meeting that has
+        /// already ended and gone to its result page (`settled`, `adjust`) —
+        /// which leaves Record as the handoff leaves it, cleared. One entry
+        /// point so `LiveView` does not have to know the routes.
+        static func seedRecordScreen(_ recorder: MeetingRecorder) {
+            guard servesFixtures, !shared.showIdleRecord, shared.endedMeeting == nil else {
+                return
             }
+            seedLive(recorder)
         }
 
-        /// The beat after a meeting: every turn final, the upload landed, and the
-        /// suggestion offering a name and a home. The recorder is idle — this is
-        /// a recording that is over, not one being made.
-        private static func seedSettled(
-            _ recorder: MeetingRecorder, filing: FilingSuggestionModel
-        ) {
-            guard recorder.segments.isEmpty else { return }
-            recorder.seedDemoSettled(
-                segments: lines.map { line in
-                    TranscriptSegment(
-                        id: "mix-\(line.ms)", source: "mix", speaker: line.speaker,
-                        text: line.text, isFinal: true,
-                        startMs: line.ms, endMs: line.ms + 12_000)
-                },
-                status: String(localized: "Synced to the cloud"))
+        /// The meeting that has just landed: named on the live screen while it
+        /// recorded (`seedLive`'s title) but left without a folder, every turn
+        /// final.
+        private static var endedMeetingFixture: EndedMeeting {
+            EndedMeeting(
+                settled: MeetingRecorder.Settled(
+                    id: featured.id, title: featured.title, folderId: nil,
+                    segments: lines.map { line in
+                        TranscriptSegment(
+                            id: "mix-\(line.ms)", source: "mix", speaker: line.speaker,
+                            text: line.text, isFinal: true,
+                            startMs: line.ms, endMs: line.ms + 12_000)
+                    },
+                    named: true, filed: false),
+                finished: nil)
+        }
+
+        /// The result page's filing card for the ended meeting, seeded straight
+        /// into its model rather than through the pass, which would need the
+        /// network the demo exists to avoid. Named live, so the card opens on
+        /// that name — no rename on offer, no "Was:" — with the folders to
+        /// confirm.
+        static func seedEndedMeetingFiling(_ filing: FilingSuggestionModel) {
             filing.seedDemo(
-                suggestion: filingSuggestion, currentTitle: clockTitle, folders: folders)
-            if shared.wantsFilingAdjust { shared.openFilingAdjust = true }
+                suggestion: filingSuggestion.answering(named: true, filed: false)
+                    ?? filingSuggestion,
+                currentTitle: featured.title, folders: folders)
+            guard shared.wantsFilingAdjust else { return }
+            // A beat for the push and the card to be on screen: the card opens
+            // its sheet on this flag changing, and cannot see a change made
+            // before it existed.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(900))
+                shared.openFilingAdjust = true
+            }
         }
 
         /// Fills the live screen with a recording already in progress: settled
@@ -784,7 +1001,19 @@
                         "兩週的前提是你們的 SSO 已經"),
                     isFinal: false, startMs: 58_000, endMs: 62_000))
             recorder.seedDemo(
-                segments: seeded, status: String(localized: "Transcribing live"))
+                segments: seeded, status: String(localized: "Transcribing live"),
+                paused: shared.showPausedMeeting,
+                title: featured.title,
+                folder: .init(
+                    destination: SaveDestination(
+                        scope: "personal", orgId: nil, folderId: folders[0].id),
+                    label: folders[0].name))
+            if shared.showDraftMeeting, let draft = drafts.first {
+                recorder.meetingTitle = draft.title
+                recorder.meetingContext = draft.meetingContext
+                recorder.meetingDraft = (draft, folders.first { $0.id == draft.meetingFolderId }?.name)
+                recorder.agenda = draft.todos.map(AgendaItem.init)
+            }
         }
     }
 

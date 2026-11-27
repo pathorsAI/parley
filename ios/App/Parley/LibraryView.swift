@@ -1,6 +1,7 @@
 import ParleyKit
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 /// Library — phone mirror of the desktop History window: personal + org
 /// scopes, one-level folders, and the same move semantics:
@@ -29,13 +30,15 @@ struct LibraryView: View {
     @State private var swipeGeometry = SwipeGeometry()
     @State private var recordings: [CloudRecordingSummary] = []
     @State private var folders: [CloudFolder] = []
+    /// The account's meeting drafts, read-only (#772). Personal: the cloud
+    /// keeps drafts per account, not per organization, so an org's scope
+    /// shows none. Empty when they could not be loaded — a draft list that
+    /// failed is not worth an error over the library.
+    @State private var drafts: [CloudMeetingDraft] = []
     @State private var loading = false
     @State private var error: String?
     @State private var busyId: String?
     @State private var search = ""
-    /// Whether the search field is active, so a request to show the checklist
-    /// can close it — the checklist is not drawn while searching.
-    @State private var searchPresented = false
     /// One importer for the whole screen, so every door — the toolbar button
     /// and the empty state — drives the same single in-flight import.
     @StateObject private var importer = RecordingImporter()
@@ -51,13 +54,16 @@ struct LibraryView: View {
     /// waits for it, so it never flashes up over a library still on its way
     /// from the cloud — and so the existing-user check has run first.
     @State private var personalLoaded = false
-    /// What is pushed on the Library's stack: the recording a row or the
-    /// checklist opened, and what for. A path rather than destination-closure
-    /// links, so the stack can be popped from here — the checklist request has
-    /// to land on the list, not on whatever recording was left open.
-    @State private var path: [OpenedRecording] = []
+    /// What is pushed on the Library's stack: the full list (from See all or a
+    /// folder card), and the recording a row or the checklist opened, and what
+    /// for. A path rather than destination-closure links, so the stack can be
+    /// popped from here — the checklist request has to land on the overview,
+    /// not on whatever recording was left open.
+    @State private var path: [LibraryRoute] = []
     /// The last `TabRouter.checklistRequest` acted on.
     @State private var handledChecklistRequest = 0
+    /// The last `TabRouter.endedMeetingRequest` acted on.
+    @State private var handledEndedMeetingRequest = 0
     /// "Walk through the sample" was tapped and its 1.5 s "Transcribing…" is up.
     @State private var walkingThrough = false
     /// The recording the folder picker is moving, while it is up.
@@ -92,14 +98,27 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack(path: $path) {
             VStack(spacing: 0) {
+                TabPageHeader(title: "Library") {
+                    if section == .meetings { libraryActions }
+                }
+                PageSearchField(
+                    text: $search,
+                    prompt: section == .meetings
+                        ? Text("Search titles and snippets") : Text("Search voice typing"))
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 6)
                 sectionPicker
                 switch section {
                 case .meetings:
                     Group {
                         if !app.signedIn {
                             unavailable
+                        } else if !search.isEmpty && !showsFullList {
+                            // Searching from the overview searches the whole
+                            // library, the way the Library always has.
+                            list(chips: true)
                         } else {
-                            list
+                            overview
                         }
                     }
                     // Here rather than on the stack: pulling the voice-typing
@@ -111,18 +130,29 @@ struct LibraryView: View {
                     DictationHistoryList(search: search)
                 }
             }
-            .background(Theme.background)
-            // Settings' "Show the getting-started list again" lands on the
-            // checklist, which lives in Meetings; the list itself then takes
-            // the request on appearing (`takeChecklistRequest`).
-            .onChange(of: router.checklistRequest) { _, _ in section = .meetings }
-            .navigationTitle("Library")
-            .toolbar {
-                if section == .meetings {
-                    importButton
-                    scopeMenu
+            // The overview's light bars reach the top edge of the window, behind
+            // the large title, the search field and the tabs, as the desktop's
+            // run from the top of its page. Only on the overview: the voice
+            // typing list and a search's results are plain pages.
+            .background {
+                ZStack(alignment: .top) {
+                    Theme.background
+                    if showsBackdrop { OverviewBackdrop().transition(.opacity) }
                 }
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.25), value: showsBackdrop)
             }
+            // Settings' "Show the getting-started list again" lands on the
+            // checklist, which lives in Meetings; the overview then takes the
+            // request on appearing (`takeChecklistRequest`).
+            .onChange(of: router.checklistRequest) { _, _ in section = .meetings }
+            // A tap on the Library tab: back to the overview, like home.
+            .onChange(of: router.libraryRootRequest) { _, _ in path = [] }
+            // The title, actions and search are the page's own (`TabPageHeader`,
+            // as on every tab); the title stays for VoiceOver and the back
+            // button of pages pushed from here, which bring their bar back.
+            .navigationTitle("Library")
+            .toolbar(.hidden, for: .navigationBar)
             // `.audio` is the whole family — mp3, m4a, wav, aac, caf and the
             // rest — which is what the desktop's extension list adds up to.
             // Single selection: a transcription run takes one file, the same
@@ -134,55 +164,43 @@ struct LibraryView: View {
             ) { result in
                 Task { await runImport(result) }
             }
-            .navigationDestination(for: OpenedRecording.self) { target in
-                if let rec = allRecordings.first(where: { $0.id == target.id }) {
-                    RecordingDetailView(
-                        summary: rec, orgId: target.orgId, intent: target.intent,
-                        isLapRecording: target.guided || isLapRecording(rec, orgId: target.orgId),
-                        onFolderChange: folderChanged(rec.id),
-                        onTitleChange: titleChanged(rec.id))
+            .navigationDestination(for: LibraryRoute.self) { route in
+                switch route {
+                case .recording(let target):
+                    if let rec = allRecordings.first(where: { $0.id == target.id }) {
+                        RecordingDetailView(
+                            summary: rec, orgId: target.orgId, intent: target.intent,
+                            isLapRecording: target.guided
+                                || isLapRecording(rec, orgId: target.orgId),
+                            endedMeeting: target.endedMeeting
+                                ? router.endedMeeting.flatMap { $0.id == rec.id ? $0 : nil } : nil,
+                            onFolderChange: folderChanged(rec.id),
+                            onTitleChange: titleChanged(rec.id))
+                    }
+                case .recordings(let folder):
+                    fullList(inFolder: folder != nil)
+                case .drafts:
+                    allDrafts
+                case .draft(let id):
+                    if let draft = drafts.first(where: { $0.id == id }) {
+                        MeetingDraftDetailView(
+                            draft: draft, folder: personalFolderName(draft.meetingFolderId),
+                            onStart: { startMeeting(from: draft) })
+                    }
                 }
             }
-            .sheet(item: $moving) { rec in folderPicker(for: rec) }
-            // Attached once here, not per row: every row's swipe and context
-            // menu only sets the state, and this one dialog answers for all of
-            // them.
-            .confirmationDialog(
-                "Delete this recording?",
-                isPresented: Binding(
-                    get: { confirmingDelete != nil },
-                    set: { if !$0 { confirmingDelete = nil } }),
-                titleVisibility: .visible,
-                presenting: confirmingDelete
-            ) { rec in
-                Button("Delete", role: .destructive) { Task { await remove(rec) } }
-            } message: { _ in
-                Text(
-                    "The recording, its transcript and its summary are deleted everywhere. This cannot be undone."
-                )
-            }
-            .confirmationDialog(
-                confirmingOrgMove.map { Text("Move to \($0.org.name)?") } ?? Text(verbatim: ""),
-                isPresented: Binding(
-                    get: { confirmingOrgMove != nil },
-                    set: { if !$0 { confirmingOrgMove = nil } }),
-                titleVisibility: .visible,
-                presenting: confirmingOrgMove
-            ) { move in
-                Button("Move", role: .destructive) {
-                    Task { await shareToOrg(move.recording, org: move.org, thenDelete: true) }
-                }
-            } message: { _ in
-                Text("A copy goes to the organization, and the recording leaves your personal library.")
-            }
-            .searchable(
-                text: $search, isPresented: $searchPresented,
-                prompt: section == .meetings
-                    ? Text("Search titles and snippets") : Text("Search voice typing"))
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
             // A recording renamed or filed from another tab (the record
             // screen's filing card): reload, so the row shows the new name.
             .onChange(of: app.libraryRevision) { _, _ in Task { await load() } }
+            // Leaving the full list leaves its search and its folder behind:
+            // the overview is not filtered by either.
+            .onChange(of: path) { old, new in
+                if old.contains(where: \.isFullList) && !new.contains(where: \.isFullList) {
+                    search = ""
+                    folderFilter = nil
+                }
+            }
             // `parley://demo/transcript` pushes the demo recording, so the
             // transcript frame is captured through the real navigation stack
             // (back chevron and all) rather than as a detached view.
@@ -199,22 +217,124 @@ struct LibraryView: View {
                 .onChange(of: demo.showVoiceTyping, initial: true) { _, show in
                     if show { section = .voiceTyping }
                 }
+                // `-ParleyDemoRoute library-all` lands on the full list.
+                .onChange(of: demo.showAllRecordings, initial: true) { _, show in
+                    if show && !showsFullList { openFullList(nil) }
+                }
+                // `-ParleyDemoRoute library-org` switches to the demo org.
+                .onChange(of: demo.showOrg, initial: true) { _, show in
+                    if show { scope = ScreenshotDemo.orgs.first?.id }
+                }
+                // `-ParleyDemoRoute draft` (or `draft-short`) opens a demo draft's page.
+                .onChange(of: demo.showDraft, initial: true) { _, show in
+                    guard show, let first = ScreenshotDemo.drafts.first(where: { $0.id == demo.draftID })
+                    else { return }
+                    drafts = ScreenshotDemo.drafts
+                    folders = ScreenshotDemo.folders
+                    if !path.contains(.draft(first.id)) { path.append(.draft(first.id)) }
+                }
+                // `-ParleyDemoRoute library-folder-empty` lands on an empty folder.
+                .onChange(of: demo.showFolder, initial: true) { _, folder in
+                    if let folder, !showsFullList { openFullList(folder) }
+                }
             #endif
         }
+        // The dialogs and sheets hang off the stack itself rather than its root
+        // page, because the rows that raise them live on two pages — the
+        // overview and the full list pushed over it — and a presentation
+        // attached to a page that has been pushed under another one is not
+        // guaranteed to come up.
+        .sheet(item: $moving) { rec in folderPicker(for: rec) }
+        .sheet(isPresented: $showingUploadQueue) { UploadQueueSheet() }
+        // Attached once here, not per row: every row's swipe and context
+        // menu only sets the state, and this one dialog answers for all of
+        // them.
+        .confirmationDialog(
+            "Delete this recording?",
+            isPresented: Binding(
+                get: { confirmingDelete != nil },
+                set: { if !$0 { confirmingDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmingDelete
+        ) { rec in
+            Button("Delete", role: .destructive) { Task { await remove(rec) } }
+        } message: { _ in
+            Text(
+                "The recording, its transcript and its summary are deleted everywhere. This cannot be undone."
+            )
+        }
+        .confirmationDialog(
+            confirmingOrgMove.map { Text("Move to \($0.org.name)?") } ?? Text(verbatim: ""),
+            isPresented: Binding(
+                get: { confirmingOrgMove != nil },
+                set: { if !$0 { confirmingOrgMove = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmingOrgMove
+        ) { move in
+            Button("Move", role: .destructive) {
+                Task { await shareToOrg(move.recording, org: move.org, thenDelete: true) }
+            }
+        } message: { _ in
+            Text("A copy goes to the organization, and the recording leaves your personal library.")
+        }
+        .alert(
+            namingFolder?.title ?? Text(verbatim: ""),
+            isPresented: Binding(
+                get: { namingFolder != nil },
+                set: { if !$0 { namingFolder = nil } }),
+            presenting: namingFolder
+        ) { naming in
+            TextField("Folder name", text: $folderNameDraft)
+            Button("Cancel", role: .cancel) {}
+            Button(naming.confirmLabel) { Task { await commitFolderName(naming) } }
+                .disabled(trimmedFolderName.isEmpty)
+        }
+        .confirmationDialog(
+            confirmingFolderDelete.map { Text("Delete “\($0.name)”?") } ?? Text(verbatim: ""),
+            isPresented: Binding(
+                get: { confirmingFolderDelete != nil },
+                set: { if !$0 { confirmingFolderDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: confirmingFolderDelete
+        ) { folder in
+            Button("Delete", role: .destructive) { Task { await deleteFolder(folder) } }
+        } message: { folder in
+            // Says what happens to what is in it, because "delete" next to a
+            // folder of recordings reads as deleting them. The count is what this
+            // phone has loaded, which is the library the user is looking at.
+            let count = recordingCount(in: folder)
+            if count == 0 {
+                Text("The folder is empty.")
+            } else {
+                Text("\(count) recordings in it move to Unfiled. No recording is deleted.")
+            }
+        }
+        // On the stack rather than inside it: the root list is covered while a
+        // recording is pushed, and this has to run then too. Runs on the
+        // Library's first appearance as well as on each change, because the
+        // tab may be built by the very switch that carries the request.
+        .task(id: router.endedMeetingRequest) { await takeEndedMeetingRequest() }
     }
 
-    /// Meetings / Voice typing, above everything else on the page. Segmented
-    /// rather than a tab of its own: both are "what I said, kept", and the
-    /// Library is where someone goes looking for either.
+    /// Meetings / Voice typing, above everything else on the page. Both are
+    /// "what I said, kept", and the Library is where someone goes looking for
+    /// either, so they share the page as two tabs rather than two places.
+    ///
+    /// Drawn in the library's own tab language rather than the system's grey
+    /// segmented control: a label, blue and semibold when it is the one shown,
+    /// over a blue rule that slides to the other label — the folder chips'
+    /// underline at a larger size, and the onboarding header's progress line.
     private var sectionPicker: some View {
-        Picker("Library", selection: $section) {
-            Text("Meetings").tag(LibrarySection.meetings)
-            Text("Voice typing").tag(LibrarySection.voiceTyping)
-        }
-        .pickerStyle(.segmented)
-        .padding(.horizontal, 20)
-        .padding(.top, 4)
-        .padding(.bottom, 6)
+        LibrarySectionTabs(selection: $section)
+            .padding(.horizontal, 20)
+            .padding(.top, 2)
+            .padding(.bottom, 4)
+    }
+
+    /// Whether the light bars are behind the page: the Meetings overview,
+    /// signed in, not searching.
+    private var showsBackdrop: Bool {
+        section == .meetings && app.signedIn && search.isEmpty
     }
 
     /// The library is the account's cloud recordings, so it needs a confirmed
@@ -231,6 +351,292 @@ struct LibraryView: View {
             : String(localized: "Sign in under Settings → Account and your cloud recordings show up here.")
         return ContentUnavailableView(
             title, systemImage: "icloud.slash", description: Text(detail))
+    }
+
+    // MARK: overview (desktop 總覽, phone-sized)
+
+    /// How many recordings 最近錄音 shows before See all takes over — the
+    /// desktop's number. Four is a shortcut, not a browser.
+    private static let recentCount = 4
+
+    /// What Meetings opens on: the desktop's 總覽 — the light bars behind the
+    /// top of the page, the getting-started list, the meeting drafts (personal
+    /// scope only, read-only), the folders as cards in one sideways row, and
+    /// the four newest recordings. Everything else in the library is
+    /// one tap away on the full list (`fullList`), pushed by See all or a
+    /// folder card, which is the list this tab used to open on, unchanged.
+    ///
+    /// Both follow the scope menu: switching to an organization re-targets the
+    /// folders and the recent rows to its library.
+    private var overview: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    overviewStatus
+                    if showsChecklist {
+                        GettingStartedList(
+                            state: gettingStarted.state,
+                            action: checklistAction,
+                            transcribing: walkingThrough,
+                            walkThrough: walkThroughSample,
+                            continueLap: continueLap,
+                            dismiss: { withAnimation { gettingStarted.dismiss() } })
+                            .padding(.horizontal, 20)
+                            .id(Self.checklistID)
+                    }
+                    // 即將開始的會議 → 資料夾 → 會議草稿 → 最近錄音.
+                    if scope == nil, hasDrafts(.startingSoon) {
+                        draftSection(.startingSoon)
+                            .padding(.horizontal, 20)
+                    }
+                    foldersSection
+                    if scope == nil, hasDrafts(.later) {
+                        draftSection(.later, limit: Self.recentCount) {
+                            path.append(.drafts)
+                        }
+                            .padding(.horizontal, 20)
+                    }
+                    recentSection
+                        .padding(.horizontal, 20)
+                }
+                .padding(.top, 16)
+                .padding(.bottom, 32)
+            }
+            .onAppear { takeChecklistRequest(proxy) }
+            .onChange(of: router.checklistRequest) { _, _ in takeChecklistRequest(proxy) }
+        }
+    }
+
+    /// What the full list says above its rows, said on the overview too so it
+    /// is not missed: recordings still on the phone, an import in flight or
+    /// just landed, and the last failure.
+    @ViewBuilder
+    private var overviewStatus: some View {
+        let queue = scope == nil && app.pendingUploadCount > 0
+        let importShown = importer.isRunning || notice != nil
+        if queue || importShown || error != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                if queue {
+                    UploadQueueRow(pending: app.pendingUploadCount, parked: app.parkedUploads) {
+                        showingUploadQueue = true
+                    }
+                }
+                if importShown { importStatus }
+                if let error {
+                    Text(error)
+                        .font(.parley.caption)
+                        .foregroundStyle(Theme.destructive)
+                }
+            }
+            .padding(.horizontal, 20)
+        }
+    }
+
+    /// 即將開始的會議 (above the folders) or 會議草稿 (under them): the
+    /// meetings the desktop prepared, each opening a read-only page. Nothing
+    /// at all when the part has no drafts.
+    /// 會議草稿 shows as many rows as 最近錄音 (`recentCount`); the rest are a
+    /// 查看全部 away.
+    private func draftSection(
+        _ part: OverviewDraftSections<NavigationLinkRow>.Part, limit: Int? = nil,
+        seeAll: (() -> Void)? = nil, showsHeading: Bool = true
+    ) -> some View {
+        OverviewDraftSections(
+            drafts: shownDrafts, part: part, limit: limit, seeAll: seeAll,
+            showsHeading: showsHeading, folderName: personalFolderName
+        ) { draft, row in
+            // 開始 on the row only where the meeting is about to happen; a
+            // later draft is started from its page.
+            NavigationLinkRow(
+                id: draft.id, row: row,
+                onStart: part == .startingSoon ? { startMeeting(from: draft) } : nil)
+        }
+    }
+
+    /// The drafts the overview lists: all of them but those a meeting was
+    /// started from on this phone, which the phone hides because it cannot
+    /// delete them (`TabRouter.startedDraftIDs`).
+    private var shownDrafts: [CloudMeetingDraft] {
+        drafts.filter { !router.startedDraftIDs.contains($0.id) }
+    }
+
+    /// A draft's 開始: the desktop's `startDraft`. The draft's title, folder
+    /// and context go to the Record tab, which starts the meeting — or, with
+    /// one already going, only comes up (`LiveView.takeDraftStart`). The
+    /// folder carries over only when it is one of the personal folders, as
+    /// the record screen's picker would have offered it.
+    private func startMeeting(from draft: CloudMeetingDraft) {
+        let folder = draft.meetingFolderId.flatMap { id in
+            folders.first { $0.id == id && $0.orgId == nil }
+        }
+        let chosen = folder.flatMap { f in
+            SaveDestination(.folder(id: f.id, orgId: nil)).map {
+                MeetingRecorder.ChosenFolder(destination: $0, label: f.name)
+            }
+        }
+        // Off the draft's page, so coming back to the Library does not land
+        // on the page of a draft that is now hidden.
+        path.removeAll { $0 == .draft(draft.id) }
+        router.startDraft(
+            DraftStart(
+                draftId: draft.id,
+                title: draft.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                folder: scope == nil ? chosen : nil,
+                context: draft.meetingContext,
+                draft: draft,
+                folderName: personalFolderName(draft.meetingFolderId)))
+    }
+
+    /// 會議草稿's 查看全部: every draft that is not starting soon, soonest first.
+    private var allDrafts: some View {
+        ScrollView {
+            draftSection(.later, showsHeading: false)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
+        }
+        .navigationTitle(Text("Meeting drafts"))
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// Whether a draft section has anything, so an empty one leaves no gap.
+    /// Read when the overview renders; the section itself re-splits every
+    /// 30 s, so a draft crossing into the hour moves at the next render.
+    private func hasDrafts(_ part: OverviewDraftSections<NavigationLinkRow>.Part) -> Bool {
+        let split = MeetingDraftSchedule.split(shownDrafts, now: Date().timeIntervalSince1970 * 1000)
+        return part == .startingSoon ? !split.startingSoon.isEmpty : !split.later.isEmpty
+    }
+
+    /// A personal folder's name, for a draft's folder. The overview's folders
+    /// are the personal ones whenever drafts are shown.
+    private func personalFolderName(_ id: String?) -> String? {
+        guard scope == nil, let id else { return nil }
+        return folders.first { $0.id == id }?.name
+    }
+
+    /// 資料夾: a "new folder" card, then a card per folder in the scope, in one
+    /// row that scrolls sideways and runs to both edges of the screen.
+    private var foldersSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // A folder is made from the heading, not from a card in the row:
+            // the row is for the folders there are.
+            OverviewHeading(title: "Folders") {
+                Button {
+                    folderNameDraft = ""
+                    namingFolder = .create
+                } label: {
+                    Label("Add folder", systemImage: "plus")
+                        .labelStyle(OverviewLinkLabelStyle())
+                }
+                .buttonStyle(.borderless)
+            }
+            .padding(.horizontal, 20)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(folders) { f in
+                        FolderCard(name: f.name, count: recordingCount(in: f)) {
+                            openFullList(f.id)
+                        }
+                        // The chips' long-press, on the card.
+                        .contextMenu {
+                            Button("Rename", systemImage: "pencil") { requestRename(f) }
+                            Button("Delete", systemImage: "trash", role: .destructive) {
+                                confirmingFolderDelete = f
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    /// 最近錄音: the newest four in the scope, as hairline-split rows that open
+    /// the recording exactly as the full list's rows do, with the same
+    /// long-press actions. No swipe actions: this is a shortcut, and deleting
+    /// from it would make the four rows shuffle under the finger.
+    private var recentSection: some View {
+        let recent = Array(filtered(nil).prefix(Self.recentCount))
+        return VStack(alignment: .leading, spacing: 6) {
+            OverviewHeading(title: "Recent recordings") {
+                if !recent.isEmpty {
+                    Button {
+                        openFullList(nil)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text("See all")
+                            Image(systemName: "arrow.right").imageScale(.small)
+                        }
+                        .font(.parley.caption)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            if !recent.isEmpty {
+                HairlineList(items: recent) { rec in
+                    NavigationLink(value: LibraryRoute.recording(opened(rec))) {
+                        RecentRecordingRow(summary: rec)
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu { actions(for: rec) }
+                    .disabled(busyId == rec.id)
+                    .opacity(busyId == rec.id ? 0.5 : 1)
+                }
+            } else if loading {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+            } else {
+                // The checklist already offers the sample — don't say it twice.
+                RecentEmptyBox(
+                    offersSample: scope == nil && !showsChecklist && SampleRecordingStore.isBundled,
+                    transcribing: walkingThrough,
+                    useSample: walkThroughSample)
+            }
+        }
+    }
+
+    /// The full list, pushed over the overview: the rows with their swipes
+    /// and long-press menus, the search, pull to refresh. Opened from See all
+    /// it is the page this tab used to open on, chips and all. Opened from a
+    /// folder card it is that folder and nothing else — one recording after
+    /// another, no chip row and no swipe to the next folder: the folders were
+    /// already chosen between on the overview.
+    private func fullList(inFolder: Bool) -> some View {
+        list(chips: !inFolder)
+            .background(Theme.background)
+            .navigationTitle(fullListTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $search, prompt: Text("Search titles and snippets"))
+            .refreshable { await load() }
+    }
+
+    /// Named after the page the chips are on, so the title follows a swipe.
+    private var fullListTitle: String {
+        switch folderFilter {
+        case nil: return String(localized: "All recordings")
+        case Self.unfiledPage: return String(localized: "Unfiled")
+        case let id?: return folders.first { $0.id == id }?.name ?? String(localized: "All recordings")
+        }
+    }
+
+    private var showsFullList: Bool { path.contains(where: \.isFullList) }
+
+    /// See all (`nil`) or a folder card: the full list, on that folder.
+    private func openFullList(_ folder: String?) {
+        folderFilter = folder
+        path.append(.recordings(folder: folder))
+    }
+
+    /// A row's tap, from either page.
+    private func opened(_ rec: CloudRecordingSummary) -> OpenedRecording {
+        OpenedRecording(id: rec.id, orgId: scope, intent: .read)
+    }
+
+    /// The live folder's name, by the same orphan→root rule the list files by.
+    private func folderName(_ id: String?) -> String? {
+        id.flatMap { id in folders.first { $0.id == id }?.name }
     }
 
     // MARK: getting started
@@ -279,7 +685,6 @@ struct LibraryView: View {
         guard router.checklistRequest != handledChecklistRequest else { return }
         handledChecklistRequest = router.checklistRequest
         path = []
-        searchPresented = false
         search = ""
         if scope != nil {
             scope = nil
@@ -292,6 +697,35 @@ struct LibraryView: View {
             try? await Task.sleep(for: .milliseconds(350))
             withAnimation { proxy.scrollTo(Self.checklistID, anchor: .top) }
         }
+    }
+
+    /// A meeting has just ended and landed (`TabRouter.openEndedMeeting`):
+    /// open its result page, as the desktop opens a recording's report when
+    /// End finishes saving.
+    ///
+    /// Back to the personal Meetings list first, with whatever was pushed
+    /// popped, then a reload — the recording is minutes old, and the detail
+    /// page is looked up in `allRecordings` — then the push. A recording the
+    /// reload still does not list (a slow listing, a failed one) is left at
+    /// that: the user is on the Library, where it will appear, and nothing
+    /// retries or spins. The counter is compared rather than consumed, like
+    /// `takeChecklistRequest`, so a request is acted on once.
+    private func takeEndedMeetingRequest() async {
+        guard router.endedMeetingRequest != handledEndedMeetingRequest,
+            let meeting = router.endedMeeting
+        else { return }
+        handledEndedMeetingRequest = router.endedMeetingRequest
+        path = []
+        section = .meetings
+        search = ""
+        folderFilter = nil
+        if scope != nil {
+            scope = nil
+            notice = nil
+        }
+        await load()
+        guard allRecordings.contains(where: { $0.id == meeting.id }) else { return }
+        path = [.recording(OpenedRecording(id: meeting.id, orgId: nil, intent: .read, endedMeeting: true))]
     }
 
     /// The recording the guided lap is about: the sample when it is in the
@@ -334,14 +768,15 @@ struct LibraryView: View {
             walkingThrough = false
             guard let summary = sample.load() else { return }
             select(nil)
-            path.append(OpenedRecording(id: summary.id, orgId: nil, intent: .read, guided: true))
+            path.append(
+                .recording(OpenedRecording(id: summary.id, orgId: nil, intent: .read, guided: true)))
         }
     }
 
     /// 繼續 →: back into the lap recording.
     private func continueLap() {
         guard let rec = lapRecording else { return }
-        path.append(OpenedRecording(id: rec.id, orgId: nil, intent: .read, guided: true))
+        path.append(.recording(OpenedRecording(id: rec.id, orgId: nil, intent: .read, guided: true)))
     }
 
     /// Keeps a row's folder in step with a move made inside the recording, so
@@ -364,6 +799,15 @@ struct LibraryView: View {
 
     // MARK: import (desktop History "+ Import", phone-sized)
 
+    /// Import and the scope switcher, in the header's glass capsule.
+    @ViewBuilder
+    private var libraryActions: some View {
+        HeaderActions {
+            if scope == nil { importButton }
+            scopeMenu
+        }
+    }
+
     /// Personal scope only. An org library is a different container, and the
     /// upload path files into the personal library first and shares from there
     /// — offering the button under an org would promise a destination the flow
@@ -373,54 +817,47 @@ struct LibraryView: View {
     /// stays where it has always been: last, at the trailing edge, with room
     /// for an org name beside it on a small phone.
     ///
-    /// `doc.badge.plus`, not `square.and.arrow.down`. The arrow into a tray is
-    /// the platform's download mark, and this action brings a file *in* — it was
-    /// pointing the wrong way even before the library had a real download to
-    /// offer, and now that it does (see `downloadAction`) the two would have been
-    /// the same glyph for opposite directions.
-    @ToolbarContentBuilder
-    private var importButton: some ToolbarContent {
-        if scope == nil {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    importing = true
-                } label: {
-                    Label("Import audio", systemImage: "doc.badge.plus")
-                }
-                .disabled(importer.isRunning)
-            }
+    /// `arrow.up.doc`: a file going up into the library — the same glyph the
+    /// rows use for a recording that came in this way (`RecordingSourceIcon`),
+    /// so the button and what it makes look alike. Not `square.and.arrow.up`,
+    /// which is Share on iOS, and nothing like the download's
+    /// `arrow.down.circle`.
+    private var importButton: some View {
+        Button {
+            importing = true
+        } label: {
+            Image(systemName: "arrow.up.doc")
         }
+        .accessibilityLabel(Text("Import audio"))
+        .disabled(importer.isRunning)
     }
 
-    // MARK: scope switcher (desktop sidebar, phone-sized)
-
-    private var scopeMenu: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Menu {
+    private var scopeMenu: some View {
+        Menu {
+            Button {
+                scope = nil
+                folderFilter = nil
+                notice = nil
+            } label: {
+                Label("Personal", systemImage: scope == nil ? "checkmark" : "person")
+            }
+            ForEach(app.orgs) { org in
                 Button {
-                    scope = nil
+                    scope = org.id
                     folderFilter = nil
                     notice = nil
                 } label: {
-                    Label("Personal", systemImage: scope == nil ? "checkmark" : "folder")
+                    Label(
+                        org.name,
+                        systemImage: scope == org.id ? "checkmark" : "person.2")
                 }
-                ForEach(app.orgs) { org in
-                    Button {
-                        scope = org.id
-                        folderFilter = nil
-                        notice = nil
-                    } label: {
-                        Label(
-                            org.name,
-                            systemImage: scope == org.id ? "checkmark" : "person.2")
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: scope == nil ? "folder" : "person.2")
-                    Text(verbatim: scopeName)
-                }
-                .font(.parley.subheadlineEmphasized)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                // One person for the personal library, people for an organization's.
+                Image(systemName: scope == nil ? "person" : "person.2")
+                Text(verbatim: scopeName)
+                    .font(.parley.subheadlineEmphasized)
             }
         }
     }
@@ -470,63 +907,29 @@ struct LibraryView: View {
     /// without one: with no folders it is only the "+", which is the one place an
     /// org scope can make its first folder. It waits out the first load so the
     /// lone "+" does not flash up ahead of the chips it belongs after.
-    private var list: some View {
-        VStack(spacing: 0) {
-            if !folders.isEmpty || !loading {
-                folderChips
+    @ViewBuilder
+    private func list(chips: Bool) -> some View {
+        if chips {
+            VStack(spacing: 0) {
+                if !folders.isEmpty || !loading {
+                    folderChips
+                }
+                folderList(folderFilter)
             }
+            .simultaneousGesture(folderSwipe)
+        } else {
             folderList(folderFilter)
         }
-        .simultaneousGesture(folderSwipe)
-        .sheet(isPresented: $showingUploadQueue) { UploadQueueSheet() }
-        .alert(
-            namingFolder?.title ?? Text(verbatim: ""),
-            isPresented: Binding(
-                get: { namingFolder != nil },
-                set: { if !$0 { namingFolder = nil } }),
-            presenting: namingFolder
-        ) { naming in
-            TextField("Folder name", text: $folderNameDraft)
-            Button("Cancel", role: .cancel) {}
-            Button(naming.confirmLabel) { Task { await commitFolderName(naming) } }
-                .disabled(trimmedFolderName.isEmpty)
-        }
-        .confirmationDialog(
-            confirmingFolderDelete.map { Text("Delete “\($0.name)”?") } ?? Text(verbatim: ""),
-            isPresented: Binding(
-                get: { confirmingFolderDelete != nil },
-                set: { if !$0 { confirmingFolderDelete = nil } }),
-            titleVisibility: .visible,
-            presenting: confirmingFolderDelete
-        ) { folder in
-            Button("Delete", role: .destructive) { Task { await deleteFolder(folder) } }
-        } message: { folder in
-            // Says what happens to what is in it, because "delete" next to a
-            // folder of recordings reads as deleting them. The count is what this
-            // phone has loaded, which is the library the user is looking at.
-            let count = recordingCount(in: folder)
-            if count == 0 {
-                Text("The folder is empty.")
-            } else {
-                Text("\(count) recordings in it move to Unfiled. No recording is deleted.")
-            }
-        }
     }
 
-    /// One folder's worth of the library.
+    /// One folder's worth of the library. The getting-started checklist is
+    /// not here: it lives on the overview, under the stack this list is
+    /// pushed onto.
     private func folderList(_ folder: String?) -> some View {
-        let items = filtered(folder)
-        let checklist = folder == nil && showsChecklist
-        return ScrollViewReader { proxy in
-            folderRows(items, checklist: checklist, showsQueue: folder == nil && scope == nil)
-                .onAppear { takeChecklistRequest(proxy) }
-                .onChange(of: router.checklistRequest) { _, _ in takeChecklistRequest(proxy) }
-        }
+        folderRows(filtered(folder), showsQueue: folder == nil && scope == nil)
     }
 
-    private func folderRows(
-        _ items: [CloudRecordingSummary], checklist: Bool, showsQueue: Bool
-    ) -> some View {
+    private func folderRows(_ items: [CloudRecordingSummary], showsQueue: Bool) -> some View {
         List {
             // Recordings on this phone that the cloud does not have yet — the
             // only place outside Settings they show up. Personal scope, every
@@ -552,32 +955,9 @@ struct LibraryView: View {
                     .listRowSeparator(.hidden)
                     .listRowBackground(Color.clear)
             }
-            if checklist {
-                GettingStartedList(
-                    state: gettingStarted.state,
-                    action: checklistAction,
-                    transcribing: walkingThrough,
-                    walkThrough: walkThroughSample,
-                    continueLap: continueLap,
-                    dismiss: { withAnimation { gettingStarted.dismiss() } })
-                    .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 0, trailing: 20))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .id(Self.checklistID)
-                // The list is drawn before the first load lands; the spinner
-                // goes under it rather than over it.
-                if loading && recordings.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 24)
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                }
-            }
             ForEach(items) { rec in
-                NavigationLink(value: OpenedRecording(id: rec.id, orgId: scope, intent: .read)) {
-                    RecordingCard(
-                        summary: rec, folders: folders, audio: downloads.state(for: rec.id))
+                NavigationLink(value: LibraryRoute.recording(opened(rec))) {
+                    RecordingCard(summary: rec, audio: downloads.state(for: rec.id))
                 }
                 .onGeometryChange(for: CGRect.self) { proxy in
                     proxy.frame(in: .global)
@@ -627,7 +1007,7 @@ struct LibraryView: View {
         } action: {
             swipeGeometry.list = $0
         }
-        .overlay { if loading && recordings.isEmpty && !checklist { ProgressView() } }
+        .overlay { if loading && recordings.isEmpty { ProgressView() } }
     }
 
     /// An import in flight, or the one that just landed.
@@ -664,42 +1044,52 @@ struct LibraryView: View {
         }
     }
 
-    /// Same shape as the live screen's empty state: the glyph, the sentence, and
-    /// enough room around it that "nothing here" reads as a deliberate state
-    /// rather than a failed load. The glyph is a quiet mark on the page — it used
-    /// to be brand blue on a tinted disc, which made the emptiest screen in the
-    /// app the most decorated one.
+    /// The desktop's empty state (`EmptyRecordsView`): the empty box, a title
+    /// and a hint, chosen the way the desktop's `emptyStateCopy` chooses them —
+    /// a search that found nothing, an empty folder, an organization with
+    /// nothing shared, the unfiled page with everything filed, or a library
+    /// with nothing in it yet. The hints name the phone's own gestures where the
+    /// desktop's name its buttons.
     ///
-    /// A library with nothing in it is also the second natural door into
+    /// A personal library with nothing in it is also the second door into
     /// import, so it opens the very same `.fileImporter` the toolbar button
-    /// does — one flow, two doors, the way the desktop routes every import
-    /// affordance through one function.
+    /// does — one flow, two doors.
+    @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 18) {
-            Image(systemName: search.isEmpty ? "rectangle.stack" : "magnifyingglass")
-                .font(.parley.title)
-                .foregroundStyle(Color(.tertiaryLabel))
-                .accessibilityHidden(true)
-            Text(search.isEmpty ? "No recordings here yet." : "No matches.")
-                .font(.parley.subheadline)
-                .foregroundStyle(Color(.secondaryLabel))
-                .multilineTextAlignment(.center)
-            if scope == nil && search.isEmpty {
-                // A tappable thing, so it is blue — and nothing more than that:
-                // it inherits the app's tint rather than carrying a fill.
-                Button {
-                    importing = true
-                } label: {
-                    // Same glyph as the toolbar button it duplicates — see
-                    // `importButton` for why it is not the download arrow.
-                    Label("Import an audio file", systemImage: "doc.badge.plus")
-                        .font(.parley.subheadlineEmphasized)
+        Group {
+            if !search.isEmpty {
+                EmptyRecordsView(
+                    title: "No matching recordings",
+                    hint: "Try another keyword, or clear the search to go back to folders.")
+            } else if let folder = folderFilter, folder != Self.unfiledPage {
+                EmptyRecordsView(
+                    title: "No recordings in this folder yet",
+                    hint: "Long-press a recording and choose Move to… to put it here.")
+            } else if scope != nil {
+                EmptyRecordsView(
+                    title: "No recordings shared in this organization yet",
+                    hint: "Long-press a personal recording and choose Share to organization to copy it here.")
+            } else if folderFilter == Self.unfiledPage {
+                EmptyRecordsView(
+                    title: "All filed",
+                    hint: "New recordings that aren't in a folder yet show up here.")
+            } else {
+                EmptyRecordsView(
+                    title: "No recordings yet",
+                    hint: "Start a meeting or import a recording, and each one lines up here by date."
+                ) {
+                    Button {
+                        importing = true
+                    } label: {
+                        // Same glyph as the toolbar button it duplicates.
+                        Label("Import an audio file", systemImage: "arrow.up.doc")
+                            .font(.parley.subheadlineEmphasized)
+                    }
+                    .disabled(importer.isRunning)
                 }
-                .disabled(importer.isRunning)
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 42)
+        .padding(.top, 56)
         .padding(.bottom, 24)
     }
 
@@ -927,7 +1317,9 @@ struct LibraryView: View {
                 }
                 guard scope == orgId else { return }
                 folders.append(folder)
-                select(folder.id)
+                // Onto the new folder's page when a list is showing; the
+                // overview has no page to move, and the new card is enough.
+                if showsFullList || !search.isEmpty { select(folder.id) }
             case .rename(let folder):
                 guard name != folder.name else { return }
                 if let orgId {
@@ -1160,8 +1552,10 @@ struct LibraryView: View {
         guard app.signedIn else { return }
         #if DEBUG
             if ScreenshotDemo.servesFixtures {
-                recordings = ScreenshotDemo.recordings
-                folders = ScreenshotDemo.folders
+                // Each scope its own fixtures, as the cloud would answer.
+                recordings = scope == nil ? ScreenshotDemo.libraryRecordings : ScreenshotDemo.orgRecordings
+                folders = scope == nil ? ScreenshotDemo.folders : ScreenshotDemo.orgFolders
+                drafts = ScreenshotDemo.drafts
                 loading = false
                 return
             }
@@ -1177,8 +1571,16 @@ struct LibraryView: View {
             } else {
                 async let r = app.cloud.listRecordings()
                 async let f = app.cloud.listFolders()
+                async let d = loadDrafts()
                 recordings = try await r
                 folders = try await f.filter { $0.orgId == nil }
+                if let loaded = await d {
+                    drafts = loaded
+                    // Hidden drafts the cloud no longer lists are forgotten.
+                    router.pruneStartedDrafts(keeping: Set(loaded.map(\.id)))
+                } else {
+                    drafts = []
+                }
                 // Before `personalLoaded` flips, so an existing user's library
                 // has dismissed the checklist before it could be drawn.
                 gettingStarted.noteLibraryLoaded(recordingCount: recordings.count)
@@ -1193,6 +1595,23 @@ struct LibraryView: View {
             self.error = String(localized: "Couldn't load — offline or the server isn't responding")
         }
         loading = false
+    }
+
+    private static let draftLog = Logger(subsystem: ParleyLog.subsystem, category: "drafts")
+
+    /// The account's drafts, or nil when they could not be loaded: a failure
+    /// is logged (its status, never a draft's content) and the overview goes
+    /// on without the two sections.
+    private func loadDrafts() async -> [CloudMeetingDraft]? {
+        do {
+            return try await app.cloud.listDrafts()
+        } catch let e as CloudError {
+            Self.draftLog.error("drafts: load failed, status \(e.status, privacy: .public)")
+        } catch {
+            Self.draftLog.error(
+                "drafts: load failed, \(String(describing: type(of: error)), privacy: .public)")
+        }
+        return nil
     }
 
     /// The picker's confirm. Throws back to the sheet, which keeps itself up
@@ -1380,6 +1799,58 @@ private enum LibrarySection: Hashable {
     case voiceTyping
 }
 
+/// The Library's two tabs, Meetings and Voice typing: labels in a row, the
+/// shown one blue and semibold over a 2pt blue rule that slides between them,
+/// all on a hairline across the page. The rule is one view moved by
+/// `matchedGeometryEffect`, so a switch reads as the same marker travelling,
+/// not one appearing as the other goes. A tap is light haptic feedback too,
+/// like the tab bar's.
+private struct LibrarySectionTabs: View {
+    @Binding var selection: LibrarySection
+    @Namespace private var rule
+
+    var body: some View {
+        HStack(spacing: 24) {
+            tab("Meetings", .meetings)
+            tab("Voice typing", .voiceTyping)
+            Spacer(minLength: 0)
+        }
+        .background(alignment: .bottom) {
+            Rectangle().fill(Color(.separator).opacity(0.6)).frame(height: 0.5)
+        }
+        .sensoryFeedback(.selection, trigger: selection)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func tab(_ title: LocalizedStringKey, _ value: LibrarySection) -> some View {
+        let selected = selection == value
+        return Button {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) { selection = value }
+        } label: {
+            VStack(spacing: 8) {
+                Text(title)
+                    .font(.parley.subheadline.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Theme.primary : Color(.secondaryLabel))
+                ZStack {
+                    // Always laid out, so a tab does not change height on tap.
+                    Capsule().fill(.clear).frame(height: 2)
+                    if selected {
+                        Capsule()
+                            .fill(Theme.primary)
+                            .frame(height: 2)
+                            .matchedGeometryEffect(id: "rule", in: rule)
+                    }
+                }
+            }
+            .fixedSize()
+            .padding(.top, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+}
+
 /// The frames the folder swipe hit-tests against, in `.global` coordinates.
 ///
 /// A class held in `@State` rather than state itself: every visible row writes
@@ -1429,6 +1900,24 @@ private struct PendingOrgMove {
     let org: CloudOrg
 }
 
+/// A page on the Library's stack over the overview.
+private enum LibraryRoute: Hashable {
+    /// The full list, opened on a folder (`nil` = everything). The page shown
+    /// is `folderFilter`, which the chips go on changing; the folder here is
+    /// only where it was opened.
+    case recordings(folder: String?)
+    case recording(OpenedRecording)
+    /// A meeting draft's read-only page, by id.
+    case draft(String)
+    /// Every 會議草稿, from the overview's 查看全部.
+    case drafts
+
+    var isFullList: Bool {
+        if case .recordings = self { return true }
+        return false
+    }
+}
+
 private struct OpenedRecording: Hashable {
     let id: String
     /// nil = personal scope.
@@ -1437,6 +1926,9 @@ private struct OpenedRecording: Hashable {
     /// Opened from the checklist's own action, so the guide bar is up even on
     /// a recording that is not the only one.
     var guided = false
+    /// Opened because its meeting just ended, so the result page carries that
+    /// meeting's filing suggestion (`TabRouter.endedMeeting`).
+    var endedMeeting = false
 }
 
 /// The getting-started checklist: four plain rows, each ticked only by the real
@@ -1583,22 +2075,6 @@ private struct RecordingRow: ViewModifier {
     }
 }
 
-/// Glyph and value as one unit, with a gap narrow enough that the eye groups
-/// them and wide enough that they don't touch. `Label`'s own spacing follows
-/// the text style, so at caption2 it still leaves roughly a body-text gap; the
-/// meta row carries four labels, and that adds up to more width than the one
-/// value on the row that actually needs it. Always rendering both halves also
-/// keeps `Label`'s icon-only fallback from kicking in under pressure, which is
-/// what `.titleAndIcon` used to be here for.
-private struct MetaLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 4) {
-            configuration.icon
-            configuration.title
-        }
-    }
-}
-
 /// How far a download has got, in the width of a glyph.
 ///
 /// Hand-drawn rather than a `ProgressView` because `.circular` on iOS is an
@@ -1641,15 +2117,19 @@ struct DownloadRing: View {
 /// duration/speakers/findings meta row.
 private struct RecordingCard: View {
     let summary: CloudRecordingSummary
-    let folders: [CloudFolder]
     /// Where this recording's audio is. The row is the only place in the app
     /// that answers this without being asked, which is the point: "can I play
     /// this on the train" is a property of the library, not of one recording.
     var audio: AudioDownloadState = .absent
 
+    /// The title with where it came from, then one line: when the meeting
+    /// was and how many people spoke (`RecordingMetaLine`, the desktop list's
+    /// facts), and at the end where the audio is, which the row's download
+    /// swipe acts on. No transcript snippet, duration, folder or findings.
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
+            // On the title's first line when the title wraps to two.
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 badge
                 Text(
                     verbatim: summary.title.isEmpty
@@ -1657,133 +2137,13 @@ private struct RecordingCard: View {
                     .font(.parley.subheadlineEmphasized)
                     .lineLimit(2)
             }
-            if let snippet = summary.snippet, !snippet.isEmpty {
-                Text(verbatim: snippet)
-                    .font(.parley.caption)
-                    .foregroundStyle(Color(.secondaryLabel))
-                    .lineLimit(2)
-            }
-            // Everything here is short and fixed except the folder name, so the
-            // fixed parts are pinned and only the folder is allowed to
-            // truncate. Without this the row wraps mid-value — "18:4 / 2" for a
-            // duration, "New busi- / ness" for a folder — which it did in both
-            // languages, worst in Chinese where the labels are widest.
-            //
-            // Pinning the rest is not enough on its own, though: the folder
-            // Label and the Spacer are then the only two children with any give,
-            // and an HStack hands each flexible child an equal share of what is
-            // left. Half the slack went to the gap in front of the date and the
-            // folder came out as "R…" / "新…" with visible room beside it. The
-            // layout priority below serves the folder first, so the Spacer gets
-            // only what the folder does not want — see `.layoutPriority(1)`.
-            //
-            // All of that holds only while the pinned values fit. From Larger
-            // Text's xLarge up they can add up to more than the screen, and a
-            // row whose children refuse to shrink makes the whole cell wider
-            // than the list: title, snippet and meta all came out clipped on
-            // both edges. So when the one line cannot fit, the meta goes on two
-            // (`stackedMeta`). `ViewThatFits` decides, measuring each option at
-            // its ideal width — which for the folder would be its full name, and
-            // a long folder would then flip a row that only needed to truncate
-            // it onto two lines. The folder's `idealWidth` below is what keeps
-            // that from happening: the one line is measured with room for a
-            // truncated name, and laid out with whatever the row really has.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    counts
-                    // The folder's slot also does the Spacer's job of pushing
-                    // the date to the trailing edge: a Spacer measures as
-                    // unbounded when `ViewThatFits` asks for an ideal width, and
-                    // the one line never "fit". The ZStack keeps the slot there
-                    // on a row with no folder, where `folderLabel` is nothing.
-                    ZStack(alignment: .leading) {
-                        Color.clear.frame(width: 0, height: 0)
-                        folderLabel
-                    }
-                    .frame(minWidth: 0, idealWidth: 44, maxWidth: .infinity, alignment: .leading)
-                    // First claim on whatever the pinned values leave
-                    // over. A long name still degrades — it just does so
-                    // after the row is actually full, not at one
-                    // character.
-                    .layoutPriority(1)
-                    Text(verbatim: Self.dateLabel(summary.createdAt)).fixedSize()
-                    statusGlyphs(pinned: true)
-                }
-                stackedMeta
-            }
-            // Durations, counts and a clock time: tabular figures so the row
-            // doesn't reflow a digit at a time as a meeting ticks over.
-            .font(.parley.caption2.monospacedDigit())
-            .lineLimit(1)
-            // Under pressure `Label` quietly falls back to icon-only, which
-            // leaves a row of glyphs with no values at all — worse than the
-            // wrapping it replaced. Pin the style so the numbers always show —
-            // and, while we are here, pin the gap between glyph and value too:
-            // the built-in one is sized for body text, and four of them at
-            // caption2 ate more of the row than the folder name did.
-            .labelStyle(MetaLabelStyle())
-            .foregroundStyle(Color(.secondaryLabel))
-        }
-    }
-
-    // MARK: meta pieces, shared by the one-line and the two-line layout
-
-    /// Duration, speakers, findings: short values that are pinned so they never
-    /// wrap mid-number.
-    @ViewBuilder
-    private var counts: some View {
-        Label(RecordingDetailView.duration(summary.durationMs), systemImage: "clock")
-            .fixedSize()
-        if let n = summary.speakerCount, n > 0 {
-            Label("\(n)", systemImage: "person.2").fixedSize()
-        }
-        if let n = summary.findingsCount, n > 0 {
-            // `lightbulb`, the same glyph the detail screen puts on the
-            // findings section. The glyph here used to be the AI stars,
-            // which said "a model wrote this" rather than "findings" —
-            // and the count is only ever about the latter.
-            Label("\(n)", systemImage: "lightbulb").fixedSize()
-        }
-    }
-
-    /// The one value on the meta line allowed to truncate. No `fixedSize`.
-    @ViewBuilder
-    private var folderLabel: some View {
-        if let fid = summary.folderId, let f = folders.first(where: { $0.id == fid }) {
-            Label(f.name, systemImage: "folder")
-                .truncationMode(.tail)
-        }
-    }
-
-    /// The glyphs that close the line: audio in the cloud, then audio here.
-    @ViewBuilder
-    private func statusGlyphs(pinned: Bool) -> some View {
-        if summary.hasAudio {
-            Image(systemName: "speaker.wave.2")
-        }
-        audioIndicator(pinned: pinned)
-    }
-
-    /// The meta when one line cannot hold it. Counts on the first line, where
-    /// they are still pinned; folder, date and status on the second, where
-    /// nothing is, so the folder and date truncate before anything widens the
-    /// row. No Spacer
-    /// on the second line: it would split the slack with the folder (the
-    /// problem the one-line layout needed `.layoutPriority` for), and at these
-    /// sizes there is no slack worth pushing the date right with.
-    ///
-    /// The counts get one more fallback: at the largest sizes even three short
-    /// pinned labels can outgrow the screen, and then they stack.
-    private var stackedMeta: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { counts }
-                VStack(alignment: .leading, spacing: 4) { counts }
-            }
             HStack(spacing: 10) {
-                folderLabel
-                Text(verbatim: Self.dateLabel(summary.createdAt))
-                statusGlyphs(pinned: false)
+                RecordingMetaLine(summary: summary)
+                Spacer(minLength: 0)
+                audioIndicator
+                    .font(.parley.caption2)
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .lineLimit(1)
             }
         }
     }
@@ -1800,7 +2160,7 @@ private struct RecordingCard: View {
     /// context menu: a button inside a `NavigationLink`'s label cannot be tapped
     /// on its own, so a tappable "Retry" here would be a lie.
     @ViewBuilder
-    private func audioIndicator(pinned: Bool) -> some View {
+    private var audioIndicator: some View {
         switch audio {
         case .local:
             Image(systemName: "iphone")
@@ -1811,43 +2171,24 @@ private struct RecordingCard: View {
         case .failed:
             Text("Download failed · Retry")
                 .foregroundStyle(Color(.secondaryLabel))
-                // Pinned on the one-line layout; free to truncate on the two-line
-                // one, where pinning it would widen the row.
-                .fixedSize(horizontal: pinned, vertical: true)
+                .fixedSize()
         case .absent:
             EmptyView()
         }
     }
 
-    /// Where the recording came from, as small caps text rather than a tinted
-    /// chip. `LIVE` keeps the recording red — it is the one word on this screen
-    /// that says "a microphone was open" — and `UPLOAD` is secondary, because a
-    /// file someone imported is the unremarkable case.
+    /// Where the recording came from, as a glyph (`RecordingSourceIcon`):
+    /// the waveform for live, the upload mark for a file. The bundled sample
+    /// also says 範例, since it is neither the user's meeting nor their file.
+    @ViewBuilder
     private var badge: some View {
-        let live = summary.source == "live"
+        RecordingSourceIcon(source: summary.source)
+            .font(.parley.footnote)
         if SampleManifest.isSample(id: summary.id) {
-            return Text("SAMPLE")
+            Text("SAMPLE")
                 .font(.parley.caption2.weight(.semibold))
                 .foregroundStyle(Color(.secondaryLabel))
         }
-        return Text(live ? "LIVE" : "UPLOAD")
-            .font(.parley.caption2.weight(.semibold))
-            .foregroundStyle(live ? Theme.recording : Color(.secondaryLabel))
-    }
-
-    /// Locale-formatted rather than one hard-coded `M/d HH:mm`: an English phone
-    /// expects Aug 9, 3:20 PM where a Chinese one expects 8月9日 下午3:20.
-    ///
-    /// The year is added for anything outside the current one. Without it a
-    /// list sorted newest first reads as out of order the moment it crosses a
-    /// new year: Mar 8 (this year) above Jul 17 (last year) looks backwards.
-    static func dateLabel(_ epochMs: Double, now: Date = .now) -> String {
-        let date = Date(timeIntervalSince1970: epochMs / 1000)
-        let style = Date.FormatStyle.dateTime.month(.abbreviated).day().hour().minute()
-        guard Calendar.current.isDate(date, equalTo: now, toGranularity: .year) else {
-            return date.formatted(style.year())
-        }
-        return date.formatted(style)
     }
 }
 
@@ -1879,7 +2220,7 @@ private struct RecordingCard: View {
                         // first row is on the phone, the second is arriving, the
                         // third is cloud-only.
                         RecordingCard(
-                            summary: rec, folders: ScreenshotDemo.folders,
+                            summary: rec,
                             audio: previewAudioState(rec.id))
                     }
                     .modifier(RecordingRow())
@@ -1898,7 +2239,7 @@ private struct RecordingCard: View {
             List {
                 ForEach(ScreenshotDemo.recordings) { rec in
                     RecordingCard(
-                        summary: rec, folders: ScreenshotDemo.folders,
+                        summary: rec,
                         audio: previewAudioState(rec.id))
                         .modifier(RecordingRow())
                 }
@@ -1920,3 +2261,20 @@ private struct RecordingCard: View {
             .environmentObject(TabRouter())
     }
 #endif
+
+/// A draft row that opens the draft's read-only page — with, on 即將開始的會議,
+/// a 開始 at its trailing edge for a quick start: beside the link, not inside
+/// it, so a tap on 開始 never also opens the page.
+private struct NavigationLinkRow: View {
+    let id: String
+    let row: DraftRow
+    let onStart: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            NavigationLink(value: LibraryRoute.draft(id)) { row }
+                .buttonStyle(.plain)
+            if let onStart { DraftStartButton(action: onStart) }
+        }
+    }
+}

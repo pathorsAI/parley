@@ -1,3 +1,4 @@
+import AVFoundation
 import ParleyKit
 import SwiftUI
 
@@ -5,11 +6,20 @@ import SwiftUI
 /// transcript grow. Signed-in users stream through the hosted STT relay with
 /// their session token — no API keys on the phone.
 ///
-/// Everything below the transcript is one column that answers one question in
-/// order: *is it recording* (the red dot and the sentence), *for how long* (the
-/// timer), *is it hearing me* (the waveform), and *how do I stop* (the circle).
-/// Nothing on it is filled or tinted; the only colour is the recording red and
-/// the blue on whoever is talking right now.
+/// It has two layouts, one per question the screen is answering.
+///
+/// **Between meetings** it is the record button: the transcript of the last
+/// meeting (or the empty state), then one column that says whether it is
+/// recording, for how long, whether it hears anything, and how to start.
+///
+/// **During a meeting** — recording or paused, and while it finishes — it is
+/// the desktop's meeting window (`src/components/live/MeetingFloatingWindow.tsx`)
+/// laid out for a phone: the recording clock and the microphone along the top,
+/// one warning strip at most, the meeting's name, date and folder, the
+/// transcript in a tabbed panel, and Pause and End along the bottom. Same
+/// pieces, same order, same quiet greys, so a person who uses both reads them
+/// as one product. The only colour is meaning: the recording red, the blue of
+/// what is live or tappable, and the warning amber.
 struct LiveView: View {
     @EnvironmentObject private var app: AppState
     /// Everything about the recording itself lives in the recorder, including
@@ -21,15 +31,23 @@ struct LiveView: View {
     /// notices that dot opens Parley and lands *here*, and a record screen that
     /// says "not recording" while the indicator is on reads as a lie.
     @ObservedObject private var dictation = DictationCoordinator.shared
-    /// The name-and-folder suggestion for the recording that just finished. It
-    /// owns the pass and its own accepted state, so this view only has to say
-    /// where the block goes and when a new recording retires it.
-    @StateObject private var filing = FilingSuggestionModel()
-    /// The meeting the `mic_recovery` prompt is about, when it is up. Latched
-    /// on the meeting ending — see `MeetingRecorder.micRecoveries` — and
-    /// cleared by the next meeting, a send, or ✕.
+    /// Where a meeting goes once its upload settles: its result page on the
+    /// Library tab. See `TabRouter.openEndedMeeting`.
+    @EnvironmentObject private var router: TabRouter
+    /// The meeting the `mic_recovery` prompt is about, when it is up here.
+    /// Only for a meeting whose upload did NOT settle — one that did is asked
+    /// about on its result page instead (`RecordingDetailView`). Latched once
+    /// the upload has an outcome, and cleared by the next meeting, a send, or
+    /// ✕.
     @State private var micPrompt: MeetingRecorder.FinishedMeeting?
     @State private var showDiscardConfirm = false
+    /// The folder picker for the meeting in progress.
+    @State private var choosingFolder = false
+    /// The user's personal folders, loaded when a meeting starts: the picker
+    /// lists them, and the folder chip names the default destination with
+    /// them before anything has been picked.
+    @State private var folders: [CloudFolder] = []
+    @FocusState private var titleFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
@@ -48,53 +66,22 @@ struct LiveView: View {
     /// written on iOS 18, which can report scroll geometry; on 17 it stays
     /// false and the way back is the "Latest" control alone.
     @State private var transcriptAtBottom = false
-    /// How far open the controls panel is while recording, 0 (one row) to 1
-    /// (everything). A fraction rather than points so the choice survives a
-    /// Dynamic Type change or a status line that wraps, both of which move
-    /// the panel's full height; persisted so the next meeting — and the next
-    /// launch — opens the panel the way this person last left it.
-    @AppStorage(Self.controlsFractionKey) private var controlsFraction: Double = 1
-    /// The panel's height while a finger is on it, and where that drag began.
-    /// Nil at rest, when the height is `controlsFraction`'s. Kept apart from
-    /// the stored fraction so a drag writes to `UserDefaults` once, on
-    /// release, rather than sixty times a second.
-    @State private var dragHeight: Double?
-    @State private var dragStart: Double?
-    /// The natural heights of the panel's pieces, read off a hidden copy of
-    /// them (`metricsProbe`). Seeded with the default text size's values so
-    /// the first frame is already about right.
-    @State private var measured = LiveControlsLayout.Metrics(
-        statusRow: 18, timer: 41, waveform: 28, statusLine: 16)
-
-    static let controlsFractionKey = "liveControlsFraction"
+    /// The last `TabRouter.draftStartRequest` acted on.
+    /// The 查看會議草稿 sheet is up.
+    @State private var showingDraft = false
+    @State private var handledDraftStart = 0
+    /// The draft the meeting now starting was started from, until the
+    /// microphone is open (then the draft is hidden) or the start fails.
+    @State private var startingDraftId: String?
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                transcript
-                // Above the controls, not in the transcript: it is about the
-                // recording that just ended, and it must not scroll away with
-                // the words.
-                if let micPrompt {
-                    FeedbackPromptCard(
-                        trigger: .micRecovery,
-                        recordingId: micPrompt.id,
-                        text: Text(
-                            "The microphone dropped \(micPrompt.micRecoveries) times during this recording."),
-                        send: {
-                            self.micPrompt = nil
-                            sendMicReport(micPrompt)
-                        },
-                        close: { withAnimation { self.micPrompt = nil } })
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
+            Group {
+                if showsMeeting {
+                    meetingScreen
+                } else {
+                    idleScreen
                 }
-                FilingSuggestionCard(model: filing)
-                if dictation.window.isOpen() && !recorder.isInMeeting {
-                    micWindowBar
-                }
-                Divider()
-                controls
             }
             .background(Theme.background)
             // No visible title: the tab bar already says Record, and a
@@ -109,23 +96,28 @@ struct LiveView: View {
                 ToolbarItem(placement: .principal) {
                     Text(verbatim: "").accessibilityHidden(true)
                 }
-                // Copying works mid-meeting on purpose: the reason to grab a
-                // line is usually that it was just said.
-                ToolbarItem(placement: .topBarTrailing) {
-                    CopyTranscriptButton(
-                        text: {
-                            TranscriptClipboard.plainText(recorder.segments) {
-                                TranscriptClipboard.liveLabel(for: $0)
-                            }
-                        },
-                        isEmpty: recorder.segments.isEmpty)
-                }
             }
+            // During a meeting the header row is the top of the screen, as the
+            // title bar is the top of the desktop's meeting window; an empty
+            // navigation bar above it would only push the transcript down.
+            .toolbar(.hidden, for: .navigationBar)
             // `parley://record`, from the lock screen. `.onAppear` covers the
             // cold launch, where the note was left before this view existed;
             // `.onReceive` covers a warm one, where it already does.
             .onAppear { takeQuickRecord() }
             .onReceive(QuickRecordInbox.shared.$requestedAt) { if $0 != nil { takeQuickRecord() } }
+            // A meeting draft's 開始, from the Library (`TabRouter.startDraft`).
+            .task(id: router.draftStartRequest) { takeDraftStart() }
+            .onChange(of: recorder.phase) {
+                guard let id = startingDraftId else { return }
+                switch recorder.phase {
+                case .recording:
+                    router.markDraftStarted(id)
+                    startingDraftId = nil
+                case .starting: break
+                default: startingDraftId = nil
+                }
+            }
             // Coming back from Settings is the moment a refused microphone may
             // have been turned on; checking here is what takes the "Open
             // Settings" button down without asking for another tap on record.
@@ -138,49 +130,688 @@ struct LiveView: View {
             .onChange(of: recorder.lostMicrophone) {
                 if recorder.lostMicrophone { Task { await recorder.stop(app: app) } }
             }
-            // `mic_recovery`: asked once, as the meeting it is about ends.
+            // The next meeting starting (or the handoff below) clears the
+            // meeting the prompt was about, and the prompt with it.
             .onChange(of: recorder.finished?.id) {
-                guard let finished = recorder.finished else {
-                    micPrompt = nil
-                    return
-                }
-                guard FeedbackConditions.isMicRecoveryWorthAsking(finished.micRecoveries),
-                    FeedbackCenter.shared.mayOffer(.micRecovery, recordingId: finished.id)
+                if recorder.finished == nil { micPrompt = nil }
+            }
+            // `mic_recovery` on this screen: asked once the upload has an
+            // outcome and it was not a settled one. Not on `finished` itself,
+            // which is set before the upload is even tried: a prompt that went
+            // up during "Uploading…" would be whisked away by the handoff a
+            // second later, its one showing spent on nobody reading it.
+            .onChange(of: recorder.isBusy) {
+                guard !recorder.isBusy, recorder.settled == nil,
+                    let finished = recorder.finished, finished.offersMicRecoveryPrompt
                 else { return }
                 withAnimation { micPrompt = finished }
             }
-            // Keyed on the settled recording rather than on the meeting ending:
-            // the suggestion is a write against a recording the cloud already
-            // holds, so it cannot be offered before the upload lands. The
-            // recorder clears `settled` when the next meeting starts, which is
-            // what takes the previous block down.
+            // End, as on the desktop, ends on the recording's result page. Keyed
+            // on the settled recording rather than on the meeting ending: the
+            // page reads the recording from the cloud, so it cannot open before
+            // the upload lands. Until then the disc keeps its "Wrapping up…"
+            // spinner; an upload that never settles (background, quota,
+            // offline, too short) stays here with its status line, as before.
+            //
+            // The recorder is cleared in the same beat, so coming back to
+            // Record finds the screen for the next meeting rather than the
+            // transcript of one that now has a page of its own. The filing
+            // suggestion and the mic prompt travel with the handoff.
             .onChange(of: recorder.settled?.id) {
-                if let settled = recorder.settled {
-                    // A rename or a filing accepted on this card changes a
-                    // row the Library tab already has on screen; tell it, or
-                    // going over there shows the clock name it loaded first.
-                    filing.onApplied = { _, _, _ in app.noteLibraryChanged() }
-                    filing.consider(settled, app: app)
-                } else {
-                    filing.forget()
-                }
+                guard let settled = recorder.settled else { return }
+                router.openEndedMeeting(
+                    EndedMeeting(settled: settled, finished: recorder.finished))
+                micPrompt = nil
+                recorder.clearEndedMeeting()
             }
+            // A new meeting is a new transcript, and its folder chip needs the
+            // folder names to say where the default sends it.
+            .onChange(of: recorder.isInMeeting) {
+                guard recorder.isInMeeting else { return }
+                followsLive = true
+                segmentsWhenLeft = 0
+                Task { await loadFolders() }
+            }
+            .sheet(isPresented: $choosingFolder) { folderPicker }
             #if DEBUG
-                .task { ScreenshotDemo.seedRecordScreen(recorder, filing: filing) }
+                .task {
+                    ScreenshotDemo.seedRecordScreen(recorder)
+                    if recorder.isInMeeting { await loadFolders() }
+                    // `record-draft` opens the draft sheet with nobody tapping.
+                    if ScreenshotDemo.shared.showDraftMeeting, recorder.meetingDraft != nil {
+                        try? await Task.sleep(for: .milliseconds(800))
+                        showingDraft = true
+                    }
+                }
             #endif
         }
     }
 
-    private func sendMicReport(_ meeting: MeetingRecorder.FinishedMeeting) {
-        let context = FeedbackDiagnostics.Context(
-            recordingId: meeting.id, recordingDurationMs: Int(meeting.durationMs),
-            transcriptSegments: meeting.transcriptSegments,
-            lastSegmentEndMs: Int(meeting.lastSegmentEndMs),
-            micRecoveries: meeting.micRecoveries)
-        Task {
-            await FeedbackCenter.shared.send(
-                .micRecovery, recordingId: meeting.id, context: context)
+    /// The meeting layout stays up through `.finishing` — the relay draining
+    /// its last sentence — so End can turn into its spinner where it was
+    /// pressed, as the desktop's does, instead of the screen changing under
+    /// the finger the moment it is tapped. The upload after that belongs to
+    /// the record screen, which shows it on the disc.
+    private var showsMeeting: Bool {
+        recorder.isInMeeting || recorder.phase == .finishing
+    }
+
+    private var copyButton: some View {
+        // Copying works mid-meeting on purpose: the reason to grab a line is
+        // usually that it was just said.
+        CopyTranscriptButton(
+            text: {
+                TranscriptClipboard.plainText(recorder.segments) {
+                    TranscriptClipboard.liveLabel(for: $0)
+                }
+            },
+            isEmpty: recorder.segments.isEmpty)
+    }
+
+    // MARK: - Between meetings
+
+    /// The transcript of the meeting that just ended (or the empty state),
+    /// what is left to say about it, and the record button.
+    private var idleScreen: some View {
+        VStack(spacing: 0) {
+            // Before a meeting, the heading is the next one's: name it and
+            // pick its folder now, and the recording starts under them. With
+            // the last meeting's transcript still on screen — an upload that
+            // did not settle, so no result page took it — the heading would
+            // read as that meeting's, so the page keeps only the copy button
+            // for it.
+            if recorder.segments.isEmpty {
+                meetingHeading
+            } else {
+                HStack {
+                    Spacer()
+                    copyButton
+                        .font(.parley.body)
+                        .tint(Color(.label).opacity(0.8))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .padding(.horizontal, 8)
+            }
+            transcriptPanel
+            // Above the dock, not in the transcript: it is about the
+            // recording that just ended, and it must not scroll away with
+            // the words.
+            if let micPrompt {
+                FeedbackPromptCard(
+                    trigger: .micRecovery,
+                    recordingId: micPrompt.id,
+                    text: Text(
+                        "The microphone dropped \(micPrompt.micRecoveries) times during this recording."),
+                    send: {
+                        self.micPrompt = nil
+                        micPrompt.sendMicRecoveryReport()
+                    },
+                    close: { withAnimation { self.micPrompt = nil } })
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+            }
+            if dictation.window.isOpen() {
+                micWindowBar
+            }
+            idleDock
         }
+    }
+
+    // MARK: - During a meeting
+
+    /// The desktop's meeting window, reordered for a hand: what the meeting
+    /// *is* on top — its name, day, folder and transcript — and everything
+    /// you *do* in one dock along the bottom, under the thumb: the clock and
+    /// the microphone, the waveform the record screen has always had, and
+    /// discard, pause and end. The panel takes whatever height is left.
+    private var meetingScreen: some View {
+        VStack(spacing: 0) {
+            warningStrip
+            meetingHeading
+            transcriptPanel
+            controlDock
+        }
+        .confirmationDialog(
+            "Cancel this meeting?", isPresented: $showDiscardConfirm, titleVisibility: .visible
+        ) {
+            Button("Discard meeting", role: .destructive) {
+                Task { await recorder.discard() }
+            }
+            Button("Keep meeting", role: .cancel) {}
+        } message: {
+            Text(
+                "The transcript and recording will be discarded — nothing is saved and no analysis runs. This cannot be undone."
+            )
+        }
+    }
+
+    // MARK: Control dock
+
+    /// Everything the meeting is operated with, together at the bottom: the
+    /// clock and the microphone on one line, the live waveform under them —
+    /// *is it hearing me*, the question the record screen has always answered
+    /// at a glance — and the three actions. Discard sits apart from End on the
+    /// left, so the two ways out are never side by side under a thumb.
+    private var controlDock: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                clockPill
+                Spacer(minLength: 8)
+                micChip
+            }
+            WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: isHearing)
+                .frame(height: 30)
+                .accessibilityHidden(true)
+            HStack(spacing: 8) {
+                discardButton
+                pauseButton
+                Spacer(minLength: 8)
+                endButton
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .overlay(alignment: .top) { hairline }
+    }
+
+    /// The recording clock: a pulsing red dot and the elapsed time on a grey
+    /// capsule. Paused — by the user, or by a call holding the microphone —
+    /// the dot goes grey and still, and 已暫停 follows the time. Red is the
+    /// only colour a running meeting wears, so it is the only thing here that
+    /// moves.
+    private var clockPill: some View {
+        let held = recorder.isPaused || recorder.heldBySystem
+        return HStack(spacing: 8) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(held ? Color(.tertiaryLabel) : Theme.recording)
+                .symbolEffect(.pulse, options: .repeating, isActive: !held && !reduceMotion)
+                .accessibilityHidden(true)
+            if recorder.clock != nil {
+                clockText(font: .parley.clock)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            if held {
+                Text("Paused")
+                    .font(.parley.caption.weight(.medium))
+                    .foregroundStyle(Color(.secondaryLabel))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color(.tertiarySystemFill)))
+        .accessibilityElement(children: .combine)
+        // The pill sizes to the time in it, which can be long at the largest
+        // text sizes; past these it would push the controls off the row.
+        .dynamicTypeSize(...DynamicTypeSize.accessibility2)
+    }
+
+    /// The microphone, in the spirit of the desktop's `MicChip`: whether it
+    /// hears anything (three bars that move with the level), whether the live
+    /// transcript is in trouble (the same badge the record column used to
+    /// carry), and — opened — which input is recording and the status line
+    /// that used to sit under the transcript. The input is in the menu rather
+    /// than on the chip: a phone's header has no room for a device name, and a
+    /// truncated one says less than none.
+    private var micChip: some View {
+        Menu {
+            Section(inputName) {
+                if let status = recorder.status {
+                    Text(verbatim: status)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: recorder.heldBySystem ? "mic.slash.fill" : "mic.fill")
+                    .font(.parley.footnote)
+                    .foregroundStyle(Color(.label))
+                if healthNeedsAttention {
+                    healthBadge
+                } else {
+                    ChipMeter(level: isHearing ? recorder.micLevel : 0)
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Color(.tertiaryLabel))
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .overlay(Capsule().stroke(Color(.separator), lineWidth: 1))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("Microphone: \(inputName)"))
+        .accessibilityValue(Text(verbatim: recorder.status ?? ""))
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+    }
+
+    /// The input the meeting is recording from, as the system names it
+    /// ("iPhone Microphone", a headset). Read on each draw rather than
+    /// observed: the chip redraws with every level update anyway.
+    private var inputName: String {
+        AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName
+            ?? String(localized: "Microphone")
+    }
+
+    /// ✕, the desktop title bar's way out, in the dock: throw the meeting
+    /// away, after the desktop's own confirmation. Grey, not red — the red
+    /// belongs in the confirmation and on End's square.
+    private var discardButton: some View {
+        Button {
+            titleFocused = false
+            showDiscardConfirm = true
+        } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color(.secondaryLabel))
+                .frame(width: 42, height: 42)
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color(.tertiarySystemFill)))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(recorder.isBusy || recorder.phase == .finishing)
+        .accessibilityLabel(Text("Cancel meeting"))
+    }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(Color(.separator))
+            .frame(height: 0.5)
+    }
+
+    // MARK: Warning strip
+
+    /// One warning at a time, under the header, in the desktop's amber and its
+    /// order (`LiveBanners`): the most urgent thing the meeting is not doing
+    /// first. iOS has its own three — a call holding the microphone, a
+    /// dropped transcription redialling, and live transcription given up —
+    /// and no detector for the desktop's no-audio or long-silence strips, so
+    /// those have no phone counterpart.
+    @ViewBuilder
+    private var warningStrip: some View {
+        if let warning = currentWarning {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Group {
+                    switch warning {
+                    case .reconnecting:
+                        ProgressView()
+                            .controlSize(.mini)
+                            .tint(Theme.warning)
+                    case .micHeld:
+                        Image(systemName: "mic.slash")
+                    case .transcriptionStopped:
+                        Image(systemName: "bolt.horizontal.circle")
+                    }
+                }
+                .font(.parley.caption)
+                .foregroundStyle(Theme.warning)
+                .accessibilityHidden(true)
+                warningText(warning)
+                    .font(.parley.caption)
+                    .foregroundStyle(Color(.label))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Theme.warning.opacity(0.12))
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(Theme.warning.opacity(0.35)).frame(height: 0.5)
+            }
+            .accessibilityElement(children: .combine)
+            .transition(.opacity)
+        }
+    }
+
+    private enum Warning {
+        case micHeld, reconnecting, transcriptionStopped
+    }
+
+    /// Nothing is being recorded outranks the transcript pausing, which
+    /// outranks the transcript having stopped for good — the recording, which
+    /// is what the user keeps, is unaffected by the last two.
+    private var currentWarning: Warning? {
+        if recorder.heldBySystem { return .micHeld }
+        switch recorder.transcription {
+        case .reconnecting: return .reconnecting
+        case .stopped where recorder.status != nil: return .transcriptionStopped
+        default: return nil
+        }
+    }
+
+    @ViewBuilder
+    private func warningText(_ warning: Warning) -> some View {
+        switch warning {
+        case .micHeld:
+            Text(
+                "Recording paused while a call or another app uses the microphone. It picks up again on its own."
+            )
+        case .reconnecting:
+            Text(
+                "Transcription dropped — reconnecting… The recording is still running. What's said during a short drop catches up in the transcript; a longer gap is kept in the recording but won't appear in the live transcript."
+            )
+        case .transcriptionStopped:
+            // Already localized by the recorder: which sentence depends on
+            // why it gave up (quota, signed out, out of retries).
+            Text(verbatim: recorder.status ?? "")
+        }
+    }
+
+    // MARK: Heading
+
+    /// The meeting's name, day and folder, as under the desktop's title bar.
+    /// The name and the folder are the recording's: `MeetingRecorder` saves
+    /// it under them when it ends.
+    private var meetingHeading: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            TextField(
+                text: $recorder.meetingTitle,
+                prompt: Text("Untitled meeting").foregroundStyle(Color(.tertiaryLabel))
+            ) {
+                Text("Meeting name")
+            }
+            .font(.parley.title2)
+            .foregroundStyle(Color(.label))
+            .submitLabel(.done)
+            .focused($titleFocused)
+            .onSubmit { titleFocused = false }
+            // Room for the copy button, so a long name never runs under it.
+            .padding(.trailing, 36)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // On the name's own line, centred on it.
+            .overlay(alignment: .trailing) {
+                copyButton
+                    .font(.parley.body)
+                    .tint(Color(.label).opacity(0.8))
+                    .frame(width: 40, height: 44)
+                    .contentShape(Rectangle())
+                    .offset(x: 8)
+            }
+            // The date and the folder as chips, and — for a meeting started
+            // from a draft — the draft as a link at the row's far end, all on
+            // one centre line.
+            HStack(spacing: 8) {
+                dateChip
+                folderChip
+                Spacer(minLength: 0)
+                if recorder.meetingDraft != nil { draftLink }
+            }
+        }
+        .sheet(isPresented: $showingDraft) {
+            if let meetingDraft = recorder.meetingDraft {
+                NavigationStack {
+                    // The agenda is the meeting's, tickable; the rest is the draft.
+                    MeetingDraftDetailView(
+                        draft: meetingDraft.draft, folder: meetingDraft.folder,
+                        agenda: $recorder.agenda)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showingDraft = false }
+                            }
+                        }
+                }
+                .presentationDetents([.medium, .large])
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+    }
+
+    /// 2026/10/30 — the meeting's day, in the desktop's numeric form.
+    private var dateChip: some View {
+        let day = Calendar.current.dateComponents(
+            [.year, .month, .day], from: recorder.startedAt ?? Date())
+        let stamp = String(
+            format: "%04d/%02d/%02d", day.year ?? 0, day.month ?? 0, day.day ?? 0)
+        return HStack(spacing: 6) {
+            Image(systemName: "calendar")
+                .font(.parley.caption2)
+                .accessibilityHidden(true)
+            Text(verbatim: stamp)
+                .font(.parley.caption)
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.primary)
+        .padding(.horizontal, 8)
+        .frame(minHeight: 26)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color(.quaternarySystemFill)))
+        .fixedSize()
+    }
+
+    /// Where the recording will land: dashed with 放進資料夾 while nothing but
+    /// the personal top level is set, solid with the place once there is one —
+    /// picked here, or the app's default destination. Tapping it opens the
+    /// same folder picker the filing card uses.
+    private var folderChip: some View {
+        let label = folderLabel
+        let isOrg = (recorder.meetingFolder?.destination ?? app.defaultSave).isOrg
+        return Button {
+            titleFocused = false
+            choosingFolder = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: isOrg ? "person.2" : "folder")
+                    .font(.parley.caption2)
+                    .accessibilityHidden(true)
+                Text(verbatim: label ?? String(localized: "Add to folder"))
+                    .font(.parley.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .foregroundStyle(label == nil ? Color(.secondaryLabel) : Color(.label))
+            .padding(.horizontal, 8)
+            .frame(minHeight: 26)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(label == nil ? Color.clear : Color(.quaternarySystemFill)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        Color(.separator),
+                        style: StrokeStyle(lineWidth: 1, dash: label == nil ? [3, 2] : [])))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(verbatim: label ?? String(localized: "Add to folder")))
+        .accessibilityHint(Text("Choose a folder"))
+    }
+
+    /// 會議草稿: the draft this meeting was started from, read-only in a
+    /// sheet — what was prepared for it, at hand while it runs. A blue link
+    /// rather than a chip: it opens something, it does not describe the
+    /// recording.
+    private var draftLink: some View {
+        Button {
+            titleFocused = false
+            showingDraft = true
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "doc.text")
+                    .font(.parley.caption2)
+                    .accessibilityHidden(true)
+                Text("Meeting draft")
+                    .font(.parley.caption)
+                    .lineLimit(1)
+            }
+            // A long folder name gives way, not this.
+            .fixedSize()
+            .foregroundStyle(Theme.primary)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(Text("View meeting draft"))
+    }
+
+    /// The chip's words: the pick, else the default destination when it is
+    /// somewhere other than the personal top level; nil for "nowhere chosen".
+    private var folderLabel: String? {
+        if let chosen = recorder.meetingFolder { return chosen.label }
+        let fallback = app.defaultSave
+        guard fallback.isOrg || fallback.folderId != nil else { return nil }
+        if !fallback.isOrg, let id = fallback.folderId,
+            let folder = folders.first(where: { $0.id == id })
+        {
+            return folder.name
+        }
+        return fallback.label(orgs: app.orgs, folders: folders)
+    }
+
+    /// The picker, for the meeting in progress. Its confirm is a choice, not a
+    /// move — there is no recording yet to move — and the choice is saved
+    /// into when the meeting ends. A new folder is created on confirm, since
+    /// it is the one moment someone has said they want it; an organization
+    /// gets a shared copy, as the app's default destination does.
+    private var folderPicker: some View {
+        let orgGroups: (() async -> [FolderGroup])? =
+            app.orgs.isEmpty && !demoServesOrgs ? nil : { await FolderGroup.organizations(app: app) }
+        return FolderPickerSheet(
+            groups: [.personal(folders)],
+            loadMoreGroups: orgGroups,
+            current: (recorder.meetingFolder?.destination ?? app.defaultSave).folderDestination,
+            canCreate: true,
+            title: "Choose a folder",
+            confirm: .choose,
+            orgTransfer: .copy,
+            onConfirm: { destination, label in
+                var picked = destination
+                var name = label
+                if case .newFolder(let folderName) = destination {
+                    let folder = try await app.cloud.createFolder(name: folderName)
+                    folders.append(folder)
+                    picked = .folder(id: folder.id, orgId: nil)
+                    name = folder.name
+                }
+                guard let save = SaveDestination(picked) else { return }
+                recorder.meetingFolder = .init(destination: save, label: name)
+            })
+    }
+
+    private var demoServesOrgs: Bool {
+        #if DEBUG
+            return ScreenshotDemo.servesFixtures
+        #else
+            return false
+        #endif
+    }
+
+    /// The personal folders, for the picker and the chip. Best-effort: an
+    /// empty list still lets the user pick the top level or create one.
+    private func loadFolders() async {
+        #if DEBUG
+            if ScreenshotDemo.servesFixtures {
+                folders = ScreenshotDemo.folders
+                return
+            }
+        #endif
+        guard app.signedIn else { return }
+        if let loaded = try? await app.cloud.listFolders() {
+            folders = loaded.filter { $0.orgId == nil }
+        }
+    }
+
+    // MARK: Panel
+
+    /// The transcript on the desktop's muted, rounded panel. No tab strip and
+    /// no label: while recording the phone shows the transcript and nothing
+    /// else, so a lone 逐字稿 tab only named what is plainly there. When Notes
+    /// or Coach come to the phone, the desktop's tabs come back above it.
+    private var transcriptPanel: some View {
+        transcript(inPanel: true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(.quaternarySystemFill)))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 12)
+    }
+
+    // MARK: Pause and End
+
+    private var pauseButton: some View {
+        let paused = recorder.isPaused
+        return Button {
+            if paused { recorder.resume() } else { recorder.pause() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: paused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .accessibilityHidden(true)
+                Text(paused ? "Resume" : "Pause")
+                    .font(.parley.subheadlineEmphasized)
+            }
+            .foregroundStyle(paused ? Theme.primary : Color(.secondaryLabel))
+            .padding(.leading, 14)
+            .padding(.trailing, 16)
+            // Larger than the desktop's 32 px: on a phone these are the
+            // meeting's two main controls, under a thumb.
+            .frame(minHeight: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(paused ? Theme.primary.opacity(0.12) : Color(.tertiarySystemFill)))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        // Inert while the microphone is still opening — there is nothing to
+        // pause yet — and once End has been pressed.
+        .disabled(recorder.phase != .recording && !paused)
+        .opacity(recorder.phase == .starting ? 0.5 : 1)
+    }
+
+    /// 結束: a small filled red square and the word, in the same grey as
+    /// Pause. A spinner while the relay drains the last sentence.
+    private var endButton: some View {
+        let finishing = recorder.phase == .finishing
+        return Button {
+            titleFocused = false
+            guard recorder.isInMeeting else { return }
+            Task { await recorder.stop(app: app) }
+        } label: {
+            HStack(spacing: 7) {
+                Group {
+                    if finishing {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        RoundedRectangle(cornerRadius: 2, style: .continuous)
+                            .fill(Theme.recording)
+                            .frame(width: 10, height: 10)
+                    }
+                }
+                .frame(width: 14, height: 14)
+                .accessibilityHidden(true)
+                Text("End")
+                    .font(.parley.subheadlineEmphasized)
+            }
+            .foregroundStyle(Color(.secondaryLabel))
+            .padding(.leading, 14)
+            .padding(.trailing, 16)
+            // Larger than the desktop's 32 px: on a phone these are the
+            // meeting's two main controls, under a thumb.
+            .frame(minHeight: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color(.tertiarySystemFill)))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!recorder.isInMeeting)
+        .accessibilityLabel(finishing ? Text("Wrapping up…") : Text("End"))
     }
 
     // MARK: - Transcript
@@ -188,19 +819,20 @@ struct LiveView: View {
     /// One flowing column, like the desktop's transcript: no rows, no rules, no
     /// cards — a turn is separated from the next by whitespace and by its own
     /// speaker label, which is all a reader needs to see where one ends.
-    private var transcript: some View {
+    /// `inPanel`: inside the meeting's tabbed panel, with its tighter gutter.
+    private func transcript(inPanel: Bool) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 20) {
                     if recorder.segments.isEmpty {
-                        emptyState
+                        if recorder.isInMeeting { listeningState } else { emptyState }
                     }
                     ForEach(recorder.segments, id: \.id) { seg in
                         SegmentRow(segment: seg, isCurrent: seg.id == currentSpeakingID)
                             .id(seg.id)
                     }
                 }
-                .padding(20)
+                .padding(inPanel ? 16 : 20)
             }
             // A user pan stops following. `simultaneousGesture` so the scroll
             // view still scrolls — this only wants to know — and it never fires
@@ -229,24 +861,18 @@ struct LiveView: View {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
-            // Resizing the panel resizes this scroll view from the bottom, and
-            // a scroll view keeps its top still — so without this, pulling the
-            // panel down would uncover older lines while the newest one, the
-            // one being read, slid out of view under the finger. Unanimated:
-            // it tracks the drag frame by frame. Only while following: a
-            // reader who has scrolled up is reading an older line, and the
-            // top staying still is what keeps *that* one under their eyes.
-            .onChange(of: panelHeight) {
-                if recorder.isInMeeting, followsLive, let last = recorder.segments.last {
+            // The panel is laid out afresh when the meeting starts, and the
+            // keyboard for the title shrinks it from the bottom; a scroll view
+            // keeps its top still, so without this the line being read would
+            // slide out of view. Only while following.
+            .onAppear {
+                if followsLive, let last = recorder.segments.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
-            // A new meeting is a new transcript; whatever the reader was
-            // re-reading in the last one is gone.
-            .onChange(of: recorder.isInMeeting) {
-                if recorder.isInMeeting {
-                    followsLive = true
-                    segmentsWhenLeft = 0
+            .onChange(of: titleFocused) {
+                if followsLive, let last = recorder.segments.last {
+                    proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
             // The fade is scoped to the overlay: on the scroll view it would
@@ -329,73 +955,26 @@ struct LiveView: View {
         .padding(.bottom, 24)
     }
 
+    /// The panel before the first words arrive, as the desktop's says it.
+    private var listeningState: some View {
+        Text("Listening…")
+            .font(.parley.subheadline)
+            .foregroundStyle(Color(.secondaryLabel))
+            .frame(maxWidth: .infinity)
+            .padding(.top, 48)
+    }
+
     // MARK: - Status
 
-    /// Recording is a state, and this is the sentence that says so: the red dot
-    /// the whole platform uses, and two facts joined by a middot — that it is
-    /// recording, and that the words are arriving live. Only while a meeting is
-    /// actually running; there is no "not recording" to announce.
-    @ViewBuilder
-    private var recordingStatus: some View {
-        if recorder.isInMeeting {
-            recordingStatusRow
-        }
-    }
-
-    /// The row itself, unconditionally — `metricsProbe` measures it before
-    /// any meeting has started, so the panel knows its full height the moment
-    /// one does.
-    ///
-    /// Paused, the same row says so instead, and says what it means: the
-    /// microphone is still open (the orange dot stays), so the sentence has to
-    /// be the one that says nothing is being kept.
-    private var recordingStatusRow: some View {
-        HStack(spacing: 7) {
-            stateDot
-            Group {
-                if recorder.heldBySystem {
-                    // A call, Siri, an alarm: the system has the microphone,
-                    // and the meeting resumes by itself when it lets go.
-                    Text("On a call · recording paused")
-                } else if recorder.isPaused {
-                    Text("Paused · nothing is being recorded")
-                } else {
-                    Text("Recording · live transcript")
-                }
-            }
-            .font(.parley.footnote)
-            .foregroundStyle(Color(.secondaryLabel))
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    /// The red dot while recording; a pause glyph, in ink rather than red,
-    /// while paused, because red is the colour of "this is being recorded".
-    @ViewBuilder
-    private var stateDot: some View {
-        if recorder.isPaused || recorder.heldBySystem {
-            Image(systemName: "pause.fill")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(Color(.secondaryLabel))
-                .frame(width: 8, height: 8)
-        } else {
-            Circle()
-                .fill(Theme.recording)
-                .frame(width: 8, height: 8)
-        }
-    }
-
     /// Chunks are reaching the file. Not while starting's microphone is still
-    /// opening, which the waveform has always shown as live anyway, and not
+    /// opening, which the level has always shown as live anyway, and not
     /// while paused, when they are dropped.
     private var isHearing: Bool {
         recorder.isInMeeting && !recorder.isPaused && !recorder.heldBySystem
     }
 
-    /// The transcription is paused or over. That is the one fact on this
-    /// panel that must survive any amount of shrinking: a person who has
-    /// collapsed the controls to read more is exactly the person who would
-    /// otherwise not notice the words had stopped arriving.
+    /// The transcription is paused or over — the one fact about the live
+    /// transcript worth a mark of its own, wherever there is room for one.
     private var healthNeedsAttention: Bool {
         switch recorder.transcription {
         case .reconnecting, .stopped: return true
@@ -403,10 +982,10 @@ struct LiveView: View {
         }
     }
 
-    /// The status line's glyph on its own, for wherever the sentence no
-    /// longer fits: beside the timer in a shortened column, and in the
-    /// compact row. Same glyph, same colour as in `statusLine`, so it reads as
-    /// the same warning at a smaller size. VoiceOver gets the whole sentence.
+    /// The status sentence's glyph on its own: on the microphone chip during a
+    /// meeting, beside the timer between them when there is no sentence. Same
+    /// glyph, same colour as in `statusLine`, so it reads as the same warning
+    /// at a smaller size. VoiceOver gets the whole sentence.
     @ViewBuilder
     private var healthBadge: some View {
         if healthNeedsAttention {
@@ -417,7 +996,7 @@ struct LiveView: View {
                         .tint(Theme.warning)
                 } else {
                     Image(systemName: "bolt.horizontal.circle")
-                        .font(.parley.subheadline)
+                        .font(.parley.footnote)
                         .foregroundStyle(Color(.label))
                 }
             }
@@ -426,12 +1005,13 @@ struct LiveView: View {
         }
     }
 
-    /// The one line under the transcript. Its *look* is the transcription's
-    /// health, not just its words: a reconnect is a spinner in amber, because
-    /// it is a pause the recording will come back from, while the sentence
-    /// that says live transcription is over gets the icon and the weight of
-    /// something the user may want to act on. Both are still only about the
-    /// live transcript — the recording itself is unaffected either way.
+    /// The one line under the transcript between meetings. Its *look* is the
+    /// transcription's health, not just its words: a reconnect is a spinner in
+    /// amber, because it is a pause the recording will come back from, while
+    /// the sentence that says live transcription is over gets the icon and the
+    /// weight of something the user may want to act on. Both are still only
+    /// about the live transcript — the recording itself is unaffected either
+    /// way.
     @ViewBuilder
     private func statusLine(_ status: String) -> some View {
         let health = recorder.transcription
@@ -518,282 +1098,63 @@ struct LiveView: View {
         .accessibilityElement(children: .contain)
     }
 
-    // MARK: - Controls
+    // MARK: - Record controls
 
-    /// Idle, the column at its natural height, exactly as it has always been:
-    /// there is nothing to read above it yet, so there is nothing to make room
-    /// for. Recording, the same column inside a panel the user can shrink.
-    /// The probe behind both keeps the panel's full height current either way.
-    private var controls: some View {
-        Group {
-            if recorder.isInMeeting {
-                resizablePanel
-            } else {
-                column(at: nil)
+    /// Everything below the transcript between meetings, top to bottom: how
+    /// long (nothing yet), whether it hears anything (nothing yet), what
+    /// happened to the last one, and the button.
+    /// The meeting's dock before the meeting: the same three lines in the
+    /// same places — clock and microphone, the waveform, the actions — so
+    /// pressing record changes what is in the dock, not where anything is.
+    /// The clock reads 0:00 behind a still grey dot and the waveform lies
+    /// flat; the actions are one button, Start recording.
+    private var idleDock: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 6) {
+                idleClockPill
+                Spacer(minLength: 8)
+                micChip
             }
-        }
-        .background(alignment: .top) { metricsProbe }
-        // A meeting that ends mid-drag must not leave the next one starting
-        // at wherever the finger happened to be.
-        .onChange(of: recorder.isInMeeting) {
-            dragHeight = nil
-            dragStart = nil
-        }
-    }
-
-    /// Everything below the transcript, top to bottom. `height` is the
-    /// panel's height while recording, and nil at the natural size; below full
-    /// height the pieces `LiveControlsLayout` says no longer fit drop out — in
-    /// its order, Discard first — and the timer and the stop disc shrink with
-    /// the panel instead of stepping.
-    private func column(at height: Double?) -> some View {
-        let layout = controlsLayout
-        let shown = height.map { layout.visible(at: $0) } ?? Set(LiveControlsLayout.Element.allCases)
-        let timerScale = height.map { layout.timerScale(at: $0) } ?? 1
-        let stop = height.map { layout.stopDiameter(at: $0) } ?? 64
-        return VStack(spacing: 14) {
-            if shown.contains(.statusRow) {
-                recordingStatus
-            }
-            HStack(spacing: 8) {
-                timer(scale: timerScale)
-                // The sentence is gone but the warning it carried is not.
-                if !shown.contains(.statusLine) || recorder.status == nil {
-                    healthBadge
-                }
-            }
-            if shown.contains(.waveform) {
-                WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: isHearing)
-            }
-            if let status = recorder.status, shown.contains(.statusLine) {
+            WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: false)
+                .frame(height: 30)
+                .accessibilityHidden(true)
+            if let status = recorder.status {
                 statusLine(status)
             }
-            // Only between meetings — a refusal leaves the recorder idle, so
-            // this is the full column and never the compact row — and only
-            // while the refusal stands: asking again cannot help once someone
-            // has said no, because iOS never shows the prompt twice.
-            if recorder.micDenied && !recorder.isInMeeting {
+            // Only while the refusal stands: asking again cannot help once
+            // someone has said no, because iOS never shows the prompt twice.
+            if recorder.micDenied {
                 openSettingsControl
             }
-            if recorder.isInMeeting {
-                // Pause sits beside Stop rather than under it, so the column
-                // is no taller and `LiveControlsLayout` needs no new piece. The
-                // clear twin on the other side keeps Stop centred.
-                HStack(spacing: 24) {
-                    Color.clear.frame(width: 44, height: 44)
-                    recordControl(diameter: stop)
-                    pauseControl
-                }
-            } else {
-                recordControl(diameter: stop)
-            }
-            if recorder.isInMeeting && shown.contains(.discard) {
-                discardControl
-            }
-            if !recorder.isInMeeting && !app.hasAccount {
+            if !app.hasAccount {
                 Text("Your session expired. Sign in with the button above and recording works again.")
                     .font(.parley.caption)
                     .foregroundStyle(Color(.secondaryLabel))
                     .multilineTextAlignment(.center)
             }
+            recordControl
         }
-        .padding(20)
-        // Pieces fade as they leave or return rather than blinking, even
-        // mid-drag: the height tracks the finger, but a piece appearing is an
-        // event, and a short fade is how it reads as one.
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: shown)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
+        .overlay(alignment: .top) { hairline }
     }
 
-    // MARK: - Resizable panel
-
-    /// The free divider. While a meeting runs, the controls take about a
-    /// third of the phone, and the transcript — the thing someone actually
-    /// glances at mid-meeting — gets what is left. Dragging the panel's top
-    /// edge down gives the transcript that room back, and the panel stays
-    /// wherever it is let go: there are no detents, because the right amount
-    /// of transcript depends on the meeting, not on the app.
-    ///
-    /// Any part of the panel that is not a button takes the drag, not only
-    /// the grabber: a 36pt capsule is a hint, not a target, and a panel that
-    /// only moves from a sliver at its edge is one people conclude does not
-    /// move. The buttons keep their taps — the drag needs a few points of
-    /// travel before it wins.
-    ///
-    /// Below the crossfade band the column hands over to `compactRow`, one
-    /// line of the essentials. Both are the same controls; only one is ever
-    /// hittable, so a tap never lands on a half-faded copy.
-    private var resizablePanel: some View {
-        let layout = controlsLayout
-        let height = panelHeight
-        let columnOpacity = layout.columnOpacity(at: height)
-        let rowOpacity = layout.rowOpacity(at: height)
-        return ZStack {
-            if columnOpacity > 0 {
-                column(at: height)
-                    .opacity(columnOpacity)
-                    .allowsHitTesting(columnOpacity >= 0.5)
-                    .accessibilityHidden(columnOpacity < 0.5)
-            }
-            if rowOpacity > 0 {
-                compactRow
-                    .opacity(rowOpacity)
-                    .allowsHitTesting(rowOpacity > 0.5)
-                    .accessibilityHidden(rowOpacity <= 0.5)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: height)
-        .clipped()
-        .overlay(alignment: .top) { grabber(layout) }
-        .contentShape(Rectangle())
-        .gesture(resizeDrag(layout))
-    }
-
-    /// The panel's height right now: under the finger while dragging, the
-    /// remembered fraction otherwise.
-    private var panelHeight: Double {
-        dragHeight ?? controlsLayout.height(forFraction: controlsFraction)
-    }
-
-    /// The layout for the pieces as they are measured now. A status line that
-    /// is not there takes no room, so the panel's full height does not keep a
-    /// gap for a sentence that is not showing.
-    private var controlsLayout: LiveControlsLayout {
-        var metrics = measured
-        if recorder.status == nil { metrics.statusLine = 0 }
-        return LiveControlsLayout(metrics: metrics)
-    }
-
-    /// Global coordinates, because the panel's own top edge — the local
-    /// origin — moves with the drag; measured locally, the translation would
-    /// shrink as fast as the panel did.
-    private func resizeDrag(_ layout: LiveControlsLayout) -> some Gesture {
-        DragGesture(minimumDistance: 6, coordinateSpace: .global)
-            .onChanged { value in
-                let start = dragStart ?? layout.height(forFraction: controlsFraction)
-                dragStart = start
-                dragHeight = layout.dragged(from: start, translation: value.translation.height)
-            }
-            .onEnded { _ in
-                let released = dragHeight ?? layout.height(forFraction: controlsFraction)
-                settle(to: layout.fraction(forHeight: layout.settled(released)))
-            }
-    }
-
-    /// Lands the panel on `fraction`: a spring from wherever the finger left
-    /// it, or — with Reduce Motion — straight there.
-    private func settle(to fraction: Double) {
-        withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.86)) {
-            controlsFraction = fraction
-            dragHeight = nil
-            dragStart = nil
-        }
-    }
-
-    /// The handle: the system's sheet grabber, so it needs no explaining. A
-    /// tap on it opens a shortened panel fully and folds a full one to a row,
-    /// for anyone who would rather not drag at all. Its target is 44pt tall
-    /// even though the capsule is five, and it is the one element VoiceOver
-    /// gets for the whole feature, adjusted by swiping up and down.
-    private func grabber(_ layout: LiveControlsLayout) -> some View {
-        Capsule()
-            .fill(Color(.tertiaryLabel))
-            .frame(width: 36, height: 5)
-            .padding(.top, 7)
-            .frame(width: 120, height: 44, alignment: .top)
-            .contentShape(Rectangle())
-            .onTapGesture { settle(to: layout.toggled(fraction: controlsFraction)) }
-            .accessibilityElement()
-            .accessibilityLabel(Text("Resize controls"))
-            .accessibilityValue(grabberValue)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { settle(to: layout.toggled(fraction: controlsFraction)) }
-            .accessibilityAdjustableAction { direction in
-                switch direction {
-                case .increment:
-                    settle(to: layout.stepped(fraction: controlsFraction, taller: true))
-                case .decrement:
-                    settle(to: layout.stepped(fraction: controlsFraction, taller: false))
-                @unknown default:
-                    break
-                }
-            }
-    }
-
-    private var grabberValue: Text {
-        if controlsFraction >= 1 { return Text("Expanded") }
-        if controlsFraction <= 0 { return Text("Compact") }
-        return Text(controlsFraction, format: .percent.precision(.fractionLength(0)))
-    }
-
-    /// The panel folded to one line: that it is recording, for how long,
-    /// whether it is hearing, and the way to stop — the column's four
-    /// answers without its sentences. The waveform takes whatever width the
-    /// others leave. Dynamic Type is capped here because the row's height is
-    /// fixed; the full column, which grows with the text, is a drag away.
-    private var compactRow: some View {
-        HStack(spacing: 10) {
-            stateDot
-                .accessibilityHidden(true)
-            if recorder.clock != nil {
-                clockText(font: .parley.displayNumber(size: 22))
-                    .lineLimit(1)
-                    .fixedSize()
-            }
-            healthBadge
-            WaveformView(level: recorder.micLevel, sample: recorder.micSample, isActive: isHearing)
-                .padding(.horizontal, 4)
-            pauseControl
-            recordControl(diameter: 44)
-        }
-        .padding(.horizontal, 20)
-        .dynamicTypeSize(...DynamicTypeSize.xxLarge)
-    }
-
-    /// A hidden copy of the column's text-bearing pieces, measured so the
-    /// panel's full height is the real one at this text size and with this
-    /// status sentence — not a constant that was right for one of each. Hidden
-    /// views still lay out, which is all a measurement needs; the waveform
-    /// here is the idle one, a single static draw.
-    private var metricsProbe: some View {
-        VStack(spacing: 0) {
-            recordingStatusRow
-                .modifier(ProbeHeight(piece: .statusRow))
+    /// The clock pill at rest: a still grey dot and 0:00, where the running
+    /// meeting's red dot and time will be.
+    private var idleClockPill: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "circle.fill")
+                .font(.system(size: 8))
+                .foregroundStyle(Color(.tertiaryLabel))
             Text(verbatim: "0:00")
-                .font(.parley.displayNumber)
-                .modifier(ProbeHeight(piece: .timer))
-            WaveformView(level: 0, sample: 0, isActive: false)
-                .modifier(ProbeHeight(piece: .waveform))
-            if let status = recorder.status {
-                statusLine(status)
-                    .modifier(ProbeHeight(piece: .statusLine))
-            }
+                .font(.parley.clock)
+                .foregroundStyle(Color(.secondaryLabel))
         }
-        .frame(maxWidth: .infinity)
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(key: ProbeHeight.Key.self, value: [.width: proxy.size.width])
-            }
-        }
-        .padding(.horizontal, 20)
-        .hidden()
-        .allowsHitTesting(false)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color(.tertiarySystemFill)))
         .accessibilityHidden(true)
-        .onPreferenceChange(ProbeHeight.Key.self) { heights in
-            // The probe passes through a layout at a sliver of the screen's
-            // width on launch, where every sentence wraps to three or four
-            // lines. Those heights are not a size this panel will ever be
-            // drawn at, and SwiftUI was seen to deliver them *last* — once
-            // with `onGeometryChange` and once with this preference — leaving
-            // the panel's full height up to 100pt off for the session. So a
-            // report only counts when it was made at a real column width;
-            // until one is, the seeded defaults stand.
-            guard let width = heights[.width], width >= 200 else { return }
-            if let value = heights[.statusRow] { measured.statusRow = value }
-            if let value = heights[.timer] { measured.timer = value }
-            if let value = heights[.waveform] { measured.waveform = value }
-            if let value = heights[.statusLine] { measured.statusLine = value }
-        }
     }
 
     /// How long this has been running, in ink. `Text(_:style:.timer)` rather
@@ -801,26 +1162,9 @@ struct LiveView: View {
     /// ticking clock costs no published state. Tabular figures, so it doesn't
     /// shuffle its own digits sideways every second.
     ///
-    /// `scale` shrinks it with the panel by setting the size, not by scaling
-    /// the drawing, so the line box shrinks too and the room it gives up is
-    /// real.
-    @ViewBuilder
-    private func timer(scale: Double) -> some View {
-        let font = Font.parley.displayNumber(size: 34 * scale)
-        if recorder.clock != nil, recorder.isInMeeting {
-            clockText(font: font)
-        } else {
-            Text(verbatim: "0:00")
-                .font(font)
-                .foregroundStyle(Color(.tertiaryLabel))
-                .accessibilityHidden(true)
-        }
-    }
-
-    /// Running, the system ticks the digits from the clock's anchor. Paused,
-    /// they stand still, in secondary ink so a glance tells the two apart, and
-    /// written the way the running timer writes them so they do not change
-    /// shape on the tap.
+    /// Paused, the digits stand still, in secondary ink so a glance tells the
+    /// two apart, and written the way the running timer writes them so they do
+    /// not change shape on the tap.
     @ViewBuilder
     private func clockText(font: Font) -> some View {
         if let anchor = recorder.clock?.timerAnchor {
@@ -834,137 +1178,68 @@ struct LiveView: View {
         }
     }
 
-    /// Pause and resume, in the discard control's ink-and-hairline rather than
-    /// a colour: it is secondary to Stop, and red or blue here would compete
-    /// with the disc beside it. Inert while the microphone is still opening,
-    /// since there is nothing to pause yet.
-    private var pauseControl: some View {
-        Button {
-            if recorder.isPaused { recorder.resume() } else { recorder.pause() }
-        } label: {
-            Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color(.label))
-                .frame(width: 44, height: 44)
-                .contentShape(Circle())
-                .overlay(Circle().stroke(Color(.separator), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .disabled(recorder.phase != .recording && !recorder.isPaused)
-        .opacity(recorder.phase == .starting ? 0.4 : 1)
-        .accessibilityLabel(recorder.isPaused ? Text("Resume recording") : Text("Pause recording"))
-    }
-
-    /// The way out for a recording that should not have started. Stop is
-    /// "keep this"; without a second door every mis-tap became a two-second
-    /// recording in the library. A confirmation follows, because it throws the
-    /// audio away.
-    ///
-    /// It is an outlined capsule because the line of secondary text it used to
-    /// be was indistinguishable from the explanatory prose on this same screen
-    /// — same face, same size, same `secondaryLabel` — and its tap target was
-    /// the height of one 15pt line. Ink and a hairline outline say "tappable"
-    /// without saying "recommended": not red, because the record circle above
-    /// it is already the screen's one red thing and a second would compete with
-    /// the control the user actually reaches for (the keyboard's ✕ is drawn
-    /// down for the same reason), and not blue, because blue here would be the
-    /// app recommending that you throw the meeting away. The red belongs in the
-    /// confirmation, which has it.
-    private var discardControl: some View {
-        Button {
-            showDiscardConfirm = true
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "trash")
-                Text("Discard")
-            }
-            .font(.parley.subheadlineEmphasized)
-            .foregroundStyle(Color(.label))
-            .padding(.horizontal, 18)
-            // 44pt so the target is the HIG minimum rather than the line box,
-            // and `contentShape` so the whole capsule takes the tap, not just
-            // the glyph and the word.
-            .frame(minHeight: 44)
-            .contentShape(Capsule())
-            .overlay(Capsule().stroke(Color(.separator), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .disabled(recorder.isBusy)
-        .accessibilityLabel(Text("Discard recording"))
-        .accessibilityHint(Text("Asks you to confirm, then throws the audio and transcript away."))
-        .confirmationDialog(
-            "Discard this recording?", isPresented: $showDiscardConfirm, titleVisibility: .visible
-        ) {
-            Button("Discard", role: .destructive) {
-                Task { await recorder.discard() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("The audio and transcript are thrown away. Nothing is saved or uploaded.")
-        }
-    }
-
-    /// One circle, two states, no label.
-    ///
-    /// Idle it is the universal record glyph — a blue disc with a white circle
-    /// inside — and recording it is the universal stop: the same disc in
-    /// recording red with a white rounded square. There is nothing to read,
-    /// because there is nothing to decide: the screen already says whether it is
-    /// recording, so the control only has to be the thing you press.
+    /// The record button: the universal record glyph, a blue disc with a
+    /// white circle inside. There is nothing to read, because there is
+    /// nothing to decide. Stopping lives on the meeting screen's End.
     ///
     /// The button is never disabled. Before this, a signed-out launch put a
     /// permanently greyed-out control on screen with no way to act on it — the
     /// bug App Review reported. A button that can't be pressed teaches nothing;
-    /// one that opens sign-in does. It *is* inert while the meeting is wrapping
-    /// up, where there is no action left to take.
-    ///
-    /// `diameter` is 64 at rest and shrinks with the recording panel; the
-    /// glyph inside keeps its proportion to the disc.
-    private func recordControl(diameter: Double = 64) -> some View {
+    /// one that opens sign-in does. It *is* inert while the last meeting is
+    /// uploading, where there is no action left to take.
+    private var recordControl: some View {
         Button(action: toggle) {
-            ZStack {
-                Circle()
-                    .fill(recorder.isInMeeting ? Theme.recording : Theme.primary)
-                    .frame(width: diameter, height: diameter)
-                inner(scale: diameter / 64)
+            HStack(spacing: 8) {
+                inner
+                Text(recordLabel)
+                    .font(.parley.subheadlineEmphasized)
             }
-            .contentShape(Circle())
+            // The desktop's light-primary button (its Resume): blue ink on a
+            // faint blue wash. A solid blue bar was the loudest thing on a
+            // screen that is waiting, not asking.
+            .foregroundStyle(Theme.primary)
+            .frame(maxWidth: .infinity, minHeight: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Theme.primary.opacity(0.12)))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .opacity(recorder.isBusy ? 0.6 : 1)
         .accessibilityLabel(accessibilityLabel)
     }
 
-    /// White in both appearances, on purpose: the disc under it is either
-    /// recording red or the signal blue, and neither follows the system
-    /// appearance, so what sits on it must not either.
+    private var recordLabel: LocalizedStringKey {
+        if recorder.isBusy { return "Wrapping up…" }
+        return app.hasAccount ? "Start recording" : "Sign in again to record"
+    }
+
+    /// The glyph before Start recording, in the button's blue ink: a dot
+    /// (the record mark), a spinner while the last meeting is still being
+    /// saved, or the account glyph when the press opens sign-in.
     @ViewBuilder
-    private func inner(scale: Double) -> some View {
+    private var inner: some View {
         if recorder.isBusy {
             ProgressView()
-                .controlSize(.regular)
-                .tint(.white)
-        } else if recorder.isInMeeting {
-            RoundedRectangle(cornerRadius: 4 * scale)
-                .fill(.white)
-                .frame(width: 18 * scale, height: 18 * scale)
+                .controlSize(.small)
+                .tint(Theme.primary)
         } else if app.hasAccount {
             Circle()
-                .fill(.white)
-                .frame(width: 22 * scale, height: 22 * scale)
+                .fill(Theme.primary)
+                .frame(width: 10, height: 10)
         } else {
             // Signed out, the press opens sign-in rather than the microphone, so
             // the glyph says so — the sentence under the control carries the
             // rest.
             Image(systemName: "person.crop.circle")
-                .font(.system(size: 26, weight: .regular))
-                .foregroundStyle(.white)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(Theme.primary)
         }
     }
 
     private var accessibilityLabel: Text {
         if recorder.isBusy { return Text("Wrapping up…") }
-        if recorder.isInMeeting { return Text("Stop recording") }
         return app.hasAccount ? Text("Start recording") : Text("Sign in again to record")
     }
 
@@ -980,11 +1255,51 @@ struct LiveView: View {
         Task { await recorder.start(token: KeychainStore.get(AppState.tokenKey)) }
     }
 
+    /// Start the meeting a draft's 開始 asked for, as the desktop's
+    /// `startDraft` does: the draft's name, folder and context become this
+    /// meeting's, then the meeting starts the way the record button starts
+    /// one. With a meeting already going (or wrapping up) nothing starts —
+    /// the tab switch has already brought that meeting up, which is all the
+    /// desktop does either — and the draft stays on the Library.
+    ///
+    /// The draft is hidden on this phone once the meeting is underway, never
+    /// deleted: the phone only reads drafts. A start that did not get going
+    /// (the microphone refused) leaves it listed, to be tried again.
+    private func takeDraftStart() {
+        guard router.draftStartRequest != handledDraftStart else { return }
+        handledDraftStart = router.draftStartRequest
+        guard let start = router.draftStart,
+            !recorder.isBusy, !recorder.isInMeeting, app.hasAccount
+        else { return }
+        #if DEBUG
+            // The demo has no microphone and no network: stand the meeting up
+            // as the record routes do, under the draft's name and folder.
+            if ScreenshotDemo.servesFixtures {
+                recorder.seedDemo(
+                    segments: [], status: String(localized: "Transcribing live"),
+                    title: start.title, folder: start.folder)
+                recorder.meetingContext = start.context
+                recorder.meetingDraft = (start.draft, start.folderName)
+        recorder.agenda = start.draft.todos.map(AgendaItem.init)
+                recorder.agenda = start.draft.todos.map(AgendaItem.init)
+                router.markDraftStarted(start.draftId)
+                return
+            }
+        #endif
+        recorder.meetingTitle = start.title
+        recorder.meetingFolder = start.folder
+        recorder.meetingContext = start.context
+        recorder.meetingDraft = (start.draft, start.folderName)
+        startingDraftId = start.draftId
+        // Unstructured, as the record button's: `start` runs on through the
+        // transcription handshake, which must not be cancelled by the next
+        // request re-keying the task above.
+        Task { await recorder.start(token: KeychainStore.get(AppState.tokenKey)) }
+    }
+
     private func toggle() {
-        guard !recorder.isBusy else { return }
-        if recorder.isInMeeting {
-            Task { await recorder.stop(app: app) }
-        } else if app.hasAccount {
+        guard !recorder.isBusy, !recorder.isInMeeting else { return }
+        if app.hasAccount {
             // No "has everyone agreed?" alert first: getting the room's
             // permission is the person holding the phone's call, as it is with
             // any other recorder, and asking every single time taught nothing
@@ -995,6 +1310,30 @@ struct LiveView: View {
             // session can expire while the app is open and on this screen.
             app.signIn()
         }
+    }
+}
+
+/// Three tiny bars, after the desktop's mic-chip meter: they move with the
+/// microphone's level, and lie flat and grey when nothing is heard — paused,
+/// on a call, or a silent room. The large waveform the record screen used to
+/// show mid-meeting is gone; this is what is left of its one job, saying the
+/// phone hears the room.
+private struct ChipMeter: View {
+    let level: Float
+
+    var body: some View {
+        let p = min(1, Double(level).squareRoot())
+        let active = p > 0.03
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach([0.7, 1, 0.5], id: \.self) { weight in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(active ? Theme.primary : Color(.tertiaryLabel))
+                    .frame(width: 3, height: 3 + (9 * min(1, p * weight * 1.6)).rounded())
+            }
+        }
+        .frame(height: 12, alignment: .bottom)
+        .animation(.linear(duration: 0.075), value: level)
+        .accessibilityHidden(true)
     }
 }
 
@@ -1020,35 +1359,6 @@ private struct ReportsScrollBottom: ViewModifier {
         } else {
             content
         }
-    }
-}
-
-/// Reports one piece of `LiveView`'s hidden metrics probe: its natural height
-/// at the width it is given, under a name the panel's layout knows. `width` is
-/// the probe's own column width, reported alongside so a measurement taken
-/// mid-launch at a sliver of the screen can be told apart and ignored.
-private struct ProbeHeight: ViewModifier {
-    enum Piece: Hashable {
-        case statusRow, timer, waveform, statusLine, width
-    }
-
-    struct Key: PreferenceKey {
-        static let defaultValue: [Piece: Double] = [:]
-        static func reduce(value: inout [Piece: Double], nextValue: () -> [Piece: Double]) {
-            value.merge(nextValue()) { $1 }
-        }
-    }
-
-    let piece: Piece
-
-    func body(content: Content) -> some View {
-        content
-            .fixedSize(horizontal: false, vertical: true)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(key: Key.self, value: [piece: proxy.size.height])
-                }
-            }
     }
 }
 

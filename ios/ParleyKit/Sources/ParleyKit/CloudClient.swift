@@ -407,6 +407,17 @@ public actor CloudClient: BatchTranscriptionService, DictionarySyncTransport {
         return try JSONDecoder().decode(DictionaryPushResponse.self, from: data)
     }
 
+    // MARK: meeting drafts (read-only)
+
+    /// `GET /v1/drafts` — the account's meeting drafts, as the desktop's draft
+    /// sync (`src/lib/cloud/draftSync.ts`) pulls them with no cursor. Drafts
+    /// are the user's own, not an organization's. Tombstones may be in the
+    /// list; `MeetingDraftSchedule.live` leaves them out. The phone never
+    /// writes a draft back (#772).
+    public func listDrafts() async throws -> [CloudMeetingDraft] {
+        try await get("v1/drafts", as: DraftListResponse.self).drafts
+    }
+
     // MARK: chat
 
     /// `POST v1/chat/completions` with a JSON body, handing back the raw

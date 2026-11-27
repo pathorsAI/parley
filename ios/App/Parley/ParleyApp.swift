@@ -187,7 +187,9 @@ struct MainTabs: View {
     #endif
 
     var body: some View {
-        TabView(selection: $router.tab) {
+        TabView(
+            selection: Binding(get: { router.tab }, set: { router.selectFromTabBar($0) })
+        ) {
             LiveView()
                 .tabItem { Label("Record", systemImage: "record.circle") }
                 .tag(AppTab.record)
@@ -211,6 +213,11 @@ struct MainTabs: View {
         #if DEBUG
             // The DEBUG screenshot routes land on a tab without a tap.
             .onReceive(ScreenshotDemo.shared.$tab) { router.tab = $0 }
+            // `settled` / `adjust`: a meeting that has just landed goes through
+            // the same request a real one does.
+            .onReceive(ScreenshotDemo.shared.$endedMeeting) {
+                if let meeting = $0 { router.openEndedMeeting(meeting) }
+            }
         #endif
         .overlay {
             if let start = onboardingStart {

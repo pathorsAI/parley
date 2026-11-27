@@ -1,3 +1,4 @@
+import ParleyKit
 import SwiftUI
 
 /// The three tabs, in the order the tab bar shows them.
@@ -30,4 +31,136 @@ final class TabRouter: ObservableObject {
         checklistRequest += 1
         tab = .library
     }
+
+    /// Bumped each time the Library tab is tapped: the Library goes back to
+    /// its overview, whatever was pushed over it (a folder, the full list, a
+    /// recording) — as a tab bar does at home. Only a tap: a switch made in
+    /// code (the checklist, a meeting that just ended) carries its own
+    /// destination.
+    @Published private(set) var libraryRootRequest = 0
+
+    /// The tab bar's own selection: a tap on Library also asks for its root.
+    func selectFromTabBar(_ tab: AppTab) {
+        if tab == .library { libraryRootRequest += 1 }
+        self.tab = tab
+    }
+
+    /// Bumped each time a meeting's upload settles and its result page should
+    /// open: the phone's version of the desktop's End, which finishes saving
+    /// and then opens the recording's report (`src/lib/meeting/controls.ts`
+    /// `endMeeting`). A counter for the same reasons as `checklistRequest`:
+    /// two meetings in a row are two changes, and a Library built for the
+    /// first time by this very switch still has to act on a request it was not
+    /// around to see change.
+    @Published private(set) var endedMeetingRequest = 0
+    /// What the latest `endedMeetingRequest` is about. Not published itself:
+    /// it is always written just before the counter, and the counter is what
+    /// the Library watches.
+    private(set) var endedMeeting: EndedMeeting?
+
+    /// Switch to the Library and open the result page of the meeting that has
+    /// just landed in the cloud.
+    func openEndedMeeting(_ meeting: EndedMeeting) {
+        endedMeeting = meeting
+        endedMeetingRequest += 1
+        tab = .library
+    }
+
+    /// Bumped each time a meeting draft's 開始 is pressed: the phone's version
+    /// of the desktop's `startDraft` (`src/components/home/DraftRow.tsx`). The
+    /// Record screen watches it and starts the meeting with the draft's name,
+    /// folder and context — or, with a meeting already going, only comes up,
+    /// as the desktop refuses a second meeting and brings the first one's
+    /// window forward. A counter for the same reasons as `checklistRequest`.
+    @Published private(set) var draftStartRequest = 0
+    /// What the latest `draftStartRequest` is about. Written just before the
+    /// counter, which is what the Record screen watches.
+    private(set) var draftStart: DraftStart?
+
+    /// Switch to Record and start a meeting from a draft.
+    func startDraft(_ start: DraftStart) {
+        draftStart = start
+        draftStartRequest += 1
+        tab = .record
+    }
+
+    /// Drafts a meeting has been started from on this phone. The desktop
+    /// deletes a draft it records ("taking a draft is recording it"), but
+    /// the phone only reads drafts and never writes them, so it hides the
+    /// one it took instead; the cloud copy stays for the desktop to settle.
+    /// Kept across launches, and pruned to the drafts the cloud still lists
+    /// (`pruneStartedDrafts`), so the set never outgrows the draft list.
+    @Published private(set) var startedDraftIDs: Set<String>
+
+    private static let startedDraftsKey = "ParleyStartedMeetingDraftIDs"
+
+    init() {
+        #if DEBUG
+            // The demo's fixtures are the same every launch; a draft hidden in
+            // one screenshot run must not be missing from the next.
+            if ScreenshotDemo.isActive {
+                startedDraftIDs = []
+                return
+            }
+        #endif
+        startedDraftIDs = Set(
+            UserDefaults.standard.stringArray(forKey: Self.startedDraftsKey) ?? [])
+    }
+
+    /// A meeting was started from this draft: hide it on this phone.
+    func markDraftStarted(_ id: String) {
+        guard !startedDraftIDs.contains(id) else { return }
+        startedDraftIDs.insert(id)
+        saveStartedDrafts()
+    }
+
+    /// Forget hidden drafts the cloud no longer lists. Only with a list that
+    /// actually loaded: an empty answer from a failed request would unhide
+    /// nothing worth unhiding, but would lose every id.
+    func pruneStartedDrafts(keeping listed: Set<String>) {
+        let kept = startedDraftIDs.intersection(listed)
+        guard kept != startedDraftIDs else { return }
+        startedDraftIDs = kept
+        saveStartedDrafts()
+    }
+
+    private func saveStartedDrafts() {
+        #if DEBUG
+            if ScreenshotDemo.isActive { return }
+        #endif
+        UserDefaults.standard.set(Array(startedDraftIDs).sorted(), forKey: Self.startedDraftsKey)
+    }
+}
+
+/// A meeting to start from a draft, as the Record screen needs it: what the
+/// desktop's `prepFromDraft` carries into its meeting. Resolved on the
+/// Library, which has the draft and the personal folders in hand.
+struct DraftStart {
+    let draftId: String
+    /// The draft's title, trimmed; empty leaves the meeting unnamed.
+    let title: String
+    /// The draft's folder, when it is one of the personal folders; nil
+    /// leaves the app's default destination.
+    let folder: MeetingRecorder.ChosenFolder?
+    /// The context the desktop prepared (its 補充背景), saved into the
+    /// recording's `meetingContext`.
+    let context: String
+    /// The draft itself, for the record screen's 查看會議草稿 sheet.
+    let draft: CloudMeetingDraft
+    /// Its folder's name, for that sheet.
+    let folderName: String?
+}
+
+/// A meeting that ended and landed in the cloud, as its result page needs it:
+/// the recording itself, plus what only the record screen knew about it —
+/// whether it was named or filed live (the filing card skips those halves)
+/// and how the microphone held up (the `mic_recovery` prompt).
+struct EndedMeeting {
+    let settled: MeetingRecorder.Settled
+    /// Nil only if the recorder never noted the meeting as finished, which a
+    /// settled upload always does first. Optional so a missing one costs the
+    /// prompt, never the handoff.
+    let finished: MeetingRecorder.FinishedMeeting?
+
+    var id: String { settled.id }
 }
