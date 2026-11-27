@@ -230,3 +230,49 @@ describe("a draft that left the list", () => {
     await expect(applyRpcCommand("restore_meeting_draft", { id: "nope" })).rejects.toThrow("no removed meeting draft with id nope");
   });
 });
+
+describe("people notes", () => {
+  beforeEach(async () => {
+    (await import("./people/store")).resetPeopleForTests();
+  });
+
+  it("adds a note, lists the person, reads them back by name or alias-free id, and deletes", async () => {
+    const added = (await applyRpcCommand("add_person_note", {
+      name: "Ann Lee",
+      org: "Acme",
+      text: "Skiing in Hokkaido in December",
+      saidAt: "2026-11-20T10:00:00+08:00",
+    })) as { id: string; notes: { id: string; text: string; saidAt: string }[] };
+    expect(added).toMatchObject({ name: "Ann Lee", org: "Acme", notes: [{ text: "Skiing in Hokkaido in December" }] });
+    expect(added.notes[0].saidAt).toBe("2026-11-20T02:00:00.000Z");
+
+    expect(await applyRpcCommand("list_people", {})).toEqual([
+      { id: added.id, name: "Ann Lee", org: "Acme", aliases: [], notes: 1, lastSaidAt: "2026-11-20T02:00:00.000Z" },
+    ]);
+    expect(await applyRpcCommand("list_people", { query: "globex" })).toEqual([]);
+    expect(await applyRpcCommand("get_person", { name: "ann lee" })).toEqual(added);
+    expect(await applyRpcCommand("get_person", { id: added.id })).toEqual(added);
+
+    expect(await applyRpcCommand("delete_person_note", { personId: added.id, noteId: added.notes[0].id })).toMatchObject({
+      deleted: true,
+    });
+    expect(await applyRpcCommand("list_people", {})).toEqual([]);
+    await expect(applyRpcCommand("get_person", { name: "Ann Lee" })).rejects.toThrow("no notes about Ann Lee");
+  });
+
+  it("never shows a candidate the user has not kept", async () => {
+    const { mutatePeople } = await import("./people/store");
+    const { withNote } = await import("./people/notes");
+    await mutatePeople(
+      (doc) => withNote(doc, { name: "Ann", text: "Moving in March", saidAt: 1, recordingId: "r1", status: "candidate" }, 1).doc,
+    );
+    expect(await applyRpcCommand("list_people", {})).toEqual([]);
+    await expect(applyRpcCommand("get_person", { name: "Ann" })).rejects.toThrow("no notes about Ann");
+  });
+
+  it("refuses a blank note and an unknown note id", async () => {
+    await expect(applyRpcCommand("add_person_note", { name: "Ann", text: " " })).rejects.toThrow("text is required");
+    await expect(applyRpcCommand("get_person", {})).rejects.toThrow("id or name is required");
+    await expect(applyRpcCommand("delete_person_note", { personId: "p", noteId: "n" })).rejects.toThrow("no note n on person p");
+  });
+});

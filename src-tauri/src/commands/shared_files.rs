@@ -48,6 +48,21 @@ pub fn write_dictionary(app: AppHandle, contents: String) -> Result<(), String> 
     write_config_file(&app, "dictionary.json", &contents)
 }
 
+/// Read the people-notes JSON verbatim (empty string if the file doesn't exist
+/// yet). The frontend owns the schema (lib/people); Rust only moves the bytes.
+/// The file stays on this computer: it is not synced and is not part of any
+/// recording.
+#[tauri::command]
+pub fn read_people(app: AppHandle) -> Result<String, String> {
+    read_config_file(&app, "people.json")
+}
+
+/// Write the people-notes JSON, creating the config dir if needed.
+#[tauri::command]
+pub fn write_people(app: AppHandle, contents: String) -> Result<(), String> {
+    write_config_file(&app, "people.json", &contents)
+}
+
 /// Read the shared personal-folder registry JSON (empty string if the file
 /// doesn't exist yet). The registry lives on DISK — one file for every window
 /// AND every app instance (packaged + `tauri dev` share the config dir) — so

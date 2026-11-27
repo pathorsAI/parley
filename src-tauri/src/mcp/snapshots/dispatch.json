@@ -1836,6 +1836,20 @@
   },
   {
     "args": {
+      "name": "Ann"
+    },
+    "error": "missing string field: text",
+    "tool": "add_person_note"
+  },
+  {
+    "args": {
+      "personId": "p1"
+    },
+    "error": "missing string field: noteId",
+    "tool": "delete_person_note"
+  },
+  {
+    "args": {
       "title": "No id"
     },
     "error": "id is required",
@@ -2108,6 +2122,91 @@
       }
     },
     "tool": "restore_meeting_draft"
+  },
+  {
+    "args": {},
+    "result": {
+      "received": {
+        "action": "list_people",
+        "args": {
+          "query": null
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_people"
+  },
+  {
+    "args": {
+      "query": "acme"
+    },
+    "result": {
+      "received": {
+        "action": "list_people",
+        "args": {
+          "query": "acme"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_people"
+  },
+  {
+    "args": {
+      "name": "Ann"
+    },
+    "result": {
+      "received": {
+        "action": "get_person",
+        "args": {
+          "id": null,
+          "name": "Ann"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "get_person"
+  },
+  {
+    "args": {
+      "name": "Ann",
+      "org": "Acme",
+      "quote": "we're off to Hokkaido",
+      "recordingId": "r1",
+      "text": "Skiing in Hokkaido in December"
+    },
+    "result": {
+      "received": {
+        "action": "add_person_note",
+        "args": {
+          "name": "Ann",
+          "org": "Acme",
+          "quote": "we're off to Hokkaido",
+          "recordingId": "r1",
+          "saidAt": null,
+          "text": "Skiing in Hokkaido in December"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "add_person_note"
+  },
+  {
+    "args": {
+      "noteId": "n1",
+      "personId": "p1"
+    },
+    "result": {
+      "received": {
+        "action": "delete_person_note",
+        "args": {
+          "noteId": "n1",
+          "personId": "p1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "delete_person_note"
   },
   {
     "args": {

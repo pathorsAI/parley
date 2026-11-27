@@ -11,6 +11,7 @@ mod drafts;
 mod folders;
 mod live;
 mod orgs;
+mod people;
 mod recordings;
 mod templates;
 
@@ -23,6 +24,7 @@ pub(super) const DOMAINS: &[Domain] = &[
     folders::DOMAIN,
     orgs::DOMAIN,
     drafts::DOMAIN,
+    people::DOMAIN,
 ];
 
 /// JSON-Schema for one TimelineEvent, shared by set_findings. Which fields apply

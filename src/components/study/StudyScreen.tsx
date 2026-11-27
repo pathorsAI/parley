@@ -19,6 +19,7 @@ import { ReportNav } from "./ReportNav";
 import { ActionItemsPanel } from "../replay/ActionItemsPanel";
 import { AgendaNotCovered } from "./AgendaNotCovered";
 import { LiveSuggestionsUsed } from "./LiveSuggestionsUsed";
+import { PeopleNoteCandidates } from "./PeopleNoteCandidates";
 import { AskPanel } from "../sidebar/AskPanel";
 import { StudyHeader, STUDY_TABPANEL_ID, studyTabId } from "./StudyHeader";
 import { LapContext, useLapState } from "../../lib/onboarding/lap";
@@ -153,6 +154,7 @@ function TabPage({
         <ActionItemsPanel onSeek={seek} embedded />
         <AgendaNotCovered />
         <BriefNextSection onSeek={seek} />
+        <PeopleNoteCandidates />
         {actionsDone && <SavedFooter artifact="actions" />}
       </>
     );

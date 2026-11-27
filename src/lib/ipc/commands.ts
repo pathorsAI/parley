@@ -301,6 +301,8 @@ export const writeSampleAudio = (body: InvokeArgs, options: InvokeOptions) =>
 
 export const readDictionary = () => invoke<string>("read_dictionary");
 export const writeDictionary = (args: { contents: string }) => invoke<void>("write_dictionary", args);
+export const readPeople = () => invoke<string>("read_people");
+export const writePeople = (args: { contents: string }) => invoke<void>("write_people", args);
 export const readFolders = () => invoke<string>("read_folders");
 export const writeFolders = (args: { json: string }) => invoke<void>("write_folders", args);
 export const readTemplates = () => invoke<string>("read_templates");
