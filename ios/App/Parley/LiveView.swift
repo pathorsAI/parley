@@ -536,13 +536,14 @@ struct LiveView: View {
                     .contentShape(Rectangle())
                     .offset(x: 8)
             }
-            // The date, the folder and — for a meeting started from a draft —
-            // the draft, one row of chips on one centre line.
+            // The date and the folder as chips, and — for a meeting started
+            // from a draft — the draft as a link at the row's far end, all on
+            // one centre line.
             HStack(spacing: 8) {
                 dateChip
                 folderChip
-                if recorder.meetingDraft != nil { draftChip }
                 Spacer(minLength: 0)
+                if recorder.meetingDraft != nil { draftLink }
             }
         }
         .sheet(isPresented: $showingDraft) {
@@ -625,14 +626,15 @@ struct LiveView: View {
     }
 
     /// 會議草稿: the draft this meeting was started from, read-only in a
-    /// sheet — what was prepared for it, at hand while it runs. The folder
-    /// chip's look, filled, since it always names something.
-    private var draftChip: some View {
+    /// sheet — what was prepared for it, at hand while it runs. A blue link
+    /// rather than a chip: it opens something, it does not describe the
+    /// recording.
+    private var draftLink: some View {
         Button {
             titleFocused = false
             showingDraft = true
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 Image(systemName: "doc.text")
                     .font(.parley.caption2)
                     .accessibilityHidden(true)
@@ -642,15 +644,7 @@ struct LiveView: View {
             }
             // A long folder name gives way, not this.
             .fixedSize()
-            .foregroundStyle(Color(.label))
-            .padding(.horizontal, 8)
-            .frame(minHeight: 26)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Color(.quaternarySystemFill)))
-            .overlay(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(Color(.separator), lineWidth: 1))
+            .foregroundStyle(Theme.primary)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
