@@ -96,6 +96,18 @@ internal object LibraryIcons {
         )
     }
 
+    /**
+     * A page with lines of text — the record screen's "view the meeting
+     * draft" (Material `description`, outlined).
+     */
+    val Description: ImageVector by lazy {
+        icon(
+            "Description",
+            "M8,16h8v2H8zM8,12h8v2H8zM14,2H6c-1.1,0 -1.99,0.9 -1.99,2L4,20c0,1.1 0.89,2 1.99,2H18" +
+                "c1.1,0 2,-0.9 2,-2V8l-6,-6zM18,20H6V4h7v5h5v11z",
+        )
+    }
+
     /** An arrow down onto a line — "Download". */
     val Download: ImageVector by lazy {
         icon("Download", "M19,9h-4V3H9v6H5l7,7 7,-7zM5,18v2h14v-2H5z")

@@ -116,6 +116,7 @@ import com.pathors.parley.library.FolderFilter
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.ChosenFolder
+import com.pathors.parley.meeting.DraftSnapshot
 import com.pathors.parley.meeting.MeetingChoices
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.isInProgress
@@ -333,6 +334,7 @@ fun HomeScreen(
                 folder = folder,
                 meetingContext = draft.meetingContext,
                 draftId = draft.id,
+                draft = DraftSnapshot(draft, draftFolderName(draft.meetingFolderId)),
             ),
         )
     }
@@ -467,7 +469,7 @@ fun HomeScreen(
                             draft = draft,
                             folder = draftFolderName(draft.meetingFolderId),
                             onStart = { startDraft(draft) },
-                            modifier = body,
+                            modifier = body.fillMaxSize(),
                         )
                     } else {
                         Box(body)

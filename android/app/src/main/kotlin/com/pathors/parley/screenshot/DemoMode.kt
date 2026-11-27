@@ -23,6 +23,7 @@ import com.pathors.parley.study.RecordingStudy
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.ChosenFolder
+import com.pathors.parley.meeting.DraftSnapshot
 import com.pathors.parley.meeting.EndedMeeting
 import com.pathors.parley.meeting.ImportFailure
 import com.pathors.parley.meeting.ImportState
@@ -75,7 +76,8 @@ import kotlinx.serialization.json.putJsonObject
  * `library-drafts`, the full list; `library-draft` and `library-draft-short`,
  * a draft's read-only page), `transcript`,
  * `record` (alias `meeting`; a meeting in progress), `record-idle` (the record
- * screen before a meeting), `record-paused`, `settled` (the result page an
+ * screen before a meeting), `record-paused`, `record-draft` (a meeting started
+ * from the 北風 draft, its draft open in the sheet), `settled` (the result page an
  * ended meeting opens, filing card on top), `adjust` (the same, its folder
  * picker open), `account`
  * (alias `settings`), `movetofolder` (the transcript with the folder picker
@@ -210,6 +212,14 @@ object DemoMode {
 
         /** [SETTLED] with the filing card's folder picker open — iOS `parley://demo/adjust`. */
         ADJUST("adjust"),
+
+        /**
+         * [LIVE], started from a meeting draft: named and filed after it, with
+         * the record screen's "view the meeting draft" button. The draft is
+         * the one 開始 was pressed on ([Navigation.draftChoices]), or the 北風
+         * draft ([draftChoices]). `record-draft` also opens its sheet.
+         */
+        DRAFT("draft"),
         ;
 
         /** The meeting is over and uploaded: the result page, with the filing offer up. */
@@ -294,6 +304,10 @@ object DemoMode {
         val scenario: MeetingScenario = MeetingScenario.LIVE,
         val report: ReportScenario? = null,
         val library: LibraryPage = LibraryPage.OVERVIEW,
+        /** [MeetingScenario.DRAFT]: the draft's sheet opens on arrival (`record-draft`). */
+        val draftSheet: Boolean = false,
+        /** [MeetingScenario.DRAFT] started from a draft's 開始 ([startDraft]); null = the 北風 draft. */
+        val draftChoices: MeetingChoices? = null,
     )
 
     private val _enabled = MutableStateFlow(false)
@@ -359,8 +373,27 @@ object DemoMode {
                 ?: MeetingScenario.fromRoute(uri.getQueryParameter(QUERY_SCENARIO)),
             report = REPORT_ROUTES[route],
             library = LIBRARY_ROUTES[route] ?: LibraryPage.OVERVIEW,
+            draftSheet = route == ROUTE_RECORD_DRAFT,
         )
         return true
+    }
+
+    /**
+     * A draft's 開始 in the demo: no microphone and no meeting service, so the
+     * demo record screen comes up as a meeting started from that draft
+     * ([MeetingScenario.DRAFT]) — named and filed after it, with its button.
+     * Nothing is taken into [com.pathors.parley.meeting.MeetingDraft] for a
+     * real meeting, and nothing is hidden.
+     */
+    fun startDraft(choices: MeetingChoices) {
+        if (!isActive) return
+        serial += 1
+        _navigation.value = Navigation(
+            screen = Screen.MEETING,
+            serial = serial,
+            scenario = MeetingScenario.DRAFT,
+            draftChoices = choices,
+        )
     }
 
     /** Leave demo mode. In-memory only, so this is the whole clean-up. */
@@ -1256,6 +1289,7 @@ object DemoMode {
     private val MEETING_ROUTES = mapOf(
         "record-idle" to MeetingScenario.IDLE,
         "record-paused" to MeetingScenario.PAUSED,
+        ROUTE_RECORD_DRAFT to MeetingScenario.DRAFT,
         MeetingScenario.SETTLED.route to MeetingScenario.SETTLED,
         MeetingScenario.ADJUST.route to MeetingScenario.ADJUST,
     )
@@ -1272,6 +1306,23 @@ object DemoMode {
             label = t(locale, "Renewals", "續約"),
         ),
     )
+
+    /**
+     * The demo meeting started from the 北風 draft ([DRAFT_FULL_ID]), as a
+     * draft's 開始 loads it: the draft's name, its Renewals folder, its context
+     * and the draft itself, for the record screen's sheet.
+     */
+    fun draftChoices(locale: Locale = Locale.getDefault()): MeetingChoices {
+        val draft = drafts(locale).first { it.id == DRAFT_FULL_ID }
+        val renewals = t(locale, "Renewals", "續約")
+        return MeetingChoices(
+            title = draft.title.trim(),
+            folder = ChosenFolder(destination = SaveDestination(folderId = RENEWALS_FOLDER_ID), label = renewals),
+            meetingContext = draft.meetingContext,
+            draftId = draft.id,
+            draft = DraftSnapshot(draft, renewals),
+        )
+    }
 
     /**
      * The meeting that has just landed, as the record screen hands it to its
@@ -1360,6 +1411,7 @@ object DemoMode {
     private const val HOST = "demo"
     private const val ROUTE_OFF = "off"
     private const val QUERY_SCENARIO = "scenario"
+    private const val ROUTE_RECORD_DRAFT = "record-draft"
 
     /** A fixed clock, so a re-capture months later produces identical frames. */
     private const val EPOCH_MS = 1_786_498_800_000.0

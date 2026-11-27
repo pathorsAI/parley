@@ -35,9 +35,10 @@ LIBRARY_ROUTES=(
   library library-all library-folder-empty library-org
   library-overview-drafts library-drafts library-draft library-draft-short
 )
-# The record screen before a meeting, during one and paused, and the result
-# page End opens, filing card on top (DemoMode.MeetingScenario).
-RECORD_ROUTES=(record-idle record record-paused settled)
+# The record screen before a meeting, during one and paused, the result
+# page End opens, filing card on top, and a meeting started from the 北風
+# draft with that draft open in its sheet (DemoMode.MeetingScenario).
+RECORD_ROUTES=(record-idle record record-paused settled record-draft)
 # Seconds after launch: one frame inside each welcome beat
 # (LapMotion.WelcomeSchedule starts: 0 / 1.8 / 3.4 / 6.4 / 8.3 / 11.0).
 WELCOME_AT=(1 2.8 5 7.4 9.8 13)

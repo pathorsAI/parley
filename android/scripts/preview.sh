@@ -58,6 +58,7 @@ ROUTES=(
   "record-idle:the record screen before a meeting"
   "record:a meeting in progress, named and filed"
   "record-paused:the same meeting, paused"
+  "record-draft:a meeting started from a draft, the draft open in its sheet"
   "settled:End's result page, filing suggestion on top"
   "adjust:the same, with the filing card's folder picker open"
   "account:the library with the account sheet open"

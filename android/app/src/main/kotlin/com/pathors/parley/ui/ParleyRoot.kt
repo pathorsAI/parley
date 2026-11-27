@@ -480,11 +480,13 @@ private fun NavHostController.openMeeting(start: Boolean = false) {
  * way the Library's Start recording does — microphone prompt included.
  *
  * Demo mode has no microphone and no meeting service: the demo record screen
- * comes up, and nothing is taken or hidden.
+ * comes up as a meeting started from the draft ([DemoMode.startDraft]), and
+ * nothing is taken or hidden.
  */
 private fun NavHostController.startDraft(choices: MeetingChoices) {
     if (DemoMode.isActive) {
-        navigate(Route.meeting()) { popUpTo(Route.HOME) }
+        // [DemoNavigation] brings the demo record screen up for it.
+        DemoMode.startDraft(choices)
         return
     }
     val running = MeetingService.activeSession.value?.state?.value

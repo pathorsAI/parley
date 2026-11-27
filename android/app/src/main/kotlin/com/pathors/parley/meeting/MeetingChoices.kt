@@ -1,5 +1,6 @@
 package com.pathors.parley.meeting
 
+import com.pathors.parley.kit.CloudMeetingDraft
 import com.pathors.parley.library.SaveDestination
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,6 +13,16 @@ import kotlinx.coroutines.flow.update
  * `MeetingRecorder.ChosenFolder`.
  */
 data class ChosenFolder(val destination: SaveDestination, val label: String)
+
+/**
+ * The meeting draft a meeting was started from, as its page showed it when
+ * 開始 was pressed: the draft, and the name of the folder it files into (null
+ * when that is not one of the personal folders). The record screen shows it
+ * read-only in a sheet, so the context and agenda stay at hand mid-meeting.
+ * The folder name is kept apart from [MeetingChoices.folder], which the user
+ * can change on the record screen — the sheet shows the draft, not the choice.
+ */
+data class DraftSnapshot(val draft: CloudMeetingDraft, val folderName: String?)
 
 /**
  * What the user said about the next (or the current) meeting on the record
@@ -43,6 +54,12 @@ data class MeetingChoices(
      * only reads drafts.
      */
     val draftId: String? = null,
+    /**
+     * The whole draft behind [draftId], for the record screen's "view the
+     * meeting draft" sheet; null for a meeting started any other way. Cleared
+     * with the rest of these choices ([MeetingDraft.clear], [MeetingDraft.dropDraft]).
+     */
+    val draft: DraftSnapshot? = null,
 ) {
     /** The name the recording is saved under, or null for its clock name. */
     val typedTitle: String? get() = title.trim().takeIf { it.isNotEmpty() }

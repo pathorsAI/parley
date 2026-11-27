@@ -31,8 +31,11 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,6 +53,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.R
@@ -495,13 +499,18 @@ internal object DraftTime {
  * offering a button that cannot work.
  *
  * The column takes the page's full width, not its content's, so a draft with
- * only a time and a folder still reads from the left edge.
+ * only a time and a folder still reads from the left edge; its height is the
+ * caller's (the Library's page fills the screen, [MeetingDraftSheet] wraps
+ * the content).
+ *
+ * @param onStart 開始錄音; null leaves the button out — the record screen's
+ *   sheet shows the draft of a meeting that has already started.
  */
 @Composable
 internal fun MeetingDraftPage(
     draft: CloudMeetingDraft,
     folder: String?,
-    onStart: () -> Unit,
+    onStart: (() -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     val now = rememberDraftClock()
@@ -512,7 +521,7 @@ internal fun MeetingDraftPage(
         verticalArrangement = Arrangement.spacedBy(24.dp),
         horizontalAlignment = Alignment.Start,
         modifier = modifier
-            .fillMaxSize()
+            .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 32.dp),
     ) {
@@ -562,7 +571,7 @@ internal fun MeetingDraftPage(
                 }
             }
         }
-        DraftStartRecordingButton(onClick = onStart)
+        if (onStart != null) DraftStartRecordingButton(onClick = onStart)
         if (context.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                 OverviewHeading(title = stringResource(R.string.draft_context))
@@ -592,8 +601,28 @@ internal fun MeetingDraftPage(
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Normal,
             color = MaterialTheme.colorScheme.outline,
+            textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+/**
+ * The record screen's "view the meeting draft": the draft the meeting was
+ * started from, read-only in a modal sheet — the Library's draft page without
+ * 開始錄音, since the meeting it would start is the one already going. As tall
+ * as the draft needs; a long agenda scrolls inside the sheet.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun MeetingDraftSheet(
+    draft: CloudMeetingDraft,
+    folder: String?,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        MeetingDraftPage(draft = draft, folder = folder, onStart = null)
     }
 }
 
