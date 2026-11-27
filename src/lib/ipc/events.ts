@@ -112,7 +112,8 @@ export interface ProsodyPayload {
 export interface MeetingErrorPayload {
   source: string;
   /** Hosted: "quota" (402) | "auth" (401 expired session). BYOK: "key"
-   *  (rejected vendor key). On-device: "local-missing" | "local-memory" |
+   *  (rejected vendor key) | "region" (the vendor refuses the user's region).
+   *  On-device: "local-missing" | "local-memory" |
    *  "local" (see lib/transcription/errors.ts). Any: "capture" (no audio
    *  source) | "connect". */
   code: string;

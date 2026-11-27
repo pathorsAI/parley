@@ -20,6 +20,9 @@ pub enum KeyCheck {
     Accepted,
     /// The vendor refused it.
     Rejected,
+    /// The vendor refused because of where the request comes from (OpenAI or
+    /// Gemini from Hong Kong / mainland China), not because of the key.
+    RegionUnsupported,
     /// We couldn't tell (offline, timeout, an unexpected answer).
     Unknown,
 }
@@ -53,7 +56,17 @@ pub async fn verify_stt_key(provider: String, key: String) -> KeyCheck {
         _ => return KeyCheck::Unknown,
     };
     match request.send().await {
-        Ok(response) => classify(&provider, response.status().as_u16()),
+        Ok(response) => {
+            let status = response.status().as_u16();
+            // Only a refusal's body is read: it is what tells a region block
+            // from a bad key, which share a status.
+            let body = if matches!(status, 400 | 403) {
+                response.text().await.unwrap_or_default()
+            } else {
+                String::new()
+            };
+            classify(&provider, status, &body)
+        }
         Err(error) => {
             log::warn!("key check: {provider} unreachable: {error}");
             KeyCheck::Unknown
@@ -61,8 +74,13 @@ pub async fn verify_stt_key(provider: String, key: String) -> KeyCheck {
     }
 }
 
-/// Read the vendor's status as a verdict on the key.
-fn classify(provider: &str, status: u16) -> KeyCheck {
+/// Read the vendor's status (and, for a refusal, its body) as a verdict on the
+/// key.
+fn classify(provider: &str, status: u16, body: &str) -> KeyCheck {
+    if matches!(status, 400 | 403) && crate::transcription::error::mentions_unsupported_region(body)
+    {
+        return KeyCheck::RegionUnsupported;
+    }
     match status {
         200..=299 => KeyCheck::Accepted,
         401 => KeyCheck::Rejected,
@@ -82,26 +100,42 @@ mod tests {
 
     #[test]
     fn success_accepts_and_unauthorised_rejects() {
-        assert_eq!(classify("soniox", 200), KeyCheck::Accepted);
-        assert_eq!(classify("assemblyai", 401), KeyCheck::Rejected);
-        assert_eq!(classify("openai", 403), KeyCheck::Rejected);
+        assert_eq!(classify("soniox", 200, ""), KeyCheck::Accepted);
+        assert_eq!(classify("assemblyai", 401, ""), KeyCheck::Rejected);
+        assert_eq!(classify("openai", 403, ""), KeyCheck::Rejected);
     }
 
     #[test]
     fn a_deepgram_403_is_not_held_against_the_key() {
-        assert_eq!(classify("deepgram", 403), KeyCheck::Unknown);
-        assert_eq!(classify("deepgram", 401), KeyCheck::Rejected);
+        assert_eq!(classify("deepgram", 403, ""), KeyCheck::Unknown);
+        assert_eq!(classify("deepgram", 401, ""), KeyCheck::Rejected);
     }
 
     #[test]
     fn gemini_reports_a_bad_key_as_400() {
-        assert_eq!(classify("gemini", 400), KeyCheck::Rejected);
-        assert_eq!(classify("openai", 400), KeyCheck::Unknown);
+        assert_eq!(classify("gemini", 400, ""), KeyCheck::Rejected);
+        assert_eq!(classify("openai", 400, ""), KeyCheck::Unknown);
     }
 
     #[test]
     fn rate_limits_and_outages_cannot_tell() {
-        assert_eq!(classify("soniox", 429), KeyCheck::Unknown);
-        assert_eq!(classify("deepgram", 503), KeyCheck::Unknown);
+        assert_eq!(classify("soniox", 429, ""), KeyCheck::Unknown);
+        assert_eq!(classify("deepgram", 503, ""), KeyCheck::Unknown);
+    }
+
+    #[test]
+    fn a_region_refusal_is_not_held_against_the_key() {
+        let openai = r#"{"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported","param":null,"type":"request_forbidden"}}"#;
+        assert_eq!(classify("openai", 403, openai), KeyCheck::RegionUnsupported);
+        let gemini = r#"{"error":{"code":400,"message":"User location is not supported for the API use.","status":"FAILED_PRECONDITION"}}"#;
+        assert_eq!(classify("gemini", 400, gemini), KeyCheck::RegionUnsupported);
+        // Ordinary refusals keep their verdicts.
+        let bad_gemini = r#"{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}"#;
+        assert_eq!(classify("gemini", 400, bad_gemini), KeyCheck::Rejected);
+        assert_eq!(
+            classify("openai", 403, r#"{"error":{"message":"Forbidden"}}"#),
+            KeyCheck::Rejected
+        );
+        assert_eq!(classify("openai", 401, openai), KeyCheck::Rejected);
     }
 }

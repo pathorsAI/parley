@@ -2,6 +2,7 @@ import { AlertTriangle, RefreshCw, Settings, X } from "lucide-react";
 import { useStore } from "../lib/store";
 import { missingProviderRequirement, type ProviderRequirement } from "../lib/ai/settings";
 import { PROVIDER_BY_ID } from "../lib/ai/providers";
+import { isRegionRefusalMessage } from "../lib/ai/region";
 import { openSettings } from "../lib/nav/settings";
 import { runAnalysis } from "../lib/analysis/engine";
 import { useI18n } from "../i18n";
@@ -23,6 +24,8 @@ type Kind =
   /** A self-hosted endpoint with no model id configured yet. */
   | "missingModel"
   | "auth"
+  /** The provider refuses the user's region — see lib/ai/region.ts. */
+  | "regionUnsupported"
   | "model"
   | "rate"
   | "structured"
@@ -53,7 +56,7 @@ function classify(message: string, missing: ProviderRequirement | null): Kind {
   return "generic";
 }
 
-const HINTS: Record<"zh-TW" | "en", Record<Kind, string>> = {
+const HINTS: Record<"zh-TW" | "en", Record<Exclude<Kind, "regionUnsupported">, string>> = {
   "zh-TW": {
     missingKey: "目前這個供應商沒有 API 金鑰。請到設定填入金鑰後再試一次。",
     missingBaseUrl: "這個自訂供應商還沒填伺服器網址。請到設定填入 base URL（通常結尾是 /v1），並按「測試連線」確認。",
@@ -86,7 +89,7 @@ const LABELS = {
 } as const;
 
 export function AnalysisErrorDialog() {
-  const { language } = useI18n();
+  const { language, t } = useI18n();
   const lang = language === "en" ? "en" : "zh-TW";
 
   const analysisError = useStore((s) => s.analysisError);
@@ -114,8 +117,17 @@ export function AnalysisErrorDialog() {
   if (!message) return null;
 
   const L = LABELS[lang];
-  const kind = classify(message, missing);
-  const hint = HINTS[lang][kind];
+  // A region refusal arrives either already worded (studyErrorMessage) or as
+  // the raw provider error; either way it outranks the 403 "bad key" reading.
+  const regionProvider = [providers.realtime, providers.deep].find((p) => {
+    const label = PROVIDER_BY_ID[p]?.label ?? p;
+    return message === t("ai.fail.regionUnsupported", { provider: label }) || isRegionRefusalMessage(message, p);
+  });
+  const kind: Kind = !missing && regionProvider ? "regionUnsupported" : classify(message, missing);
+  const hint =
+    kind === "regionUnsupported" && regionProvider
+      ? t("ai.fail.regionUnsupported", { provider: PROVIDER_BY_ID[regionProvider]?.label ?? regionProvider })
+      : HINTS[lang][kind as Exclude<Kind, "regionUnsupported">];
 
   function dismiss() {
     setAnalysisError(null);
@@ -153,12 +165,14 @@ export function AnalysisErrorDialog() {
             <span className="font-medium">{L.model}:</span> <span className="font-mono">{modelText}</span>
           </div>
 
-          <details className="text-[11px] text-muted-foreground">
-            <summary className="cursor-pointer select-none hover:text-foreground">{message.slice(0, 80)}{message.length > 80 ? "…" : ""}</summary>
-            <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/60 p-2 text-[10px] leading-snug text-foreground/80">
-              {message}
-            </pre>
-          </details>
+          {message !== hint && (
+            <details className="text-[11px] text-muted-foreground">
+              <summary className="cursor-pointer select-none hover:text-foreground">{message.slice(0, 80)}{message.length > 80 ? "…" : ""}</summary>
+              <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/60 p-2 text-[10px] leading-snug text-foreground/80">
+                {message}
+              </pre>
+            </details>
+          )}
 
           <div className="flex justify-end gap-2 pt-0.5">
             <button
