@@ -53,6 +53,7 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -691,10 +692,13 @@ private fun AgendaRow(item: AgendaRowModel, onToggle: (() -> Unit)?) {
             }
         }
         Spacer(Modifier.width(10.dp))
+        // Done reads done: greyed and struck through, as the desktop's
+        // TodosPanel and iOS draw it.
         Text(
             text = item.text,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = if (item.done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            textDecoration = if (item.done) TextDecoration.LineThrough else null,
             modifier = Modifier.weight(1f),
         )
     }
