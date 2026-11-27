@@ -1,19 +1,20 @@
 import { useRef, useState, type ReactNode } from "react";
 import { ArrowRight, Plus, X } from "lucide-react";
 import { useStore } from "../lib/store";
-import { MAX_PLAYBOOK_ITEMS, MAX_PLAYBOOK_TEXT, type PlaybookList } from "../lib/meeting/playbook";
+import { MAX_PLAYBOOK_ITEMS, MAX_PLAYBOOK_TEXT } from "../lib/meeting/playbook";
+import { MAX_OPENING_SCRIPT, MAX_SMALL_TALK_ITEMS, MAX_SMALL_TALK_TEXT } from "../lib/meeting/opening";
 import { useI18n } from "../i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Field, FieldHint, FieldTitle } from "./FormSection";
+import { Field, FieldHint, FieldTitle, FORM_INPUT_CLASS } from "./FormSection";
 
 /** The draft form's input look, as the agenda's add field has it. */
 const INPUT_CLASS = "h-8 rounded-[8px] border-[#dadee5] text-sm dark:border-input";
 
-/** One playbook row: its text and a hover-to-remove button, like an agenda row. */
-function PlaybookRow({ list, id, children }: Readonly<{ list: PlaybookList; id: string; children: ReactNode }>) {
+/** One row of a list in the draft form: its text and a hover-to-remove
+ *  button, like an agenda row. */
+function ListRow({ onRemove, children }: Readonly<{ onRemove: () => void; children: ReactNode }>) {
   const { t } = useI18n();
-  const remove = useStore((s) => s.removePlaybookItem);
   return (
     <div className="group flex items-start gap-2 rounded-md px-1.5 py-1 hover:bg-muted/50">
       <span className="min-w-0 flex-1 text-sm leading-snug break-words">{children}</span>
@@ -21,7 +22,7 @@ function PlaybookRow({ list, id, children }: Readonly<{ list: PlaybookList; id: 
         type="button"
         aria-label={t("draft.playbook.remove")}
         title={t("draft.playbook.remove")}
-        onClick={() => remove(list, id)}
+        onClick={onRemove}
         className="shrink-0 text-muted-foreground/0 transition-colors group-hover:text-muted-foreground hover:!text-foreground focus-visible:text-muted-foreground"
       >
         <X className="size-3.5" />
@@ -46,16 +47,32 @@ function AddButton({ disabled }: Readonly<{ disabled: boolean }>) {
   );
 }
 
-/** The topics: one line per item. */
-function TopicList() {
-  const { t } = useI18n();
-  const label = t("draft.playbook.topics");
-  const items = useStore((s) => s.meetingPlaybook.topics);
-  const add = useStore((s) => s.addPlaybookItem);
+/**
+ * A list of sentences in the draft form — the playbook's topics, the
+ * opening's small talk: one line per item, each removable, and a field that
+ * adds the next until the list is full.
+ */
+function SentenceList({
+  label,
+  placeholder,
+  items,
+  max,
+  maxLength,
+  onAdd,
+  onRemove,
+}: Readonly<{
+  label: string;
+  placeholder: string;
+  items: readonly { key: string; text: string }[];
+  max: number;
+  maxLength: number;
+  onAdd: (text: string) => void;
+  onRemove: (key: string) => void;
+}>) {
   const [input, setInput] = useState("");
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    add("topics", { text: input });
+    onAdd(input);
     setInput("");
   }
   return (
@@ -64,19 +81,19 @@ function TopicList() {
       {items.length > 0 && (
         <div className="-mx-1.5 flex flex-col gap-0.5">
           {items.map((x) => (
-            <PlaybookRow key={x.id} list="topics" id={x.id}>
+            <ListRow key={x.key} onRemove={() => onRemove(x.key)}>
               {x.text}
-            </PlaybookRow>
+            </ListRow>
           ))}
         </div>
       )}
-      {items.length < MAX_PLAYBOOK_ITEMS && (
+      {items.length < max && (
         <form onSubmit={submit} className="flex items-center gap-2">
           <Input
             value={input}
-            maxLength={MAX_PLAYBOOK_TEXT}
+            maxLength={maxLength}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={t("draft.playbook.topicsPlaceholder")}
+            placeholder={placeholder}
             aria-label={label}
             className={INPUT_CLASS}
           />
@@ -87,12 +104,68 @@ function TopicList() {
   );
 }
 
+/** How the meeting starts: small talk, then the standard opening. The meeting
+ *  shows both from its first second (live/OpeningCard). */
+function OpeningFields() {
+  const { t } = useI18n();
+  const smallTalk = useStore((s) => s.meetingOpening.smallTalk);
+  const addSmallTalk = useStore((s) => s.addSmallTalk);
+  const removeSmallTalk = useStore((s) => s.removeSmallTalk);
+  const script = useStore((s) => s.meetingOpening.script);
+  const setScript = useStore((s) => s.setOpeningScript);
+  return (
+    <>
+      <SentenceList
+        label={t("draft.opening.smallTalk")}
+        placeholder={t("draft.opening.smallTalkPlaceholder")}
+        items={smallTalk.map((text) => ({ key: text, text }))}
+        max={MAX_SMALL_TALK_ITEMS}
+        maxLength={MAX_SMALL_TALK_TEXT}
+        onAdd={addSmallTalk}
+        onRemove={(text) => removeSmallTalk(smallTalk.indexOf(text))}
+      />
+      <Field>
+        <FieldTitle label={t("draft.opening.script")} htmlFor="draft-opening-script" />
+        <textarea
+          id="draft-opening-script"
+          rows={3}
+          value={script}
+          maxLength={MAX_OPENING_SCRIPT}
+          onChange={(e) => setScript(e.target.value)}
+          placeholder={t("draft.opening.scriptPlaceholder")}
+          className={`${FORM_INPUT_CLASS} resize-y py-2 leading-snug`}
+        />
+      </Field>
+    </>
+  );
+}
+
+/** The topics: one line per item. */
+function TopicList() {
+  const { t } = useI18n();
+  const items = useStore((s) => s.meetingPlaybook.topics);
+  const add = useStore((s) => s.addPlaybookItem);
+  const remove = useStore((s) => s.removePlaybookItem);
+  return (
+    <SentenceList
+      label={t("draft.playbook.topics")}
+      placeholder={t("draft.playbook.topicsPlaceholder")}
+      items={items.map((x) => ({ key: x.id, text: x.text }))}
+      max={MAX_PLAYBOOK_ITEMS}
+      maxLength={MAX_PLAYBOOK_TEXT}
+      onAdd={(text) => add("topics", { text })}
+      onRemove={(id) => remove("topics", id)}
+    />
+  );
+}
+
 /** The branches: "when they say …, steer toward …" pairs. Enter with only the
  *  first half filled moves on to the second; a pair goes in once both are. */
 function BranchList() {
   const { t } = useI18n();
   const items = useStore((s) => s.meetingPlaybook.branches);
   const add = useStore((s) => s.addPlaybookItem);
+  const remove = useStore((s) => s.removePlaybookItem);
   const [when, setWhen] = useState("");
   const [then, setThen] = useState("");
   const whenRef = useRef<HTMLInputElement>(null);
@@ -119,11 +192,11 @@ function BranchList() {
       {items.length > 0 && (
         <div className="-mx-1.5 flex flex-col gap-0.5">
           {items.map((b) => (
-            <PlaybookRow key={b.id} list="branches" id={b.id}>
+            <ListRow key={b.id} onRemove={() => remove("branches", b.id)}>
               <span className="text-muted-foreground">{b.when}</span>
               <ArrowRight className="mx-1 inline size-3 align-[-1px] text-muted-foreground" />
               {b.then}
-            </PlaybookRow>
+            </ListRow>
           ))}
         </div>
       )}
@@ -155,14 +228,15 @@ function BranchList() {
   );
 }
 
-/** The meeting draft's playbook: how to steer and where to go next (what to
- *  ask or cover is the agenda, above it in the sheet). Live suggestions pick
+/** The meeting draft's playbook: how it opens, how to steer and where to go
+ *  next (what to ask or cover is the agenda, above it in the sheet). Live suggestions pick
  *  from it while the meeting runs. */
 export function PlaybookFields() {
   const { t } = useI18n();
   return (
     <>
       <FieldHint>{t("draft.playbook.hint")}</FieldHint>
+      <OpeningFields />
       <BranchList />
       <TopicList />
     </>

@@ -1822,6 +1822,20 @@
   },
   {
     "args": {
+      "smallTalk": [
+        1
+      ]
+    },
+    "error": "smallTalk must be an array of strings",
+    "tool": "create_meeting_draft"
+  },
+  {
+    "args": {},
+    "error": "missing string field: id",
+    "tool": "restore_meeting_draft"
+  },
+  {
+    "args": {
       "title": "No id"
     },
     "error": "id is required",
@@ -2006,11 +2020,94 @@
     "result": {
       "received": {
         "action": "list_meeting_drafts",
-        "args": {},
+        "args": {
+          "includeRemoved": null
+        },
         "instance": "http://127.0.0.1:3011/mcp"
       }
     },
     "tool": "list_meeting_drafts"
+  },
+  {
+    "args": {
+      "includeRemoved": true
+    },
+    "result": {
+      "received": {
+        "action": "list_meeting_drafts",
+        "args": {
+          "includeRemoved": true
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "list_meeting_drafts"
+  },
+  {
+    "args": {
+      "opening": "Thanks for making time. We have thirty minutes.",
+      "smallTalk": [
+        "Did you make it to Hokkaido in the end?"
+      ],
+      "title": "Kickoff"
+    },
+    "result": {
+      "received": {
+        "action": "create_meeting_draft",
+        "args": {
+          "agenda": null,
+          "branches": null,
+          "context": null,
+          "endAt": null,
+          "folderId": null,
+          "opening": "Thanks for making time. We have thirty minutes.",
+          "questions": null,
+          "reminderLeadMin": null,
+          "smallTalk": [
+            "Did you make it to Hokkaido in the end?"
+          ],
+          "startAt": null,
+          "title": "Kickoff",
+          "topics": null
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "create_meeting_draft"
+  },
+  {
+    "args": {
+      "id": "d1",
+      "opening": "",
+      "smallTalk": []
+    },
+    "result": {
+      "received": {
+        "action": "update_meeting_draft",
+        "args": {
+          "id": "d1",
+          "opening": "",
+          "smallTalk": []
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "update_meeting_draft"
+  },
+  {
+    "args": {
+      "id": "d1"
+    },
+    "result": {
+      "received": {
+        "action": "restore_meeting_draft",
+        "args": {
+          "id": "d1"
+        },
+        "instance": "http://127.0.0.1:3011/mcp"
+      }
+    },
+    "tool": "restore_meeting_draft"
   },
   {
     "args": {
@@ -2032,8 +2129,10 @@
           "context": "BATNA: renew with the current vendor",
           "endAt": null,
           "folderId": null,
+          "opening": null,
           "questions": null,
           "reminderLeadMin": null,
+          "smallTalk": null,
           "startAt": "2026-11-03T14:00:00+08:00",
           "title": "Pricing call",
           "topics": null
@@ -2078,10 +2177,12 @@
           "context": null,
           "endAt": null,
           "folderId": null,
+          "opening": null,
           "questions": [
             "What does volume look like next year?"
           ],
           "reminderLeadMin": null,
+          "smallTalk": null,
           "startAt": null,
           "title": "Renewal",
           "topics": [

@@ -48,6 +48,7 @@ import { McpStatusChip } from "./McpStatusChip";
 import { MicChip } from "./MicChip";
 import { StudyGenerationChip } from "./study/StudyGenerationChip";
 import { isPlaybookEmpty } from "../lib/meeting/playbook";
+import { isOpeningEmpty } from "../lib/meeting/opening";
 
 
 type TFn = ReturnType<typeof useI18n>["t"];
@@ -602,7 +603,8 @@ export function TitleBar({ fullscreen = false }: Readonly<{ fullscreen?: boolean
       !!s.meetingContext.trim() ||
       !!s.meetingTarget.trim() ||
       s.todos.length > 0 ||
-      !isPlaybookEmpty(s.meetingPlaybook)
+      !isPlaybookEmpty(s.meetingPlaybook) ||
+      !isOpeningEmpty(s.meetingOpening)
   );
   // Guard the start/stop toggle so a rapid double-click can't fire two overlapping
   // start/stop invokes (which is what could race two transcription sessions open,

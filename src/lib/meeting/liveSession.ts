@@ -8,6 +8,7 @@ import { consumeDraftTaken } from "../store/liveProbe";
 import type { ParleyState } from "../store/types";
 import { log } from "../log";
 import { isPlaybookEmpty } from "./playbook";
+import { isOpeningEmpty } from "./opening";
 
 /**
  * What a meeting takes from the prep when it starts: everything set up FOR it,
@@ -29,6 +30,7 @@ const PREP_KEYS = [
   "meetingEndAt",
   "todos",
   "meetingPlaybook",
+  "meetingOpening",
   "autoAnalyze",
   "autoAnalyzeSec",
 ] as const satisfies readonly (keyof ParleyState)[];
@@ -52,6 +54,7 @@ function mainPrepIsEmpty(s: ParleyState): boolean {
   if (s.editingDraftId != null || s.draftOpen) return false;
   return (Object.keys(CLEARED_PREP_SLICE) as (keyof typeof CLEARED_PREP_SLICE)[]).every((k) => {
     if (k === "meetingPlaybook") return isPlaybookEmpty(s.meetingPlaybook);
+    if (k === "meetingOpening") return isOpeningEmpty(s.meetingOpening);
     const v = s[k];
     return Array.isArray(v) ? v.length === 0 : v === CLEARED_PREP_SLICE[k];
   });

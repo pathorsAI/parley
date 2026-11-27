@@ -244,6 +244,7 @@ export const createMeetingSlice: SliceCreator<MeetingSlice> = (set) => ({
       deliveryNudge: null,
       liveSuggestion: null,
       liveSuggestLog: [],
+      openingDismissed: false,
       systemAudioWarning: false,
       ...CLEARED_TRANSCRIPTION_LINK,
       transcriptionDropped: false,

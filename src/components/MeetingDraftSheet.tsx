@@ -11,6 +11,7 @@ import { MeetingContextField } from "./MeetingContextField";
 import { MeetingTimePicker, defaultMeetingTime } from "./MeetingTimePicker";
 import { PlaybookFields } from "./PlaybookFields";
 import { isPlaybookEmpty } from "../lib/meeting/playbook";
+import { isOpeningEmpty } from "../lib/meeting/opening";
 import { TodoAddForm, TodoRow } from "./sidebar/TodosPanel";
 import { useMeetingDestination } from "./useMeetingDestination";
 
@@ -130,7 +131,8 @@ export function MeetingDraftSheet() {
       !!s.meetingContext.trim() ||
       !!s.meetingTarget.trim() ||
       s.todos.length > 0 ||
-      !isPlaybookEmpty(s.meetingPlaybook)
+      !isPlaybookEmpty(s.meetingPlaybook) ||
+      !isOpeningEmpty(s.meetingOpening)
   );
   const { destination, mode, fresh, pickDestination } = useMeetingDestination();
 

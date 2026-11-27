@@ -17,6 +17,7 @@ import { CoachFeed } from "./CoachFeed";
 import { TodosPanel } from "../sidebar/TodosPanel";
 import { FindingsPanel } from "../analysis/FindingsPanel";
 import { LiveSuggestionBar } from "./LiveSuggestion";
+import { OpeningCard } from "./OpeningCard";
 
 /**
  * Persistent mic-only warning (⑥): the system-audio capture failing means the
@@ -184,6 +185,7 @@ export function LiveScreen() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
     <LiveBanners />
+    <OpeningCard className="mx-3 mt-2 max-h-56 shrink-0" />
     <LiveSuggestionBar className="mx-3 my-2" />
     <ResizablePanelGroup
       key={layout}
