@@ -1,4 +1,4 @@
-import { BellRing, CalendarDays, CalendarPlus, Eraser, Flag, FolderOpen, NotebookPen, Route, Save, Trash2, X } from "lucide-react";
+import { BellRing, CalendarDays, CalendarPlus, Eraser, FolderOpen, NotebookPen, Route, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { useStore } from "../lib/store";
 import { ensureNotificationPermission } from "../lib/meeting/reminder";
@@ -10,7 +10,6 @@ import { Field, FieldHint, FieldTitle, FORM_INPUT_CLASS, FormSection } from "./F
 import { MeetingContextField } from "./MeetingContextField";
 import { MeetingTimePicker, defaultMeetingTime } from "./MeetingTimePicker";
 import { PlaybookFields } from "./PlaybookFields";
-import { OpeningFields } from "./OpeningFields";
 import { isPlaybookEmpty } from "../lib/meeting/playbook";
 import { isOpeningEmpty } from "../lib/meeting/opening";
 import { TodoAddForm, TodoRow } from "./sidebar/TodosPanel";
@@ -256,10 +255,6 @@ export function MeetingDraftSheet() {
               )}
               <TodoAddForm bare />
             </Field>
-          </FormSection>
-
-          <FormSection icon={<Flag className="size-3.5" />} label={t("draft.section.opening")}>
-            <OpeningFields />
           </FormSection>
 
           <FormSection
