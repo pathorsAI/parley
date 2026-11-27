@@ -139,7 +139,9 @@ internal fun DraftSection(
     now: Long,
     folderName: (String?) -> String?,
     onOpen: (String) -> Unit,
-    onStart: (CloudMeetingDraft) -> Unit,
+    // 開始 on the rows only for 即將開始的會議; null = none (a later draft is
+    // started from its page).
+    onStart: ((CloudMeetingDraft) -> Unit)?,
     modifier: Modifier = Modifier,
     limit: Int? = null,
     onSeeAll: (() -> Unit)? = null,
@@ -160,7 +162,7 @@ internal fun DraftSection(
                 now = now,
                 folder = folderName(draft.meetingFolderId),
                 onClick = { onOpen(draft.id) },
-                onStart = { onStart(draft) },
+                onStart = onStart?.let { start -> { start(draft) } },
             )
         }
     }
@@ -175,7 +177,6 @@ internal fun MeetingDraftsList(
     drafts: List<CloudMeetingDraft>,
     folderName: (String?) -> String?,
     onOpen: (String) -> Unit,
-    onStart: (CloudMeetingDraft) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val now = rememberDraftClock()
@@ -194,7 +195,7 @@ internal fun MeetingDraftsList(
                     now = now,
                     folder = folderName(draft.meetingFolderId),
                     onClick = { onOpen(draft.id) },
-                    onStart = { onStart(draft) },
+                    onStart = null,
                 )
             }
         }
@@ -211,8 +212,8 @@ private fun draftTitle(draft: CloudMeetingDraft): String =
 /**
  * The desktop's `DraftRow`, phone-sized — iOS `DraftRow`: the lead column
  * (16:00 today, 10/31 another day, 未定 without a time), the title, and under
- * it how soon and which folder — and the desktop's 開始 at the trailing edge
- * ([DraftStartButton]), beside the part that opens the draft rather than
+ * it how soon and which folder — and, on 即將開始的會議 only, the desktop's 開始
+ * at the trailing edge ([DraftStartButton]), beside the part that opens the draft rather than
  * inside it, so a press on 開始 never also opens the page.
  */
 @Composable
@@ -221,12 +222,14 @@ private fun DraftRow(
     now: Long,
     folder: String?,
     onClick: () -> Unit,
-    onStart: () -> Unit,
+    onStart: (() -> Unit)?,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         DraftRowText(draft = draft, now = now, folder = folder, onClick = onClick, modifier = Modifier.weight(1f))
-        Spacer(Modifier.width(8.dp))
-        DraftStartButton(onClick = onStart)
+        if (onStart != null) {
+            Spacer(Modifier.width(8.dp))
+            DraftStartButton(onClick = onStart)
+        }
     }
 }
 

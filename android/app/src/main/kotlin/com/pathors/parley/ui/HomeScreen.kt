@@ -457,7 +457,6 @@ fun HomeScreen(
                     drafts = drafts,
                     folderName = draftFolderName,
                     onOpen = { id -> openPage(LibraryPage.Draft(id)) },
-                    onStart = startDraft,
                     modifier = body,
                 )
 
@@ -926,7 +925,7 @@ private fun LibraryOverviewBody(
                         now = draftClock,
                         folderName = draftFolderName,
                         onOpen = openDraft,
-                        onStart = onStartDraft,
+                        onStart = null,
                         limit = LibraryRules.RECENT_COUNT,
                         onSeeAll = { onOpen(LibraryPage.Drafts) },
                         modifier = Modifier.padding(top = 16.dp),
