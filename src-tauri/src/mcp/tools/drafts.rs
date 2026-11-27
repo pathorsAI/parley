@@ -137,6 +137,11 @@ const SMALL_TALK_HELP: &str = "Small talk for before the opening: up to 8 lines,
      Shown above the opening. Leave out anything sensitive (health, family trouble). On update it replaces \
      the whole list; an empty array clears it.";
 
+/// The input of a tool that takes one draft's `id` and nothing else.
+fn id_schema(description: &str) -> Value {
+    json!({ "type": "object", "properties": { "id": prop(json!("string"), description) }, "required": ["id"] })
+}
+
 /// `update_meeting_draft`'s input: the draft's `id`, and any field to change.
 fn update_schema() -> Value {
     let text = || json!("string");
@@ -259,13 +264,7 @@ fn schemas() -> Vec<Value> {
             "Delete a saved meeting draft (id from list_meeting_drafts). It \
              leaves 即將開始 and its reminder is cancelled. Recordings are not \
              affected. It can be brought back with restore_meeting_draft.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string", "description": "The draft to delete (see list_meeting_drafts)." }
-                },
-                "required": ["id"]
-            }),
+            id_schema("The draft to delete (see list_meeting_drafts)."),
         ),
         tool(
             "restore_meeting_draft",
@@ -275,13 +274,7 @@ fn schemas() -> Vec<Value> {
              list_meeting_drafts with includeRemoved: true). It returns to \
              即將開始 with the preparation it had, on every device the user \
              syncs. Returns the restored draft.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "id": { "type": "string", "description": "The removed draft to bring back." }
-                },
-                "required": ["id"]
-            }),
+            id_schema("The removed draft to bring back."),
         ),
     ]
 }
