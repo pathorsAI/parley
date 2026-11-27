@@ -806,7 +806,20 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     fun dismissChecklist() = container.gettingStarted.dismiss()
 
     /**
-     * The account sheet's "Show the getting-started list again": the list
+     * The account sheet's "Re-run onboarding" — the desktop's
+     * `settings.basic.rerunSetup`, iOS `SettingsView.rerunOnboarding`: the
+     * wizard covers the library again from its welcome (the account step shows
+     * the signed-in confirmation), with the checklist and the sample reset
+     * first so the wizard's "Try the sample" starts the lap from the top. The
+     * speaker background and terms are kept for the context step to show.
+     */
+    fun rerunOnboarding() {
+        showChecklistAgain()
+        container.onboarding.startRerun()
+    }
+
+    /**
+     * The checklist reset ([rerunOnboarding] starts with it): the list
      * reset, and everything that would keep it off screen gone — an org scope,
      * a folder page. The screen closes the search and scrolls up.
      *

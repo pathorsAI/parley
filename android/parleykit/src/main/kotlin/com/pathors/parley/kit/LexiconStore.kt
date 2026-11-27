@@ -93,6 +93,13 @@ class LexiconStore(
      */
     fun recognitionTerms(): List<String> = load().recognitionTerms
 
+    /**
+     * The user's confirmed corrections applied to [text] ([Lexicon.apply]) —
+     * iOS `LexiconStore.apply(to:)`. Onboarding's microphone check runs the
+     * self-introduction through it before the product name is fixed.
+     */
+    fun apply(text: String): String = load().apply(text)
+
     private fun mutate(change: (Lexicon) -> Lexicon) {
         val changed = synchronized(lock) {
             val before = _lexicon.value

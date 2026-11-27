@@ -292,11 +292,12 @@ fun HomeScreen(
         AccountSheet(
             viewModel = viewModel,
             onDismiss = { showAccount = false },
-            onShowGettingStarted = {
+            onRerunOnboarding = {
                 showAccount = false
                 search.close()
-                viewModel.showChecklistAgain()
-                viewModel.selectFolder(FolderFilter.All)
+                // The wizard covers the library; when it is left with "Try the
+                // sample", the checklist is at the top of a list already there.
+                viewModel.rerunOnboarding()
                 coroutineScope.launch { listState.animateScrollToItem(0) }
             },
         )

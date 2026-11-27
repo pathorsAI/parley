@@ -3,6 +3,7 @@ package com.pathors.parley.screenshot
 import android.net.Uri
 import com.pathors.parley.BuildConfig
 import com.pathors.parley.cloud.CloudFolder
+import com.pathors.parley.cloud.CloudInvitation
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
@@ -66,7 +67,11 @@ import kotlinx.serialization.json.putJsonObject
  * iOS has), the import screen's endings (`import-partial`, `import-offline`,
  * `import-quota`, `import-signed-out`), the getting-started frames
  * (`checklist`, `checklist-partial`, `sample`, `share-menu` — see
- * [LAP_ROUTES]), and `off`.
+ * [LAP_ROUTES]), the onboarding wizard's steps (`welcome`,
+ * `onboarding-account`, `onboarding-signed-in`, `onboarding-org`,
+ * `onboarding-invited`, `onboarding-joined`, `onboarding-perms`,
+ * `onboarding-mic`, `onboarding-context`, `onboarding-done` — see
+ * [OnboardingScenario]), and `off`.
  *
  * The meeting route takes an optional `?scenario=` naming a [MeetingScenario] —
  * the states a real meeting only reaches when a microphone is taken away or the
@@ -194,6 +199,36 @@ object DemoMode {
     }
 
     /**
+     * The onboarding wizard's frames — iOS `ScreenshotDemo.OnboardingScenario`,
+     * under the same route names. [signedOut] ones stand in front of the
+     * sign-in wall (the welcome and the account choice); the rest cover the
+     * signed-in library, as the wizard does after a sign-in. Each names its
+     * step explicitly, so the step saved on the device never overrides it.
+     */
+    enum class OnboardingScenario(val route: String, val signedOut: Boolean = false) {
+        WELCOME("welcome", signedOut = true),
+        ACCOUNT("onboarding-account", signedOut = true),
+        ACCOUNT_CONFIRMED("onboarding-signed-in"),
+        ORG("onboarding-org"),
+        ORG_INVITED("onboarding-invited"),
+        ORG_JOINED("onboarding-joined"),
+        PERMS("onboarding-perms"),
+        MIC("onboarding-mic"),
+        CONTEXT("onboarding-context"),
+        DONE("onboarding-done"),
+    }
+
+    private val _onboarding = MutableStateFlow<OnboardingScenario?>(null)
+
+    /** The onboarding frame the last `parley://demo/…` asked for, if it was one. */
+    val onboarding: StateFlow<OnboardingScenario?> = _onboarding.asStateFlow()
+
+    /** The wizard was left (Skip, or one of its last buttons): back to the library. */
+    fun clearOnboarding() {
+        _onboarding.value = null
+    }
+
+    /**
      * A navigation request. [serial] makes each one distinct so firing the same
      * URL twice re-navigates instead of being swallowed as "no change".
      */
@@ -239,7 +274,9 @@ object DemoMode {
         }
         // Every other frame is of the product, not of the lap: no checklist.
         if (route !in LAP_ROUTES) resetLap()
+        _onboarding.value = ONBOARDING_ROUTES[route]
         val screen = when (route) {
+            in ONBOARDING_ROUTES -> Screen.LIBRARY
             "library", "recordings" -> Screen.LIBRARY
             "transcript", "recording" -> Screen.TRANSCRIPT
             "record", "meeting", in FILING_ROUTES -> Screen.MEETING
@@ -272,6 +309,7 @@ object DemoMode {
     fun disable() {
         _enabled.value = false
         _navigation.value = null
+        _onboarding.value = null
         resetLap()
     }
 
@@ -372,6 +410,29 @@ object DemoMode {
             role = OrgRole.ADMIN,
         ),
     )
+
+    /**
+     * The invitation the onboarding's organization step offers in its
+     * "invited" state — iOS `ScreenshotDemo.onboardingInvitation`. Pending with
+     * no expiry, so [CloudInvitation.isLive] keeps it whatever the clock says.
+     */
+    fun onboardingInvitation(locale: Locale = Locale.getDefault()): CloudInvitation = CloudInvitation(
+        id = "demo-invitation",
+        organizationId = "demo-org-invite",
+        organizationName = t(locale, "Northwind Sales", "北風業務部"),
+        role = OrgRole.MEMBER,
+        status = CloudInvitation.PENDING,
+        expiresAtMs = null,
+    )
+
+    /**
+     * What `CloudClient.myInvitations` would answer for the demo account: the
+     * one [onboardingInvitation]. The organization step's other states need no
+     * fixture of their own — "no invitations" is an empty list, and "joined"
+     * is the names of [orgs] (or, after a demo create, the name typed in).
+     */
+    fun invitations(locale: Locale = Locale.getDefault()): List<CloudInvitation> =
+        listOf(onboardingInvitation(locale))
 
     /** The personal folders the library's chip row shows — iOS `ScreenshotDemo.folders`. */
     fun folders(locale: Locale = Locale.getDefault()): List<CloudFolder> = listOf(
@@ -996,6 +1057,8 @@ object DemoMode {
         "sample" to (Screen.SAMPLE to Lap.SAMPLE),
         "share-menu" to (Screen.SHARE_MENU to Lap.SAMPLE),
     )
+
+    private val ONBOARDING_ROUTES = OnboardingScenario.entries.associateBy { it.route }
 
     private const val SCHEME = "parley"
     private const val HOST = "demo"

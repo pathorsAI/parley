@@ -39,6 +39,7 @@ import com.pathors.parley.meeting.RecordingFiles
 import com.pathors.parley.onboarding.AnnouncementStore
 import com.pathors.parley.onboarding.GettingStartedStore
 import com.pathors.parley.onboarding.LapCelebrations
+import com.pathors.parley.onboarding.OnboardingFlags
 import com.pathors.parley.onboarding.SampleRecordingStore
 import com.pathors.parley.onboarding.WhatsNewPresenter
 import com.pathors.parley.onboarding.parleyAnnouncementsStore
@@ -335,6 +336,9 @@ class AppContainer(private val app: Application) {
      */
     val sampleFiling: SampleFilingTarget
         get() = sample
+
+    /** The onboarding wizard's step, sign-in hand-off and speaker background. */
+    val onboarding: OnboardingFlags = OnboardingFlags.device(app)
 
     /** Whether the guided lap's finish has had its burst, per recording. */
     val lapCelebrations: LapCelebrations = LapCelebrations.device(app)
