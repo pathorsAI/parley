@@ -338,10 +338,14 @@ struct MeetingDraftDetailView: View {
     #Preview("Draft sections") {
         NavigationStack {
             ScrollView {
-                OverviewDraftSections(
-                    drafts: ScreenshotDemo.drafts,
-                    folderName: { id in ScreenshotDemo.folders.first { $0.id == id }?.name }
-                ) { _, row in row }
+                VStack(alignment: .leading, spacing: 28) {
+                    ForEach([OverviewDraftSections<DraftRow>.Part.startingSoon, .later], id: \.self) { part in
+                        OverviewDraftSections(
+                            drafts: ScreenshotDemo.drafts, part: part,
+                            folderName: { id in ScreenshotDemo.folders.first { $0.id == id }?.name }
+                        ) { _, row in row }
+                    }
+                }
                 .padding(20)
             }
         }
