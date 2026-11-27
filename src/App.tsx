@@ -44,6 +44,7 @@ import { initSessionCommands } from "./lib/sessionCommands";
 import { useThemePreference } from "./lib/theme";
 import { useAnalysisEngine, listenForCacheClear } from "./lib/analysis/engine";
 import { useLiveSuggestEngine } from "./lib/meeting/liveSuggestRun";
+import { useOpeningRetire } from "./lib/meeting/openingRun";
 import { initStudyPipeline } from "./lib/analysis/studyPipeline";
 import { listenForSpeakerCacheClear } from "./lib/speakers/namesCache";
 import { initHistoryPersistSync, listenForRecordingSaved, recoverCrashedMeetings } from "./lib/history/history";
@@ -474,6 +475,7 @@ const App = () => {
   useAnalysisEngine();
   // LIVE suggestions (即時建議): the next line, from Parley Cloud, when on.
   useLiveSuggestEngine();
+  useOpeningRetire();
 
   // LIVE delivery coach: turns the prosody stream into pace/monotone/pause nudges.
   useDeliveryCoach();

@@ -15,7 +15,11 @@ import {
   type PlaybookItemFields,
   type PlaybookList,
 } from "../meeting/playbook";
+import { emptyOpening, normalizeOpening, openingWithSmallTalk, openingWithoutSmallTalk, type MeetingOpening } from "../meeting/opening";
+import { withRemovedDraft, type RemovedDraft } from "../meeting/removedDrafts";
 import type { SliceCreator } from "./types";
+
+export type { DraftRemoval, RemovedDraft } from "../meeting/removedDrafts";
 
 /** Default reminder lead: enough to wrap up and join, short enough to still
  *  be on your mind. Changeable per draft. */
@@ -41,6 +45,9 @@ export interface MeetingDraft {
   todos: TodoItem[];
   /** What to ask, how to steer, where to go next — live suggestions pick from it. */
   playbook: MeetingPlaybook;
+  /** What to say in the first minute: small talk, then the standard opening.
+   *  On screen from the start of the meeting (meeting/opening.ts). */
+  opening: MeetingOpening;
   meetingFolderId: string | null;
   meetingOrgShare: MeetingShare;
   updatedAt: number;
@@ -56,6 +63,7 @@ export interface NewDraftFields {
   meetingFolderId: string | null;
   agenda: string[];
   playbook: MeetingPlaybook;
+  opening: MeetingOpening;
 }
 
 /** The fields an MCP client may change on a saved draft; absent ones stay. */
@@ -70,6 +78,7 @@ export type DraftPatch = Partial<
     | "meetingFolderId"
     | "todos"
     | "playbook"
+    | "opening"
   >
 >;
 
@@ -86,6 +95,7 @@ function prepFromDraft(d: MeetingDraft) {
     meetingFloor: d.meetingFloor,
     todos: d.todos,
     meetingPlaybook: d.playbook,
+    meetingOpening: d.opening,
     meetingFolderId: d.meetingFolderId,
     meetingOrgShare: d.meetingOrgShare,
     meetingNotes: "",
@@ -181,10 +191,20 @@ export interface PrepSlice {
   editDraft: (id: string) => void;
   /** Leave the draft being edited unchanged and clear the prep. */
   discardDraftEdit: () => void;
-  /** Load a saved draft into the prep to record it, taking it off the list.
-   *  Refused (false) while a meeting runs: one meeting at a time. */
+  /** Load a saved draft into the prep to record it, taking it off the list
+   *  (it is filed under removedDrafts as "recorded"). Refused (false) while a
+   *  meeting runs: one meeting at a time. */
   takeDraft: (id: string) => boolean;
+  /** Take a draft off the list (filed under removedDrafts as "deleted"). */
   deleteDraft: (id: string) => void;
+  /** The drafts that left the list — recorded, deleted, or removed by the
+   *  cloud sync — newest first (persisted, this device only). Nothing leaves
+   *  the list without landing here, so "where did my draft go" always has an
+   *  answer and a way back. */
+  removedDrafts: RemovedDraft[];
+  /** Put a removed draft back on the list, as a fresh write (it syncs up as
+   *  one); null when there is no such removed draft. */
+  restoreDraft: (id: string) => MeetingDraft | null;
   /** File a draft made elsewhere (an MCP client) straight into the list,
    *  leaving the prep alone — so it works mid-meeting too. */
   addDraft: (fields: NewDraftFields) => MeetingDraft;
@@ -197,7 +217,7 @@ export interface PrepSlice {
   /** Fold drafts from Parley Cloud into the list (cloud/draftSync.ts): each of
    *  `upserts` replaces the draft with its id, keeping this device's
    *  `remindedFor` (a new one starts unreminded), and `removed` ids leave the
-   *  list. Only the LIST changes: the prep fields — a draft loaded for editing
+   *  list (filed under removedDrafts as "elsewhere"). Only the LIST changes: the prep fields — a draft loaded for editing
    *  included — are never touched, so a save made after a remote change is
    *  simply the newer write. */
   mergeCloudDrafts: (upserts: MeetingDraft[], removed: string[]) => void;
@@ -213,6 +233,12 @@ export interface PrepSlice {
   meetingPlaybook: MeetingPlaybook;
   addPlaybookItem: (list: PlaybookList, fields: PlaybookItemFields) => void;
   removePlaybookItem: (list: PlaybookList, id: string) => void;
+  /** The meeting's opening (small talk, then the standard opening). The
+   *  running meeting's copy is what its opening card shows. */
+  meetingOpening: MeetingOpening;
+  setOpeningScript: (script: string) => void;
+  addSmallTalk: (text: string) => void;
+  removeSmallTalk: (index: number) => void;
   /** Principled-negotiation setup for THIS deal (per-meeting, not global). Feeds
    *  BATNA / ZOPA / walk-away reasoning in the analysis. */
   meetingBatna: string;
@@ -234,7 +260,7 @@ export interface PrepSlice {
   meetingOrgShare: MeetingShare;
   setMeetingOrgShare: (share: MeetingShare) => void;
   /** Throw the current prep draft away (folder, context, agenda, playbook,
-   *  negotiation fields). The ONLY prep-clearing path. */
+   *  opening, negotiation fields). The ONLY prep-clearing path. */
   resetPrep: () => void;
 
   // the to-do checklist
@@ -273,6 +299,7 @@ export const CLEARED_PREP_SLICE = {
   // One shared frozen value: every reset hands out the same empty playbook,
   // and nothing mutates it (the actions above build new ones).
   meetingPlaybook: Object.freeze(emptyPlaybook()) as MeetingPlaybook,
+  meetingOpening: emptyOpening(),
 } satisfies Partial<PrepSlice>;
 
 export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
@@ -284,6 +311,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   meetingEndAt: null,
   reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN,
   drafts: [],
+  removedDrafts: [],
   editingDraftId: null,
   draftOpen: false,
   setDraftOpen: (draftOpen, preset) =>
@@ -304,6 +332,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
   meetingTarget: "",
   meetingFloor: "",
   meetingPlaybook: CLEARED_PREP_SLICE.meetingPlaybook,
+  meetingOpening: CLEARED_PREP_SLICE.meetingOpening,
 
   setMeetingContext: (text) => set({ meetingContext: text }),
   setMeetingTitle: (meetingTitle) => set({ meetingTitle }),
@@ -338,6 +367,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
         meetingFloor: s.meetingFloor,
         todos: s.todos,
         playbook: s.meetingPlaybook,
+        opening: normalizeOpening(s.meetingOpening),
         meetingFolderId: s.meetingFolderId,
         meetingOrgShare: s.meetingOrgShare,
         updatedAt: Date.now(),
@@ -376,6 +406,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
       return {
         ...prepFromDraft(d),
         drafts: s.drafts.filter((x) => x.id !== id),
+        removedDrafts: withRemovedDraft(s.removedDrafts, d, "recorded", Date.now()),
         editingDraftId: null,
         draftOpen: false,
       };
@@ -383,12 +414,34 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
     return taken;
   },
   deleteDraft: (id) =>
-    set((s) => ({
-      drafts: s.drafts.filter((x) => x.id !== id),
-      ...(s.editingDraftId === id
-        ? { ...CLEARED_PREP_SLICE, reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN, editingDraftId: null }
-        : {}),
-    })),
+    set((s) => {
+      const d = s.drafts.find((x) => x.id === id);
+      if (d) log.info("store: draft deleted", { id });
+      return {
+        drafts: s.drafts.filter((x) => x.id !== id),
+        removedDrafts: d ? withRemovedDraft(s.removedDrafts, d, "deleted", Date.now()) : s.removedDrafts,
+        ...(s.editingDraftId === id
+          ? { ...CLEARED_PREP_SLICE, reminderLeadMin: DEFAULT_REMINDER_LEAD_MIN, editingDraftId: null }
+          : {}),
+      };
+    }),
+  restoreDraft: (id) => {
+    let restored: MeetingDraft | null = null;
+    set((s) => {
+      const entry = s.removedDrafts.find((r) => r.draft.id === id);
+      if (!entry) return {};
+      // A fresh write: newer than the tombstone the removal sent to the cloud,
+      // so the draft comes back on every device.
+      const draft: MeetingDraft = { ...entry.draft, remindedFor: null, updatedAt: Date.now() };
+      restored = draft;
+      log.info("store: draft restored", { id, was: entry.reason });
+      return {
+        drafts: [...s.drafts.filter((d) => d.id !== id), draft],
+        removedDrafts: s.removedDrafts.filter((r) => r.draft.id !== id),
+      };
+    });
+    return restored;
+  },
   addDraft: (f) => {
     const draft: MeetingDraft = {
       id: crypto.randomUUID(),
@@ -403,6 +456,7 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
       meetingFloor: "",
       todos: f.agenda.map((text) => ({ id: crypto.randomUUID(), text, done: false })),
       playbook: f.playbook,
+      opening: f.opening,
       meetingFolderId: f.meetingFolderId,
       meetingOrgShare: null,
       updatedAt: Date.now(),
@@ -435,8 +489,14 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
       const gone = new Set(removed);
       const incoming = new Map(upserts.map((d) => [d.id, d]));
       const drafts: MeetingDraft[] = [];
+      const now = Date.now();
+      // A draft that is back (restored on another device) is no longer removed.
+      let removedDrafts = s.removedDrafts.filter((r) => !incoming.has(r.draft.id));
       for (const d of s.drafts) {
-        if (gone.has(d.id)) continue;
+        if (gone.has(d.id)) {
+          removedDrafts = withRemovedDraft(removedDrafts, d, "elsewhere", now);
+          continue;
+        }
         const next = incoming.get(d.id);
         if (next) {
           incoming.delete(d.id);
@@ -446,7 +506,8 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
         }
       }
       for (const d of incoming.values()) drafts.push({ ...d, remindedFor: null });
-      return { drafts };
+      if (gone.size > 0) log.info("store: drafts removed by the cloud sync", { ids: [...gone].join(",") });
+      return { drafts, removedDrafts };
     }),
   setMeetingOrgShare: (meetingOrgShare) => set({ meetingOrgShare }),
   setMeetingFolder: (meetingFolderId) => set({ meetingFolderId }),
@@ -460,6 +521,9 @@ export const createPrepSlice: SliceCreator<PrepSlice> = (set) => ({
     set((s) => ({ meetingPlaybook: playbookWithItem(s.meetingPlaybook, list, fields) })),
   removePlaybookItem: (list, id) =>
     set((s) => ({ meetingPlaybook: playbookWithoutItem(s.meetingPlaybook, list, id) })),
+  setOpeningScript: (script) => set((s) => ({ meetingOpening: { ...s.meetingOpening, script } })),
+  addSmallTalk: (text) => set((s) => ({ meetingOpening: openingWithSmallTalk(s.meetingOpening, text) })),
+  removeSmallTalk: (index) => set((s) => ({ meetingOpening: openingWithoutSmallTalk(s.meetingOpening, index) })),
 
   addTodo: (text) =>
     set((state) => {

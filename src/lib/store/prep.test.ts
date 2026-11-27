@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 // cycle from the slice side would build the store before the slice exists.
 import { useStore } from "../store";
 import { emptyPlaybook } from "../meeting/playbook";
+import { emptyOpening } from "../meeting/opening";
+import { REMOVED_DRAFTS_KEPT } from "../meeting/removedDrafts";
 import { draftsForOrg, isStartingSoon, sortDrafts, STARTING_SOON_MS, type MeetingDraft } from "./prep";
 
 function draft(id: string, over: Partial<MeetingDraft> = {}): MeetingDraft {
@@ -19,6 +21,7 @@ function draft(id: string, over: Partial<MeetingDraft> = {}): MeetingDraft {
     meetingFloor: "",
     todos: [],
     playbook: emptyPlaybook(),
+    opening: emptyOpening(),
     meetingFolderId: null,
     meetingOrgShare: null,
     updatedAt: 0,
@@ -172,9 +175,85 @@ describe("the playbook in the prep", () => {
       meetingContext: "",
       meetingFolderId: null,
       agenda: [],
+      opening: emptyOpening(),
       playbook,
     });
     expect(d.playbook).toEqual(playbook);
     expect(useStore.getState().meetingPlaybook).toEqual(emptyPlaybook());
+  });
+});
+
+describe("the opening in the prep", () => {
+  const INITIAL = useStore.getState();
+
+  it("is saved with the draft, cleared for the next, and loaded back by edit and take", () => {
+    useStore.setState(INITIAL, true);
+    const s = useStore.getState();
+    s.setMeetingTitle("Kickoff");
+    s.setOpeningScript("  Thanks for making time.  ");
+    s.addSmallTalk("Did you make it to Hokkaido?");
+    s.addSmallTalk("Busy season over?");
+    s.removeSmallTalk(1);
+    const saved = useStore.getState().saveDraft()!;
+    expect(saved.opening).toEqual({ script: "Thanks for making time.", smallTalk: ["Did you make it to Hokkaido?"] });
+    expect(useStore.getState().meetingOpening).toEqual(emptyOpening());
+
+    useStore.getState().editDraft(saved.id);
+    expect(useStore.getState().meetingOpening).toEqual(saved.opening);
+    useStore.getState().discardDraftEdit();
+    expect(useStore.getState().meetingOpening).toEqual(emptyOpening());
+
+    expect(useStore.getState().takeDraft(saved.id)).toBe(true);
+    expect(useStore.getState().meetingOpening).toEqual(saved.opening);
+  });
+});
+
+describe("drafts that leave the list", () => {
+  const INITIAL = useStore.getState();
+  const removedIds = () => useStore.getState().removedDrafts.map((r) => `${r.draft.id}:${r.reason}`);
+
+  it("a draft taken to record is kept as recorded, and restore puts it back as a fresh write", () => {
+    useStore.setState(INITIAL, true);
+    useStore.setState({ drafts: [draft("a", { title: "Renewal", remindedFor: 5, updatedAt: 1 }), draft("b")] });
+    expect(useStore.getState().takeDraft("a")).toBe(true);
+    expect(useStore.getState().drafts.map((d) => d.id)).toEqual(["b"]);
+    expect(removedIds()).toEqual(["a:recorded"]);
+
+    const back = useStore.getState().restoreDraft("a")!;
+    expect(back).toMatchObject({ id: "a", title: "Renewal", remindedFor: null });
+    expect(back.updatedAt).toBeGreaterThan(1);
+    expect(useStore.getState().drafts.map((d) => d.id)).toEqual(["b", "a"]);
+    expect(removedIds()).toEqual([]);
+    expect(useStore.getState().restoreDraft("a")).toBeNull();
+  });
+
+  it("a deleted draft is kept as deleted; deleting an unknown id files nothing", () => {
+    useStore.setState(INITIAL, true);
+    useStore.setState({ drafts: [draft("a")] });
+    useStore.getState().deleteDraft("a");
+    useStore.getState().deleteDraft("nope");
+    expect(removedIds()).toEqual(["a:deleted"]);
+  });
+
+  it("a draft the cloud sync removes is kept as removed elsewhere, and one that comes back is no longer removed", () => {
+    useStore.setState(INITIAL, true);
+    useStore.setState({ drafts: [draft("a"), draft("b")] });
+    useStore.getState().mergeCloudDrafts([], ["a"]);
+    expect(useStore.getState().drafts.map((d) => d.id)).toEqual(["b"]);
+    expect(removedIds()).toEqual(["a:elsewhere"]);
+
+    useStore.getState().mergeCloudDrafts([draft("a", { title: "Back" })], []);
+    expect(useStore.getState().drafts.map((d) => d.id)).toEqual(["b", "a"]);
+    expect(removedIds()).toEqual([]);
+  });
+
+  it("keeps the newest REMOVED_DRAFTS_KEPT, newest first", () => {
+    useStore.setState(INITIAL, true);
+    const many = Array.from({ length: REMOVED_DRAFTS_KEPT + 3 }, (_, i) => draft(`d${i}`));
+    useStore.setState({ drafts: many });
+    for (const d of many) useStore.getState().deleteDraft(d.id);
+    const kept = useStore.getState().removedDrafts;
+    expect(kept).toHaveLength(REMOVED_DRAFTS_KEPT);
+    expect(kept[0].draft.id).toBe(`d${REMOVED_DRAFTS_KEPT + 2}`);
   });
 });

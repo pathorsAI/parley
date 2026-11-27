@@ -8,10 +8,11 @@ use crate::mcp::registry::{tool, Domain, Field, Handler};
 pub(super) const DOMAIN: Domain = Domain {
     schemas,
     handlers: &[
-        ("list_meeting_drafts", Handler::Forward(&[])),
+        ("list_meeting_drafts", Handler::Forward(&[Field::Optional("includeRemoved")])),
         ("create_meeting_draft", Handler::ForwardWith(draft_args)),
         ("update_meeting_draft", Handler::ForwardWith(draft_patch_args)),
         ("delete_meeting_draft", Handler::Forward(&[Field::Required("id")])),
+        ("restore_meeting_draft", Handler::Forward(&[Field::Required("id")])),
     ],
 };
 
@@ -31,14 +32,15 @@ fn is_branch(v: &Value) -> bool {
 }
 
 /// The draft's fields, each passed on as given (`null` when absent); `agenda`,
-/// `questions` (an alias the frontend appends to the agenda) and `topics`,
-/// when given, must be arrays of strings, and `branches` an array of
-/// `{ when, then }` string pairs.
+/// `questions` (an alias the frontend appends to the agenda), `topics` and
+/// `smallTalk`, when given, must be arrays of strings, and `branches` an array
+/// of `{ when, then }` string pairs.
 fn draft_args(args: Value) -> anyhow::Result<Value> {
     let agenda = list_arg(&args, "agenda", Value::is_string, "strings")?;
     let questions = list_arg(&args, "questions", Value::is_string, "strings")?;
     let branches = list_arg(&args, "branches", is_branch, "{ when, then } objects with string values")?;
     let topics = list_arg(&args, "topics", Value::is_string, "strings")?;
+    let small_talk = list_arg(&args, "smallTalk", Value::is_string, "strings")?;
     let field = |key: &str| args.get(key).cloned().unwrap_or(Value::Null);
     Ok(json!({
         "title": field("title"),
@@ -50,7 +52,9 @@ fn draft_args(args: Value) -> anyhow::Result<Value> {
         "agenda": agenda,
         "questions": questions,
         "branches": branches,
-        "topics": topics
+        "topics": topics,
+        "opening": field("opening"),
+        "smallTalk": small_talk
     }))
 }
 
@@ -71,16 +75,17 @@ fn draft_patch_args(args: Value) -> anyhow::Result<Value> {
         .ok_or_else(|| anyhow::anyhow!("id is required"))?;
     let mut out = serde_json::Map::new();
     out.insert("id".to_string(), json!(id));
-    for key in ["title", "startAt", "endAt", "reminderLeadMin", "context", "folderId"] {
+    for key in ["title", "startAt", "endAt", "reminderLeadMin", "context", "folderId", "opening"] {
         if let Some(value) = args.get(key) {
             out.insert(key.to_string(), value.clone());
         }
     }
-    let lists: [ListRule; 4] = [
+    let lists: [ListRule; 5] = [
         ("agenda", Value::is_string, "strings"),
         ("questions", Value::is_string, "strings"),
         ("branches", is_branch, "{ when, then } objects with string values"),
         ("topics", Value::is_string, "strings"),
+        ("smallTalk", Value::is_string, "strings"),
     ];
     for (key, ok, shape) in lists {
         let list = list_arg(&args, key, ok, shape)?;
@@ -117,11 +122,26 @@ fn strings(description: &str) -> Value {
     json!({ "type": "array", "items": { "type": "string" }, "description": description })
 }
 
+/// How to write `opening`, shared by create and update.
+const OPENING_HELP: &str = "The standard opening, one passage the user can read aloud as is in the first \
+     minute: thank them for the time, say how long the meeting runs, name the two or three things to cover, \
+     and ask whether that works (e.g. '謝謝今天撥空，我們大概三十分鐘，想先聊導入進度、再看報價，\
+     最後確認下一步，這樣可以嗎？'). Written in the language the meeting is held in, in the user's own \
+     voice, up to 600 characters. Parley shows it word for word from the first second of the meeting. On \
+     update it replaces the current text; an empty string clears it.";
+
+/// How to write `smallTalk`, shared by create and update.
+const SMALL_TALK_HELP: &str = "Small talk for before the opening: up to 8 lines, each one complete sentence \
+     the user could say as is, specific to the people in this meeting — something they mentioned last time \
+     (a trip, a launch, a busy season), not a generic greeting (e.g. '上次說要去北海道，後來去了嗎？'). \
+     Shown above the opening. Leave out anything sensitive (health, family trouble). On update it replaces \
+     the whole list; an empty array clears it.";
+
 /// `update_meeting_draft`'s input: the draft's `id`, and any field to change.
 fn update_schema() -> Value {
     let text = || json!("string");
     let clearable = || json!(["string", "null"]);
-    let properties: [(&str, Value); 11] = [
+    let properties: [(&str, Value); 13] = [
         ("id", prop(text(), "The draft to change (see list_meeting_drafts).")),
         ("title", prop(text(), "Meeting name.")),
         ("startAt", prop(clearable(), "Start time, ISO 8601 with a UTC offset (e.g. 2026-11-03T14:00:00+08:00). null makes the draft untimed.")),
@@ -133,6 +153,8 @@ fn update_schema() -> Value {
         ("questions", strings("Items to add to the agenda (skipping any already there).")),
         ("branches", branches_schema("Playbook: if they say `when`, steer with `then`. Replaces the whole list.")),
         ("topics", strings("Playbook: what to bring up when the conversation runs dry, each one complete sentence the user could say as is. Replaces the whole list.")),
+        ("opening", prop(text(), OPENING_HELP)),
+        ("smallTalk", strings(SMALL_TALK_HELP)),
     ];
     let properties: serde_json::Map<String, Value> =
         properties.into_iter().map(|(key, schema)| (key.to_string(), schema)).collect();
@@ -146,12 +168,25 @@ fn schemas() -> Vec<Value> {
             "List meeting drafts",
             "List the saved meeting drafts — the upcoming meetings the user has \
              prepared — as { id, title, startAt, endAt, reminderLeadMin, context, \
-             folderId, agenda, branches, topics }. Times are ISO 8601 strings, \
-             or null for a draft with no time yet. `agenda` is the things to ask \
-             or cover in the meeting; `branches` ({ when, then }) and `topics` \
-             are the draft's playbook. Live suggestions pick from all three \
-             during the meeting.",
-            json!({ "type": "object", "properties": {} }),
+             folderId, agenda, branches, topics, opening, smallTalk }. Times \
+             are ISO 8601 strings, or null for a draft with no time yet. \
+             `agenda` is the things to ask or cover in the meeting; `branches` \
+             ({ when, then }) and `topics` are the draft's playbook. Live \
+             suggestions pick from all three during the meeting. `opening` \
+             (the standard opening) and `smallTalk` are shown from the \
+             meeting's first second. A draft whose time has passed stays \
+             listed until it is recorded or deleted. A draft LEAVES this list \
+             when the user starts recording from it (its preparation moves \
+             into that meeting), when it is deleted, or when another device \
+             does either; pass includeRemoved: true to also get those, each \
+             with `removedAt` and `removedReason` ('recorded', 'deleted' or \
+             'elsewhere'), and bring one back with restore_meeting_draft.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "includeRemoved": { "type": "boolean", "description": "Also list the drafts that recently left the list (the last 20)." }
+                }
+            }),
         ),
         tool(
             "create_meeting_draft",
@@ -173,6 +208,12 @@ fn schemas() -> Vec<Value> {
              ({ when: what they say, then: where to steer }), and `topics`, each a full \
              sentence the user could say as is, to \
              bring up when the conversation runs dry. Up to 30 items each. \
+             EVERY draft should also carry how the meeting starts: `opening`, \
+             the standard opening to read aloud, and `smallTalk`, a few lines \
+             of small talk for before it. Before writing `smallTalk`, look up \
+             what is known about the attendees — search_meetings for their \
+             names and read the recent recordings with them — and build each \
+             line on something they actually said. \
              `title` may be left out: a draft with a start time is then named \
              after it. Safe to call while a meeting is recording.",
             json!({
@@ -187,7 +228,9 @@ fn schemas() -> Vec<Value> {
                     "agenda": { "type": "array", "items": { "type": "string" }, "description": "The things to ask or cover in the meeting; the AI ticks them as they come up and live suggestions pick from the ones still open." },
                     "questions": { "type": "array", "items": { "type": "string" }, "description": "Alias of `agenda`: its items are appended to the agenda (skipping any already there). Prefer `agenda`." },
                     "branches": branches_schema("Playbook: if they say `when`, steer with `then`."),
-                    "topics": { "type": "array", "items": { "type": "string" }, "description": "Playbook: what to bring up when the conversation runs dry, each written as one complete sentence the user could say as is (e.g. '最近洗碗機旺季，你們晚上的電話是不是也變多了？'), not a bare topic — Parley shows it word for word mid-meeting." }
+                    "topics": { "type": "array", "items": { "type": "string" }, "description": "Playbook: what to bring up when the conversation runs dry, each written as one complete sentence the user could say as is (e.g. '最近洗碗機旺季，你們晚上的電話是不是也變多了？'), not a bare topic — Parley shows it word for word mid-meeting." },
+                    "opening": { "type": "string", "description": OPENING_HELP },
+                    "smallTalk": { "type": "array", "items": { "type": "string" }, "description": SMALL_TALK_HELP }
                 }
             }),
         ),
@@ -199,10 +242,13 @@ fn schemas() -> Vec<Value> {
              an item whose text is unchanged keeps its checked state. \
              `questions` (an alias) adds items to the agenda instead. \
              `branches` and `topics` each replace that whole playbook list; \
-             pass an empty array to clear one. Moving `startAt` without `endAt` \
+             pass an empty array to clear one. `opening` replaces the \
+             standard opening and `smallTalk` the small-talk lines. Moving `startAt` without `endAt` \
              keeps the meeting's length; `startAt: null` makes the draft \
              untimed. Returns the updated draft. Safe to call while a meeting \
-             is recording.",
+             is recording. A draft the user has already started recording \
+             from is no longer in the list: the error says so, and \
+             restore_meeting_draft brings it back.",
             update_schema(),
         ),
         tool(
@@ -210,11 +256,27 @@ fn schemas() -> Vec<Value> {
             "Delete a meeting draft",
             "Delete a saved meeting draft (id from list_meeting_drafts). It \
              leaves 即將開始 and its reminder is cancelled. Recordings are not \
-             affected.",
+             affected. It can be brought back with restore_meeting_draft.",
             json!({
                 "type": "object",
                 "properties": {
                     "id": { "type": "string", "description": "The draft to delete (see list_meeting_drafts)." }
+                },
+                "required": ["id"]
+            }),
+        ),
+        tool(
+            "restore_meeting_draft",
+            "Restore a meeting draft",
+            "Bring back a meeting draft that left the list — recorded from, \
+             deleted, or removed on another device (ids from \
+             list_meeting_drafts with includeRemoved: true). It returns to \
+             即將開始 with the preparation it had, on every device the user \
+             syncs. Returns the restored draft.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string", "description": "The removed draft to bring back." }
                 },
                 "required": ["id"]
             }),

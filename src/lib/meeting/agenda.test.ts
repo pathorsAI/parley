@@ -97,6 +97,7 @@ describe("carryOverDraft", () => {
       meetingFolderId: null,
       agenda: [TIMELINE, PILOT],
       playbook: { branches: [], topics: [] },
+      opening: { script: "", smallTalk: [] },
     });
   });
 });

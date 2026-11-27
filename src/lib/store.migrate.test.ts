@@ -196,6 +196,7 @@ describe("saved meeting drafts", () => {
       branches: [{ id: "b1", when: "太貴", then: "問他跟誰比" }],
       topics: [],
     },
+    opening: { script: "謝謝今天撥空。", smallTalk: ["上次說要去北海道，後來去了嗎？"] },
     meetingFolderId: null,
     meetingOrgShare: null,
     updatedAt: 1,
@@ -210,6 +211,30 @@ describe("saved meeting drafts", () => {
     const { playbook: _none, ...old } = draft;
     const restored = mergePersistedState({ settings: {}, drafts: [old] }, current());
     expect(restored.drafts).toEqual([{ ...old, playbook: { branches: [], topics: [] } }]);
+  });
+
+  it("saved before openings existed come back with the empty one", () => {
+    const { opening: _none, ...old } = draft;
+    const restored = mergePersistedState({ settings: {}, drafts: [old] }, current());
+    expect(restored.drafts).toEqual([{ ...old, opening: { script: "", smallTalk: [] } }]);
+  });
+
+  it("past their time are still there: nothing expires a draft", () => {
+    const past = { ...draft, meetingAt: Date.UTC(2020, 0, 1), meetingEndAt: Date.UTC(2020, 0, 1, 1) };
+    expect(mergePersistedState({ settings: {}, drafts: [past] }, current()).drafts).toEqual([past]);
+  });
+
+  it("the drafts that left the list come back too, malformed entries dropped", () => {
+    const removed = { draft, removedAt: 5, reason: "recorded" };
+    const restored = mergePersistedState(
+      {
+        settings: {},
+        removedDrafts: [removed, { draft, removedAt: 5, reason: "vanished" }, { draft: { id: 1 }, removedAt: 5, reason: "deleted" }, null],
+      },
+      current(),
+    );
+    expect(restored.removedDrafts).toEqual([removed]);
+    expect(mergePersistedState({ settings: {} }, current()).removedDrafts).toEqual([]);
   });
 
   it("whose playbook still has questions get them as unticked agenda items", () => {

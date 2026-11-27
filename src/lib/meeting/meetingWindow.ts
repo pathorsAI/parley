@@ -61,6 +61,10 @@ const MIRRORED = [
   "liveSuggestion",
   // Every suggestion shown this meeting: the 教練 tab's running list.
   "liveSuggestLog",
+  // The opening card (meeting/opening.ts): what it shows, and whether it has
+  // been said or put away. Put away here travels as the dismissOpening command.
+  "meetingOpening",
+  "openingDismissed",
 ] as const satisfies readonly (keyof ParleyState)[];
 
 /** Of those, the ones the meeting window edits; they travel back as patches. */
@@ -92,7 +96,8 @@ export type MeetingCommand =
   | "analyze"
   | "keepRecording"
   | "endSilent"
-  | "toggleLiveSuggest";
+  | "toggleLiveSuggest"
+  | "dismissOpening";
 
 function pick<K extends keyof ParleyState>(s: ParleyState, keys: readonly K[]): Pick<ParleyState, K> {
   const out = {} as Pick<ParleyState, K>;
@@ -167,6 +172,10 @@ function runCommand(cmd: MeetingCommand): void {
       s.updateSettings({ liveSuggestions: !s.settings.liveSuggestions });
       break;
     }
+    case "dismissOpening":
+      log.info("opening: put away by the user");
+      useLiveStore.getState().dismissOpening();
+      break;
   }
 }
 

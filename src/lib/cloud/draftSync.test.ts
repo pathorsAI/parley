@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MeetingDraft } from "../store/prep";
 import type { CloudMeetingDraft, DraftSyncState } from "./draftSync";
 import { emptyPlaybook, type MeetingPlaybook } from "../meeting/playbook";
+import { emptyOpening } from "../meeting/opening";
 
 // Meeting-draft cloud sync: the pure diff/merge, then the runner end to end
 // against a fake cloud over the REAL store (so the prep slice's merge action,
@@ -78,6 +79,7 @@ const draft = (over: Partial<MeetingDraft> = {}): MeetingDraft => ({
   meetingFloor: "",
   todos: [{ id: "t1", text: "Ask budget", done: false }],
   playbook: emptyPlaybook(),
+  opening: emptyOpening(),
   meetingFolderId: null,
   meetingOrgShare: null,
   updatedAt: NOW - 10_000,
@@ -135,6 +137,48 @@ const oldServerRow = (over: Partial<CloudMeetingDraft> = {}): CloudMeetingDraft 
   const { playbook: _none, ...rest } = row(over);
   return rest;
 };
+
+const OPENING = { script: "Thanks for making time.", smallTalk: ["Did you make it to Hokkaido?"] };
+
+/** A row as a server from before openings sends it: no `opening` key. */
+const preOpeningRow = (over: Partial<CloudMeetingDraft> = {}): CloudMeetingDraft => {
+  const { opening: _none, ...rest } = row(over);
+  return rest;
+};
+
+describe("opening", () => {
+  it("goes up in the PUT row and comes back down unchanged", () => {
+    const up = toCloudDraft(draft({ opening: OPENING }));
+    expect(up.opening).toEqual(OPENING);
+    expect(fromCloudDraft(up, null)).toEqual(draft({ opening: OPENING }));
+  });
+
+  it("a row with no opening key keeps the local draft's (an older server)", () => {
+    const r = preOpeningRow({ title: "Moved" });
+    expect(fromCloudDraft(r, null, null, OPENING).opening).toEqual(OPENING);
+    expect(fromCloudDraft(r, null).opening).toEqual(emptyOpening());
+    // An explicit empty opening from a new server does clear it.
+    expect(fromCloudDraft(row({ opening: emptyOpening() }), null, null, OPENING).opening).toEqual(emptyOpening());
+  });
+
+  it("an older server's answer to a push settles without wiping the opening", () => {
+    const local = [draft({ opening: OPENING })];
+    const state = emptySyncState("u1");
+    const outgoing = outgoingChanges(local, state, NOW);
+    expect(outgoing.drafts.map((d) => d.opening)).toEqual([OPENING]);
+    const res = applyExchange(local, state, outgoing, { ...noExchange, pushed: [preOpeningRow()] });
+    expect(res.changes).toEqual({ upserts: [], removed: [] });
+    // Agreed: the next run has nothing to send.
+    expect(outgoingChanges(local, res.state, NOW).drafts).toEqual([]);
+  });
+
+  it("an edited opening is a change to push; an empty one fingerprints as before openings", () => {
+    const state = stateWith([draft()]);
+    expect(outgoingChanges([draft({ opening: OPENING })], state, NOW).drafts.map((d) => d.id)).toEqual(["d1"]);
+    expect(fingerprint(draft())).not.toContain("opening");
+    expect(fingerprint(draft({ opening: OPENING }))).toContain("opening");
+  });
+});
 
 describe("playbook", () => {
   it("goes up in the PUT row and comes back down unchanged", () => {

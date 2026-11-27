@@ -28,6 +28,8 @@ import {
 } from "./defaults";
 import type { ParleyState } from "./types";
 import type { MeetingDraft } from "./prep";
+import { DRAFT_REMOVALS, REMOVED_DRAFTS_KEPT, type RemovedDraft } from "../meeting/removedDrafts";
+import { normalizeOpening } from "../meeting/opening";
 import { normalizePlaybook, withLegacyQuestions } from "../meeting/playbook";
 import { sanitizeMutedApps } from "../meeting/detect";
 import { CLOUD_ENABLED } from "../flags";
@@ -211,25 +213,49 @@ export function migratePersistedState(persisted: unknown, version: number): unkn
  */
 /** Saved meeting drafts from a persisted payload (anything malformed is
  *  dropped, so a bad entry can't take the store down). A draft saved before
- *  playbooks existed comes back with the empty one; one whose playbook still
- *  carries questions gets them as unticked agenda items. */
+ *  playbooks (or openings) existed comes back with the empty one; one whose
+ *  playbook still carries questions gets them as unticked agenda items. */
 export function restoredDrafts(persisted: unknown): MeetingDraft[] {
   const raw = (persisted as { drafts?: unknown } | undefined)?.drafts;
   if (!Array.isArray(raw)) return [];
+  return raw.filter(isSavedDraft).map(restoredDraft);
+}
+
+function isSavedDraft(d: unknown): d is MeetingDraft {
+  return (
+    !!d &&
+    typeof d === "object" &&
+    typeof (d as MeetingDraft).id === "string" &&
+    Array.isArray((d as MeetingDraft).todos) &&
+    ((d as MeetingDraft).meetingAt === null || typeof (d as MeetingDraft).meetingAt === "number")
+  );
+}
+
+function restoredDraft(d: MeetingDraft): MeetingDraft {
+  return {
+    ...d,
+    todos: withLegacyQuestions(d.todos, d.playbook),
+    playbook: normalizePlaybook(d.playbook),
+    opening: normalizeOpening(d.opening),
+  };
+}
+
+/** The drafts that left the list, from a persisted payload — read as
+ *  defensively as {@link restoredDrafts}. */
+export function restoredRemovedDrafts(persisted: unknown): RemovedDraft[] {
+  const raw = (persisted as { removedDrafts?: unknown } | undefined)?.removedDrafts;
+  if (!Array.isArray(raw)) return [];
   return raw
     .filter(
-      (d): d is MeetingDraft =>
-        !!d &&
-        typeof d === "object" &&
-        typeof (d as MeetingDraft).id === "string" &&
-        Array.isArray((d as MeetingDraft).todos) &&
-        ((d as MeetingDraft).meetingAt === null || typeof (d as MeetingDraft).meetingAt === "number"),
+      (r): r is RemovedDraft =>
+        !!r &&
+        typeof r === "object" &&
+        isSavedDraft((r as RemovedDraft).draft) &&
+        typeof (r as RemovedDraft).removedAt === "number" &&
+        DRAFT_REMOVALS.includes((r as RemovedDraft).reason),
     )
-    .map((d) => ({
-      ...d,
-      todos: withLegacyQuestions(d.todos, d.playbook),
-      playbook: normalizePlaybook(d.playbook),
-    }));
+    .map((r) => ({ draft: restoredDraft(r.draft), removedAt: r.removedAt, reason: r.reason }))
+    .slice(0, REMOVED_DRAFTS_KEPT);
 }
 
 export function mergePersistedState(persisted: unknown, current: ParleyState): ParleyState {
@@ -264,6 +290,7 @@ export function mergePersistedState(persisted: unknown, current: ParleyState): P
   return {
     ...current,
     drafts: restoredDrafts(persisted),
+    removedDrafts: restoredRemovedDrafts(persisted),
     settings: {
       ...DEFAULT_SETTINGS,
       ...p,
@@ -325,6 +352,7 @@ export const PERSIST_OPTIONS = {
     settings: state.settings,
     cloudAuth: state.cloudAuth,
     drafts: state.drafts,
+    removedDrafts: state.removedDrafts,
   }),
   // Backfill any settings fields missing from older persisted state.
   merge: mergePersistedState,

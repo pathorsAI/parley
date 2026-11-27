@@ -41,6 +41,11 @@ export interface CoachingSlice {
   /** Put a card on screen and log what it shows. */
   showLiveSuggestion: (card: ShownCard) => void;
   clearLiveSuggestion: () => void;
+
+  /** The opening card (meeting/opening.ts) has been said or put away. LIVE
+   *  only; reset on meeting start. */
+  openingDismissed: boolean;
+  dismissOpening: () => void;
 }
 
 export const createCoachingSlice: SliceCreator<CoachingSlice> = (set) => ({
@@ -52,6 +57,7 @@ export const createCoachingSlice: SliceCreator<CoachingSlice> = (set) => ({
   deliveryNudge: null,
   liveSuggestion: null,
   liveSuggestLog: [],
+  openingDismissed: false,
 
   setAutoAnalyze: (on) => set({ autoAnalyze: on }),
   setAutoAnalyzeSec: (sec) => set({ autoAnalyzeSec: Math.max(20, sec || 45) }),
@@ -89,4 +95,5 @@ export const createCoachingSlice: SliceCreator<CoachingSlice> = (set) => ({
       ],
     })),
   clearLiveSuggestion: () => set({ liveSuggestion: null }),
+  dismissOpening: () => set({ openingDismissed: true }),
 });

@@ -5,8 +5,9 @@ import { CLOUD_ENABLED } from "./flags";
 import { syncEnabled } from "./cloud/client";
 import { log } from "./log";
 import type { ActionItem, EvalDef, TimelineEvent } from "./types";
-import type { MeetingDraft } from "./store/prep";
+import type { DraftRemoval, MeetingDraft } from "./store/prep";
 import { playbookFromLists } from "./meeting/playbook";
+import { normalizeOpening } from "./meeting/opening";
 import * as ipc from "./ipc/commands";
 import { SESSION_COMMANDS_EVENT, listenEvent, type UnlistenFn } from "./ipc/events";
 
@@ -676,6 +677,8 @@ function draftForMcp(d: MeetingDraft) {
     agenda: d.todos.map((t) => t.text),
     branches: d.playbook.branches.map((b) => ({ when: b.when, then: b.then })),
     topics: d.playbook.topics.map((t) => t.text),
+    opening: d.opening.script,
+    smallTalk: [...d.opening.smallTalk],
   };
 }
 
@@ -704,9 +707,18 @@ function agendaArg(a: RpcArgs): string[] {
   return agenda;
 }
 
-async function rpcListMeetingDrafts(): Promise<unknown> {
+async function rpcListMeetingDrafts(a: RpcArgs): Promise<unknown> {
   const { sortDrafts } = await import("./store/prep");
-  return sortDrafts(useStore.getState().drafts).map(draftForMcp);
+  const s = useStore.getState();
+  const live = sortDrafts(s.drafts).map(draftForMcp);
+  if (a.includeRemoved !== true) return live;
+  // The drafts that left the list, newest first, after the ones still on it.
+  const removed = s.removedDrafts.map((r) => ({
+    ...draftForMcp(r.draft),
+    removedAt: new Date(r.removedAt).toISOString(),
+    removedReason: r.reason,
+  }));
+  return [...live, ...removed];
 }
 
 async function rpcCreateMeetingDraft(a: RpcArgs): Promise<unknown> {
@@ -737,16 +749,41 @@ async function rpcCreateMeetingDraft(a: RpcArgs): Promise<unknown> {
       branches: asBranches(a.branches),
       topics: asStringArray(a.topics),
     }),
+    opening: normalizeOpening({ script: asString(a.opening, ""), smallTalk: asStringArray(a.smallTalk) ?? [] }),
   });
   return draftForMcp(draft);
 }
 
-/** The saved draft `id` names, or an error that says where ids come from. */
+/** What happened to a draft that left the list, for an error message. */
+const REMOVAL_SAYS: Record<DraftRemoval, string> = {
+  recorded:
+    "the user started recording from it, which takes a draft off the list (its preparation went into that meeting)",
+  deleted: "it was deleted",
+  elsewhere: "another of the user's devices recorded from it or deleted it",
+};
+
+/** Why there is no saved draft `id`: it left the list (and how to get it
+ *  back), or this device never had it. */
+function missingDraftError(id: string): Error {
+  const removed = useStore.getState().removedDrafts.find((r) => r.draft.id === id);
+  if (removed) {
+    return new Error(
+      `meeting draft ${id} is no longer in the list: ${REMOVAL_SAYS[removed.reason]} at ${new Date(removed.removedAt).toISOString()}. ` +
+        "restore_meeting_draft brings it back as it was; list_meeting_drafts with includeRemoved: true shows it.",
+    );
+  }
+  return new Error(
+    `no meeting draft with id ${id} on this device: it was never saved here, or it left the list too long ago to be kept. ` +
+      "list_meeting_drafts shows the current drafts (includeRemoved: true adds the recently removed ones).",
+  );
+}
+
+/** The saved draft `id` names, or an error that says what became of it. */
 function draftById(id: unknown): MeetingDraft {
   const key = asNonEmptyString(id);
   if (!key) throw new Error("id is required");
   const draft = useStore.getState().drafts.find((d) => d.id === key);
-  if (!draft) throw new Error(`no meeting draft with id ${key} — get ids from list_meeting_drafts`);
+  if (!draft) throw missingDraftError(key);
   return draft;
 }
 
@@ -809,13 +846,17 @@ async function rpcUpdateMeetingDraft(a: RpcArgs): Promise<unknown> {
       branches: Array.isArray(a.branches) ? lists.branches : d.playbook.branches,
       topics: Array.isArray(a.topics) ? lists.topics : d.playbook.topics,
     },
+    opening: normalizeOpening({
+      script: typeof a.opening === "string" ? a.opening : d.opening.script,
+      smallTalk: Array.isArray(a.smallTalk) ? (asStringArray(a.smallTalk) ?? []) : d.opening.smallTalk,
+    }),
     ...(typeof a.reminderLeadMin === "number" && a.reminderLeadMin >= 0
       ? { reminderLeadMin: Math.round(a.reminderLeadMin) }
       : {}),
     ...(typeof a.context === "string" ? { meetingContext: a.context.trim() } : {}),
     ...("folderId" in a ? { meetingFolderId: asNonEmptyString(a.folderId) ?? null } : {}),
   });
-  if (!updated) throw new Error(`no meeting draft with id ${d.id} — get ids from list_meeting_drafts`);
+  if (!updated) throw missingDraftError(d.id);
   return draftForMcp(updated);
 }
 
@@ -823,6 +864,22 @@ async function rpcDeleteMeetingDraft(a: RpcArgs): Promise<unknown> {
   const d = draftById(a.id);
   useStore.getState().deleteDraft(d.id);
   return { id: d.id, deleted: true };
+}
+
+async function rpcRestoreMeetingDraft(a: RpcArgs): Promise<unknown> {
+  const id = asNonEmptyString(a.id);
+  if (!id) throw new Error("id is required");
+  const s = useStore.getState();
+  const current = s.drafts.find((d) => d.id === id);
+  // Already on the list: restoring it again is not an error.
+  if (current) return draftForMcp(current);
+  const restored = s.restoreDraft(id);
+  if (!restored) {
+    throw new Error(
+      `no removed meeting draft with id ${id} — list_meeting_drafts with includeRemoved: true shows the ones that can be restored`,
+    );
+  }
+  return draftForMcp(restored);
 }
 
 /** Every RPC action the frontend answers, keyed by the MCP tool's name. A Map,
@@ -856,6 +913,7 @@ const RPC_HANDLERS = new Map<string, (a: RpcArgs) => Promise<unknown>>([
   ["create_meeting_draft", rpcCreateMeetingDraft],
   ["update_meeting_draft", rpcUpdateMeetingDraft],
   ["delete_meeting_draft", rpcDeleteMeetingDraft],
+  ["restore_meeting_draft", rpcRestoreMeetingDraft],
 ]);
 
 /**

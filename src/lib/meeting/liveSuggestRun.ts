@@ -23,6 +23,7 @@ import {
   type SuggestMode,
   type Turn,
 } from "./liveSuggest";
+import { openingShowing } from "./opening";
 
 /** How long one request may take before it is not worth showing anymore. */
 const REQUEST_TIMEOUT_MS = 6_000;
@@ -146,6 +147,9 @@ function createEngine() {
     const nowMs = meetingElapsedMs(s);
     const turns = finalTurns(s.segments);
     if (s.liveSuggestion && cardExpired(s.liveSuggestion, nowMs, turns)) s.clearLiveSuggestion();
+    // The opening comes first: no suggestion competes with it (openingRun.ts
+    // retires it once said, or a few minutes in).
+    if (openingShowing(s)) return note("the opening is still on screen");
     if (!cloudToken()) return note("not signed in to Parley Cloud");
     if (Date.now() < quietUntil) return note("backing off after a failed request");
     const pending = speechPending(s.segments);

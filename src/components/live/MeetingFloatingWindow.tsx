@@ -46,6 +46,8 @@ import { DestinationField } from "../DestinationSheet";
 import { MeetingContextField } from "../MeetingContextField";
 import { useMeetingDestination } from "../useMeetingDestination";
 import { LiveSuggestionFeed, LiveSuggestToggle } from "./LiveSuggestion";
+import { OpeningCard } from "./OpeningCard";
+import { openingShowing } from "../../lib/meeting/opening";
 import { NotesEditor } from "./NotesEditor";
 import { LiveBanners } from "./LiveScreen";
 import { useTabShortcuts } from "../../lib/commands/tabs";
@@ -212,6 +214,7 @@ function MiniWindow({
 }: Readonly<{ tab: Tab; onTab: (tab: Tab) => void; onExpand: () => void; fixed?: boolean }>) {
   const { t } = useI18n();
   useMiniDocking(!fixed);
+  const openingUp = useStore(openingShowing);
 
   // Only a change of tab resizes the window: on mount it already has the size
   // the shrink gave it, and resizing then raced the shrink's reading of the
@@ -270,7 +273,8 @@ function MiniWindow({
       {tab === "coach" && (
         // Scrollable and selectable, like the transcript: not a drag handle.
         <div data-no-drag className="flex min-h-0 flex-1 cursor-text select-text flex-col border-t">
-          <LiveSuggestionFeed compact />
+          {/* Suggestions wait for the opening, so it has the tab to itself. */}
+          {openingUp ? <OpeningCard compact className="m-1.5 min-h-0 flex-1" /> : <LiveSuggestionFeed compact />}
         </div>
       )}
       {tab === "transcript" && (
@@ -537,6 +541,7 @@ export function MeetingFloatingWindow() {
       <FloatingTitleBar onClose={() => setConfirmCancel(true)} onCollapse={() => void toggleMini(true)} />
       <LiveBanners />
       <MeetingHeading />
+      <OpeningCard className="mx-5 mt-3 max-h-56 shrink-0" />
 
       {bgOpen && (
         <div className="mx-5 mt-4 flex shrink-0 flex-col gap-2 rounded-lg border p-3">

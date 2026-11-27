@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MeetingDraft } from "../store/prep";
 import { emptyPlaybook } from "./playbook";
+import { emptyOpening } from "./opening";
 import {
   DRAFT_NEAR_MS,
   PILL_SIZE,
@@ -30,6 +31,7 @@ function draft(id: string, meetingAt: number | null): MeetingDraft {
     meetingTarget: "",
     meetingFloor: "",
     playbook: emptyPlaybook(),
+    opening: emptyOpening(),
     todos: [],
     meetingFolderId: null,
     meetingOrgShare: null as unknown as MeetingDraft["meetingOrgShare"],

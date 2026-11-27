@@ -153,6 +153,80 @@ describe("delete_meeting_draft", () => {
     const made = (await applyRpcCommand("create_meeting_draft", { title: "Renewal" })) as { id: string };
     expect(await applyRpcCommand("delete_meeting_draft", { id: made.id })).toEqual({ id: made.id, deleted: true });
     expect(useStore.getState().drafts).toEqual([]);
-    await expect(applyRpcCommand("delete_meeting_draft", { id: made.id })).rejects.toThrow("no meeting draft with id");
+    await expect(applyRpcCommand("delete_meeting_draft", { id: made.id })).rejects.toThrow("it was deleted");
+    await expect(applyRpcCommand("delete_meeting_draft", { id: "nope" })).rejects.toThrow("no meeting draft with id nope");
+  });
+});
+
+describe("the opening", () => {
+  it("is filed with a new draft and listed back", async () => {
+    const out = await applyRpcCommand("create_meeting_draft", {
+      title: "Kickoff",
+      opening: "  Thanks for making time. We have thirty minutes.  ",
+      smallTalk: ["Did you make it to Hokkaido?", " ", "Did you make it to Hokkaido?"],
+    });
+    expect(out).toMatchObject({
+      opening: "Thanks for making time. We have thirty minutes.",
+      smallTalk: ["Did you make it to Hokkaido?"],
+    });
+    expect(useStore.getState().drafts[0].opening).toEqual({
+      script: "Thanks for making time. We have thirty minutes.",
+      smallTalk: ["Did you make it to Hokkaido?"],
+    });
+  });
+
+  it("is empty on a draft created without one", async () => {
+    expect(await applyRpcCommand("create_meeting_draft", { title: "Plain" })).toMatchObject({ opening: "", smallTalk: [] });
+  });
+
+  it("an update changes only the half it carries, and an empty value clears it", async () => {
+    const made = (await applyRpcCommand("create_meeting_draft", {
+      title: "Kickoff",
+      opening: "Thanks for making time.",
+      smallTalk: ["How was the launch?"],
+    })) as { id: string };
+    expect(await applyRpcCommand("update_meeting_draft", { id: made.id, title: "Kickoff 2" })).toMatchObject({
+      opening: "Thanks for making time.",
+      smallTalk: ["How was the launch?"],
+    });
+    expect(await applyRpcCommand("update_meeting_draft", { id: made.id, smallTalk: ["Busy season over?"] })).toMatchObject({
+      opening: "Thanks for making time.",
+      smallTalk: ["Busy season over?"],
+    });
+    expect(await applyRpcCommand("update_meeting_draft", { id: made.id, opening: "", smallTalk: [] })).toMatchObject({
+      opening: "",
+      smallTalk: [],
+    });
+  });
+});
+
+describe("a draft that left the list", () => {
+  it("taken to record: the update says what happened, and restore brings it back", async () => {
+    const made = (await applyRpcCommand("create_meeting_draft", {
+      title: "Renewal",
+      startAt: "2026-11-27T14:00:00+08:00",
+      opening: "Thanks for making time.",
+    })) as { id: string };
+    expect(useStore.getState().takeDraft(made.id)).toBe(true);
+
+    expect(await applyRpcCommand("list_meeting_drafts", {})).toEqual([]);
+    const error = await applyRpcCommand("update_meeting_draft", { id: made.id, title: "x" }).catch((e: Error) => e.message);
+    expect(error).toContain("the user started recording from it");
+    expect(error).toContain("restore_meeting_draft");
+
+    const listed = (await applyRpcCommand("list_meeting_drafts", { includeRemoved: true })) as Record<string, unknown>[];
+    expect(listed).toEqual([
+      expect.objectContaining({ id: made.id, title: "Renewal", removedReason: "recorded", removedAt: expect.any(String) }),
+    ]);
+
+    const restored = await applyRpcCommand("restore_meeting_draft", { id: made.id });
+    expect(restored).toMatchObject({ id: made.id, title: "Renewal", opening: "Thanks for making time." });
+    expect(await applyRpcCommand("list_meeting_drafts", { includeRemoved: true })).toEqual([restored]);
+    // Restoring one that is already back is not an error.
+    expect(await applyRpcCommand("restore_meeting_draft", { id: made.id })).toEqual(restored);
+  });
+
+  it("restore refuses an id that was never removed", async () => {
+    await expect(applyRpcCommand("restore_meeting_draft", { id: "nope" })).rejects.toThrow("no removed meeting draft with id nope");
   });
 });
