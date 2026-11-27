@@ -43,8 +43,9 @@
     /// `docs/design/ios-recording-page.md`), `library-all` (the Library's full
     /// list, pushed over the overview as See all opens it), `library-folder-empty`
     /// (an empty folder's page, for the empty state), `library-org` (the
-    /// Library on the demo org's scope), and `voicehistory` (Library ›
-    /// Voice typing, one entry per polish outcome), and the onboarding's steps:
+    /// Library on the demo org's scope), `voicehistory` (Library ›
+    /// Voice typing, one entry per polish outcome), `draft` (a meeting
+    /// draft's read-only page, pushed over the overview), and the onboarding's steps:
     /// `onboarding-account` (run with `-ParleyDemo signedOut`), then, signed in
     /// and over the tabs, `onboarding-signed-in`, `onboarding-org` /
     /// `onboarding-invited` / `onboarding-joined`, `onboarding-perms`,
@@ -118,6 +119,8 @@
         @Published var showFolder: String?
         /// Library switches its scope to the demo org (`library-org`).
         @Published var showOrg = false
+        /// Library pushes the first demo draft's page over the overview (`draft`).
+        @Published var showDraft = false
         /// A sheet with a focused text field, so the Parley keyboard is on
         /// screen, and an Action-Button-style demo dictation into it a moment
         /// later (`keyboardharness`). The only way to watch the keyboard's
@@ -211,6 +214,7 @@
             showAllRecordings = false
             showFolder = nil
             showOrg = false
+            showDraft = false
             keyboardHarness = false
             recordingID = Self.featured.id
             forcedFace = nil
@@ -234,6 +238,10 @@
                 // The demo org's shared library, as the scope menu opens it.
                 tab = .library
                 showOrg = true
+            case "draft":
+                // The meeting starting soon, opened from 即將開始的會議.
+                tab = .library
+                showDraft = true
             case "library-folder-empty":
                 // A folder with nothing in it, as its card opens it.
                 tab = .library
@@ -524,6 +532,66 @@
                         id: "f-picker-\(i)", name: t(names.0, names.1),
                         orgId: nil, createdAt: nil, updatedAt: nil)
                 }
+        }
+
+        // MARK: meeting drafts
+
+        /// The overview's drafts: one starting within the hour, so
+        /// 即將開始的會議 shows, and three for 會議草稿 — tomorrow, later in the
+        /// week, and one with no time yet. Relative to the moment the app
+        /// launches rather than to `epoch`, because which section a draft sits
+        /// in depends on the clock. Read-only, as on a real phone.
+        static var drafts: [CloudMeetingDraft] {
+            let now = (Date().timeIntervalSince1970 * 1000 / 60_000).rounded(.down) * 60_000
+            let minute = 60_000.0
+            let day = 24 * 60 * minute
+            // Tomorrow and later on a round half hour, as the desktop's time
+            // picker offers them.
+            func on(_ days: Double, _ hour: Int, _ minute: Int) -> Double {
+                let date = Date(timeIntervalSince1970: (now + days * day) / 1000)
+                let at = Calendar.current.date(
+                    bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
+                return at.timeIntervalSince1970 * 1000
+            }
+            func todo(_ id: String, _ en: String, _ zh: String) -> CloudDraftTodo {
+                CloudDraftTodo(id: id, text: t(en, zh))
+            }
+            return [
+                CloudMeetingDraft(
+                    id: "demo-draft-northwind",
+                    title: t("Northwind renewal — pricing call", "北風工業續約 — 報價會議"),
+                    meetingAt: now + 25 * minute, meetingEndAt: now + 85 * minute,
+                    meetingContext: t(
+                        "Lin Mei-hua (procurement lead) and Chen Wei (plant manager) from Northwind. Last month they asked for a two-year term at this year's price; finance can go to a 4% discount on two years, not more. Their main worry is delivery lead times after the Q3 delays.",
+                        "北風工業採購主管林美華、廠長陳偉。上個月他們提出想簽兩年約、價格維持今年的水準；財務那邊兩年約最多能給 4% 折扣，再多不行。他們最在意的是第三季延遲之後的交期。"),
+                    todos: [
+                        todo("t1", "Confirm the two-year term and start date", "確認兩年約與起約日"),
+                        todo("t2", "Walk through the new delivery schedule", "說明新的交期安排"),
+                        todo("t3", "Ask what volume they expect next year", "詢問明年預估用量"),
+                    ],
+                    meetingFolderId: "f-renewals", updatedAt: now - 2 * day),
+                CloudMeetingDraft(
+                    id: "demo-draft-harbor",
+                    title: t("Blue Harbor Hotels — first meeting", "藍港酒店 — 初次拜訪"),
+                    meetingAt: on(1, 10, 30), meetingEndAt: on(1, 11, 30),
+                    meetingContext: t(
+                        "Referred by Northwind. Twelve properties, front desk calls handled in-house. Find out who signs off on new tools.",
+                        "北風工業介紹。旗下十二間飯店，櫃台電話目前自己接。先弄清楚導入新工具由誰拍板。"),
+                    todos: [todo("t1", "Who decides, and by when", "誰決定、何時決定")],
+                    meetingFolderId: "f-new", updatedAt: now - day),
+                CloudMeetingDraft(
+                    id: "demo-draft-weekly",
+                    title: t("Sales weekly sync", "業務週會"),
+                    meetingAt: on(3, 9, 0), meetingEndAt: on(3, 10, 0),
+                    meetingFolderId: "f-team", updatedAt: now - 3 * day),
+                CloudMeetingDraft(
+                    id: "demo-draft-meridian",
+                    title: t("Meridian — contract questions", "子午線 — 合約問題"),
+                    meetingContext: t(
+                        "They have questions on the data-retention clause. No date yet.",
+                        "對方對資料保存條款有疑問，時間還沒約。"),
+                    updatedAt: now - 4 * day),
+            ]
         }
 
         // MARK: library fixtures

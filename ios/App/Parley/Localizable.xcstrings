@@ -753,6 +753,24 @@
         }
       }
     },
+    "Agenda" : {
+      "comment" : "Heading for a meeting draft's agenda",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agenda"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "議程"
+          }
+        }
+      }
+    },
     "All" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2336,6 +2354,41 @@
         }
       }
     },
+    "Draft context" : {
+      "comment" : "Heading for the context prepared in a meeting draft",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Context"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "補充背景"
+          }
+        }
+      }
+    },
+    "Drafts are edited in Parley on the desktop." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Drafts are edited in Parley on the desktop."
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議草稿請在電腦版 Parley 編輯。"
+          }
+        }
+      }
+    },
     "Edit saved info" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3829,6 +3882,42 @@
         }
       }
     },
+    "Meeting draft" : {
+      "comment" : "Title of a meeting draft's read-only page",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting draft"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議草稿"
+          }
+        }
+      }
+    },
+    "Meeting drafts" : {
+      "comment" : "Library overview heading: the other meeting drafts",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Meeting drafts"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "會議草稿"
+          }
+        }
+      }
+    },
     "Meeting: %1$@ (%2$@)" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -4046,6 +4135,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "聽錯字"
+          }
+        }
+      }
+    },
+    "Missed" : {
+      "comment" : "A meeting draft whose time slot is over",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Missed"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已過期"
           }
         }
       }
@@ -4573,6 +4680,41 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "還沒有摘要。"
+          }
+        }
+      }
+    },
+    "No time" : {
+      "comment" : "A meeting draft row's time column when the draft has no time",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No time"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未定"
+          }
+        }
+      }
+    },
+    "No time set yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No time set yet"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "尚未設定會議時間"
           }
         }
       }
@@ -5416,6 +5558,24 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Parley 在語音輸入結束前被關掉了，再點一下麥克風重試。"
+          }
+        }
+      }
+    },
+    "Past start time" : {
+      "comment" : "A meeting draft whose start time has passed but whose slot has not ended",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Past start time"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已過開始時間"
           }
         }
       }
@@ -7811,6 +7971,24 @@
         }
       }
     },
+    "Starting soon" : {
+      "comment" : "Library overview heading: meeting drafts starting within the hour or under way",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Starting soon"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "即將開始的會議"
+          }
+        }
+      }
+    },
     "Starting…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -9083,6 +9261,23 @@
         }
       }
     },
+    "Untitled meeting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Untitled meeting"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未命名的會議"
+          }
+        }
+      }
+    },
     "Untitled recording" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -10030,6 +10225,75 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "iPhone 麥克風"
+          }
+        }
+      }
+    },
+    "in %lld days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "in %lld day"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "in %lld days"
+                }
+              }
+            }
+          }
+        },
+        "zh-Hant" : {
+          "variations" : {
+            "plural" : {
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld 天後"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "in %lld hr" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "in %lld hr"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 小時後"
+          }
+        }
+      }
+    },
+    "in %lld min" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "in %lld min"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 分鐘後"
           }
         }
       }

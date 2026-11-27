@@ -1,6 +1,7 @@
 import ParleyKit
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 /// Library — phone mirror of the desktop History window: personal + org
 /// scopes, one-level folders, and the same move semantics:
@@ -29,6 +30,11 @@ struct LibraryView: View {
     @State private var swipeGeometry = SwipeGeometry()
     @State private var recordings: [CloudRecordingSummary] = []
     @State private var folders: [CloudFolder] = []
+    /// The account's meeting drafts, read-only (#772). Personal: the cloud
+    /// keeps drafts per account, not per organization, so an org's scope
+    /// shows none. Empty when they could not be loaded — a draft list that
+    /// failed is not worth an error over the library.
+    @State private var drafts: [CloudMeetingDraft] = []
     @State private var loading = false
     @State private var error: String?
     @State private var busyId: String?
@@ -167,6 +173,11 @@ struct LibraryView: View {
                     }
                 case .recordings(let folder):
                     fullList(inFolder: folder != nil)
+                case .draft(let id):
+                    if let draft = drafts.first(where: { $0.id == id }) {
+                        MeetingDraftDetailView(
+                            draft: draft, folder: personalFolderName(draft.meetingFolderId))
+                    }
                 }
             }
             .task(id: "\(scope ?? "personal")-\(app.signedIn)") { await load() }
@@ -204,6 +215,13 @@ struct LibraryView: View {
                 // `-ParleyDemoRoute library-org` switches to the demo org.
                 .onChange(of: demo.showOrg, initial: true) { _, show in
                     if show { scope = ScreenshotDemo.orgs.first?.id }
+                }
+                // `-ParleyDemoRoute draft` opens the first demo draft's page.
+                .onChange(of: demo.showDraft, initial: true) { _, show in
+                    guard show, let first = ScreenshotDemo.drafts.first else { return }
+                    drafts = ScreenshotDemo.drafts
+                    folders = ScreenshotDemo.folders
+                    if !path.contains(.draft(first.id)) { path.append(.draft(first.id)) }
                 }
                 // `-ParleyDemoRoute library-folder-empty` lands on an empty folder.
                 .onChange(of: demo.showFolder, initial: true) { _, folder in
@@ -327,8 +345,9 @@ struct LibraryView: View {
     private static let recentCount = 4
 
     /// What Meetings opens on: the desktop's 總覽 — the light bars behind the
-    /// top of the page, the getting-started list, the folders as cards in one sideways
-    /// row, and the four newest recordings. Everything else in the library is
+    /// top of the page, the getting-started list, the meeting drafts (personal
+    /// scope only, read-only), the folders as cards in one sideways row, and
+    /// the four newest recordings. Everything else in the library is
     /// one tap away on the full list (`fullList`), pushed by See all or a
     /// folder card, which is the list this tab used to open on, unchanged.
     ///
@@ -349,6 +368,10 @@ struct LibraryView: View {
                             dismiss: { withAnimation { gettingStarted.dismiss() } })
                             .padding(.horizontal, 20)
                             .id(Self.checklistID)
+                    }
+                    if scope == nil {
+                        draftSections
+                            .padding(.horizontal, 20)
                     }
                     foldersSection
                     recentSection
@@ -385,6 +408,23 @@ struct LibraryView: View {
             }
             .padding(.horizontal, 20)
         }
+    }
+
+    /// 即將開始的會議 and 會議草稿, above the folders: the meetings the desktop
+    /// prepared, each opening a read-only page. Nothing at all when there are
+    /// no drafts.
+    private var draftSections: some View {
+        OverviewDraftSections(drafts: drafts, folderName: personalFolderName) { draft, row in
+            NavigationLink(value: LibraryRoute.draft(draft.id)) { row }
+                .buttonStyle(.plain)
+        }
+    }
+
+    /// A personal folder's name, for a draft's folder. The overview's folders
+    /// are the personal ones whenever drafts are shown.
+    private func personalFolderName(_ id: String?) -> String? {
+        guard scope == nil, let id else { return nil }
+        return folders.first { $0.id == id }?.name
     }
 
     /// 資料夾: a "new folder" card, then a card per folder in the scope, in one
@@ -1399,6 +1439,7 @@ struct LibraryView: View {
                 // Each scope its own fixtures, as the cloud would answer.
                 recordings = scope == nil ? ScreenshotDemo.recordings : ScreenshotDemo.orgRecordings
                 folders = scope == nil ? ScreenshotDemo.folders : ScreenshotDemo.orgFolders
+                drafts = ScreenshotDemo.drafts
                 loading = false
                 return
             }
@@ -1414,8 +1455,10 @@ struct LibraryView: View {
             } else {
                 async let r = app.cloud.listRecordings()
                 async let f = app.cloud.listFolders()
+                async let d = loadDrafts()
                 recordings = try await r
                 folders = try await f.filter { $0.orgId == nil }
+                drafts = await d
                 // Before `personalLoaded` flips, so an existing user's library
                 // has dismissed the checklist before it could be drawn.
                 gettingStarted.noteLibraryLoaded(recordingCount: recordings.count)
@@ -1430,6 +1473,22 @@ struct LibraryView: View {
             self.error = String(localized: "Couldn't load — offline or the server isn't responding")
         }
         loading = false
+    }
+
+    private static let draftLog = Logger(subsystem: ParleyLog.subsystem, category: "drafts")
+
+    /// The account's drafts, or none: a failure is logged (its status, never
+    /// a draft's content) and the overview goes on without the two sections.
+    private func loadDrafts() async -> [CloudMeetingDraft] {
+        do {
+            return try await app.cloud.listDrafts()
+        } catch let e as CloudError {
+            Self.draftLog.error("drafts: load failed, status \(e.status, privacy: .public)")
+        } catch {
+            Self.draftLog.error(
+                "drafts: load failed, \(String(describing: type(of: error)), privacy: .public)")
+        }
+        return []
     }
 
     /// The picker's confirm. Throws back to the sheet, which keeps itself up
@@ -1725,6 +1784,8 @@ private enum LibraryRoute: Hashable {
     /// only where it was opened.
     case recordings(folder: String?)
     case recording(OpenedRecording)
+    /// A meeting draft's read-only page, by id.
+    case draft(String)
 
     var isFullList: Bool {
         if case .recordings = self { return true }
