@@ -1,3 +1,4 @@
+import ParleyKit
 import SwiftUI
 
 /// The three tabs, in the order the tab bar shows them.
@@ -131,6 +132,10 @@ struct DraftStart {
     /// The context the desktop prepared (its 補充背景), saved into the
     /// recording's `meetingContext`.
     let context: String
+    /// The draft itself, for the record screen's 查看會議草稿 sheet.
+    let draft: CloudMeetingDraft
+    /// Its folder's name, for that sheet.
+    let folderName: String?
 }
 
 /// A meeting that ended and landed in the cloud, as its result page needs it:

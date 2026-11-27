@@ -9486,6 +9486,22 @@
         }
       }
     },
+    "View meeting draft" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View meeting draft"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看會議草稿"
+          }
+        }
+      }
+    },
     "Voice Typing" : {
       "extractionState" : "manual",
       "localizations" : {

@@ -151,6 +151,10 @@ final class MeetingRecorder: ObservableObject {
     /// the desktop's meeting carries its prep's. Blank for a meeting started
     /// from the record button. Cleared with the title.
     var meetingContext = ""
+    /// The draft the meeting was started from, and its folder's name, for the
+    /// live screen's 查看會議草稿 sheet. nil for a meeting started from the
+    /// record button. Cleared with the title.
+    @Published var meetingDraft: (draft: CloudMeetingDraft, folder: String?)?
     /// When this meeting started, for the date on the live screen's heading.
     @Published private(set) var startedAt: Date?
 
@@ -542,6 +546,7 @@ final class MeetingRecorder: ObservableObject {
         meetingTitle = ""
         meetingFolder = nil
         meetingContext = ""
+        meetingDraft = nil
         status = nil
         phase = .idle
     }
@@ -914,6 +919,7 @@ final class MeetingRecorder: ObservableObject {
             meetingTitle = ""
             meetingFolder = nil
             meetingContext = ""
+            meetingDraft = nil
             return
         }
         self.uploader = nil
@@ -925,6 +931,7 @@ final class MeetingRecorder: ObservableObject {
             meetingTitle = ""
             meetingFolder = nil
             meetingContext = ""
+            meetingDraft = nil
         }
 
         let queued: MeetingUploader.Queued

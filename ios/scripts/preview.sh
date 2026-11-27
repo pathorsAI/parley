@@ -45,6 +45,7 @@ ROUTES=(
   "onboarding-done:onboarding 7/7 — you're all set"
   "record:Record tab, a meeting in progress, named and filed"
   "record-idle:Record tab before a meeting starts"
+  "record-draft:a meeting started from a draft, its 查看會議草稿 sheet open"
   "record-paused:the same meeting, paused"
   "settled:a meeting just ended: its result page, the filing card on top"
   "adjust:the same, with the filing sheet open"

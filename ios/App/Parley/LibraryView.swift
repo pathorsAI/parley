@@ -480,7 +480,9 @@ struct LibraryView: View {
                 draftId: draft.id,
                 title: draft.title.trimmingCharacters(in: .whitespacesAndNewlines),
                 folder: scope == nil ? chosen : nil,
-                context: draft.meetingContext))
+                context: draft.meetingContext,
+                draft: draft,
+                folderName: personalFolderName(draft.meetingFolderId)))
     }
 
     /// 會議草稿's 查看全部: every draft that is not starting soon, soonest first.

@@ -291,8 +291,10 @@ enum DraftTime {
 struct MeetingDraftDetailView: View {
     let draft: CloudMeetingDraft
     let folder: String?
-    /// Start a meeting from this draft (`TabRouter.startDraft`).
-    let onStart: () -> Void
+    /// Start a meeting from this draft (`TabRouter.startDraft`). nil = no
+    /// start button: the record screen's sheet, for the meeting already
+    /// started from it.
+    var onStart: (() -> Void)?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
@@ -300,7 +302,7 @@ struct MeetingDraftDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     header(now: now)
-                    startButton
+                    if let onStart { startButton(onStart) }
                     if !preparedContext.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             OverviewHeading(title: "Draft context")
@@ -334,6 +336,8 @@ struct MeetingDraftDetailView: View {
                     Text("Drafts are edited in Parley on the desktop.")
                         .font(.parley.caption)
                         .foregroundStyle(Color(.tertiaryLabel))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 // The page's width, not the content's: a draft with only a time
                 // and a folder would otherwise sit centred, off the left edge.
@@ -350,7 +354,7 @@ struct MeetingDraftDetailView: View {
 
     /// The record screen's light-primary start control: blue ink and the
     /// record dot on a faint blue wash, full width.
-    private var startButton: some View {
+    private func startButton(_ onStart: @escaping () -> Void) -> some View {
         Button(action: onStart) {
             HStack(spacing: 8) {
                 Circle()

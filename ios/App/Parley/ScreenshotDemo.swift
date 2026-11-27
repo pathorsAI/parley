@@ -67,6 +67,9 @@
         @Published var endedMeeting: EndedMeeting?
         /// The record screen's meeting in progress is seeded paused.
         var showPausedMeeting = false
+        /// `record-draft`: the meeting was started from the 北風 draft, and
+        /// its 查看會議草稿 sheet is up.
+        var showDraftMeeting = false
         /// The filing suggestion's Adjust sheet, open. Flipped by
         /// `seedEndedMeetingFiling` rather than by the route, because the card watches this and cannot
         /// know which of the two `task`s SwiftUI ran first — set from the route
@@ -214,6 +217,7 @@
             endedMeeting = nil
             showIdleRecord = false
             showPausedMeeting = false
+            showDraftMeeting = false
             openFilingAdjust = false
             wantsFilingAdjust = false
             openFolderPicker = false
@@ -237,6 +241,9 @@
                 // The Record tab before a meeting: nothing seeded.
                 tab = .record
                 showIdleRecord = true
+            case "record-draft":
+                tab = .record
+                showDraftMeeting = true
             case "record-paused":
                 tab = .record
                 showPausedMeeting = true
@@ -1001,6 +1008,11 @@
                     destination: SaveDestination(
                         scope: "personal", orgId: nil, folderId: folders[0].id),
                     label: folders[0].name))
+            if shared.showDraftMeeting, let draft = drafts.first {
+                recorder.meetingTitle = draft.title
+                recorder.meetingContext = draft.meetingContext
+                recorder.meetingDraft = (draft, folders.first { $0.id == draft.meetingFolderId }?.name)
+            }
         }
     }
 

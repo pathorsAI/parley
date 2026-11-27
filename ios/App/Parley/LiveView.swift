@@ -67,6 +67,8 @@ struct LiveView: View {
     /// false and the way back is the "Latest" control alone.
     @State private var transcriptAtBottom = false
     /// The last `TabRouter.draftStartRequest` acted on.
+    /// The 查看會議草稿 sheet is up.
+    @State private var showingDraft = false
     @State private var handledDraftStart = 0
     /// The draft the meeting now starting was started from, until the
     /// microphone is open (then the draft is hidden) or the start fails.
@@ -175,6 +177,11 @@ struct LiveView: View {
                 .task {
                     ScreenshotDemo.seedRecordScreen(recorder)
                     if recorder.isInMeeting { await loadFolders() }
+                    // `record-draft` opens the draft sheet with nobody tapping.
+                    if ScreenshotDemo.shared.showDraftMeeting, recorder.meetingDraft != nil {
+                        try? await Task.sleep(for: .milliseconds(800))
+                        showingDraft = true
+                    }
                 }
             #endif
         }
@@ -187,6 +194,16 @@ struct LiveView: View {
     /// the record screen, which shows it on the disc.
     private var showsMeeting: Bool {
         recorder.isInMeeting || recorder.phase == .finishing
+    }
+
+    /// One of the heading's trailing glyph buttons: the body's size, the
+    /// label's colour, a full tap target.
+    private func headingButton<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .font(.parley.body)
+            .tint(Color(.label).opacity(0.8))
+            .frame(width: 40, height: 44)
+            .contentShape(Rectangle())
     }
 
     private var copyButton: some View {
@@ -520,18 +537,44 @@ struct LiveView: View {
             // Room for the copy button, so a long name never runs under it.
             .padding(.trailing, 36)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(alignment: .trailing) {
-                copyButton
-                    .font(.parley.body)
-                    .tint(Color(.label).opacity(0.8))
-                    .frame(width: 40, height: 44)
-                    .contentShape(Rectangle())
-                    .offset(x: 8)
-            }
             HStack(spacing: 8) {
                 dateChip
                 folderChip
                 Spacer(minLength: 0)
+            }
+            // …and for 查看會議草稿 under it.
+            .padding(.trailing, recorder.meetingDraft == nil ? 0 : 36)
+        }
+        // The copy button, and under it — for a meeting started from a draft
+        // — the draft itself, read-only: what was prepared for this meeting,
+        // at hand while it runs.
+        .overlay(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                headingButton { copyButton }
+                if recorder.meetingDraft != nil {
+                    headingButton {
+                        Button {
+                            showingDraft = true
+                        } label: {
+                            Image(systemName: "doc.text")
+                                .accessibilityLabel(Text("View meeting draft"))
+                        }
+                    }
+                }
+            }
+            .offset(x: 8)
+        }
+        .sheet(isPresented: $showingDraft) {
+            if let meetingDraft = recorder.meetingDraft {
+                NavigationStack {
+                    MeetingDraftDetailView(draft: meetingDraft.draft, folder: meetingDraft.folder)
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showingDraft = false }
+                            }
+                        }
+                }
+                .presentationDetents([.medium, .large])
             }
         }
         .padding(.horizontal, 20)
@@ -1224,6 +1267,7 @@ struct LiveView: View {
                     segments: [], status: String(localized: "Transcribing live"),
                     title: start.title, folder: start.folder)
                 recorder.meetingContext = start.context
+                recorder.meetingDraft = (start.draft, start.folderName)
                 router.markDraftStarted(start.draftId)
                 return
             }
@@ -1231,6 +1275,7 @@ struct LiveView: View {
         recorder.meetingTitle = start.title
         recorder.meetingFolder = start.folder
         recorder.meetingContext = start.context
+        recorder.meetingDraft = (start.draft, start.folderName)
         startingDraftId = start.draftId
         // Unstructured, as the record button's: `start` runs on through the
         // transcription handshake, which must not be cancelled by the next
