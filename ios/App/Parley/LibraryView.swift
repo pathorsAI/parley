@@ -58,6 +58,8 @@ struct LibraryView: View {
     @State private var path: [OpenedRecording] = []
     /// The last `TabRouter.checklistRequest` acted on.
     @State private var handledChecklistRequest = 0
+    /// The last `TabRouter.endedMeetingRequest` acted on.
+    @State private var handledEndedMeetingRequest = 0
     /// "Walk through the sample" was tapped and its 1.5 s "Transcribing…" is up.
     @State private var walkingThrough = false
     /// The recording the folder picker is moving, while it is up.
@@ -139,6 +141,8 @@ struct LibraryView: View {
                     RecordingDetailView(
                         summary: rec, orgId: target.orgId, intent: target.intent,
                         isLapRecording: target.guided || isLapRecording(rec, orgId: target.orgId),
+                        endedMeeting: target.endedMeeting
+                            ? router.endedMeeting.flatMap { $0.id == rec.id ? $0 : nil } : nil,
                         onFolderChange: folderChanged(rec.id),
                         onTitleChange: titleChanged(rec.id))
                 }
@@ -201,6 +205,11 @@ struct LibraryView: View {
                 }
             #endif
         }
+        // On the stack rather than inside it: the root list is covered while a
+        // recording is pushed, and this has to run then too. Runs on the
+        // Library's first appearance as well as on each change, because the
+        // tab may be built by the very switch that carries the request.
+        .task(id: router.endedMeetingRequest) { await takeEndedMeetingRequest() }
     }
 
     /// Meetings / Voice typing, above everything else on the page. Segmented
@@ -292,6 +301,36 @@ struct LibraryView: View {
             try? await Task.sleep(for: .milliseconds(350))
             withAnimation { proxy.scrollTo(Self.checklistID, anchor: .top) }
         }
+    }
+
+    /// A meeting has just ended and landed (`TabRouter.openEndedMeeting`):
+    /// open its result page, as the desktop opens a recording's report when
+    /// End finishes saving.
+    ///
+    /// Back to the personal Meetings list first, with whatever was pushed
+    /// popped, then a reload — the recording is minutes old, and the detail
+    /// page is looked up in `allRecordings` — then the push. A recording the
+    /// reload still does not list (a slow listing, a failed one) is left at
+    /// that: the user is on the Library, where it will appear, and nothing
+    /// retries or spins. The counter is compared rather than consumed, like
+    /// `takeChecklistRequest`, so a request is acted on once.
+    private func takeEndedMeetingRequest() async {
+        guard router.endedMeetingRequest != handledEndedMeetingRequest,
+            let meeting = router.endedMeeting
+        else { return }
+        handledEndedMeetingRequest = router.endedMeetingRequest
+        path = []
+        section = .meetings
+        searchPresented = false
+        search = ""
+        folderFilter = nil
+        if scope != nil {
+            scope = nil
+            notice = nil
+        }
+        await load()
+        guard allRecordings.contains(where: { $0.id == meeting.id }) else { return }
+        path = [OpenedRecording(id: meeting.id, orgId: nil, intent: .read, endedMeeting: true)]
     }
 
     /// The recording the guided lap is about: the sample when it is in the
@@ -1160,7 +1199,7 @@ struct LibraryView: View {
         guard app.signedIn else { return }
         #if DEBUG
             if ScreenshotDemo.servesFixtures {
-                recordings = ScreenshotDemo.recordings
+                recordings = ScreenshotDemo.libraryRecordings
                 folders = ScreenshotDemo.folders
                 loading = false
                 return
@@ -1437,6 +1476,9 @@ private struct OpenedRecording: Hashable {
     /// Opened from the checklist's own action, so the guide bar is up even on
     /// a recording that is not the only one.
     var guided = false
+    /// Opened because its meeting just ended, so the result page carries that
+    /// meeting's filing suggestion (`TabRouter.endedMeeting`).
+    var endedMeeting = false
 }
 
 /// The getting-started checklist: four plain rows, each ticked only by the real

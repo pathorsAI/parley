@@ -166,6 +166,68 @@ final class FilingPassTests: XCTestCase {
         XCTAssertEqual(result?.title, "From the Mac")
     }
 
+    // MARK: halves the user answered while recording
+
+    /// A name typed during the meeting is never proposed over, and a folder
+    /// picked then is never second-guessed; nothing left is nil.
+    func testAnsweringStripsTheHalvesTheUserGave() {
+        let full = FilingSuggestion(
+            title: "Acme renewal terms",
+            folders: [FilingFolderSuggestion(folderId: "f-acme", name: "Acme", reason: "customer")])
+        XCTAssertEqual(full.answering(named: false, filed: false), full)
+        XCTAssertEqual(full.answering(named: true, filed: false)?.title, "")
+        XCTAssertEqual(full.answering(named: true, filed: false)?.folders, full.folders)
+        XCTAssertEqual(full.answering(named: false, filed: true)?.title, "Acme renewal terms")
+        XCTAssertEqual(full.answering(named: false, filed: true)?.folders, [])
+        XCTAssertNil(full.answering(named: true, filed: true))
+        XCTAssertNil(FilingSuggestion(title: "Acme", folders: []).answering(named: true, filed: false))
+    }
+
+    /// Named during the meeting: the model is still asked for a folder, and
+    /// what is persisted carries no title for any device to offer later.
+    func testANamedRecordingPersistsNoTitle() async throws {
+        FilingStubProtocol.handler = { [self] request in
+            switch (request.httpMethod ?? "GET", request.url!.path) {
+            case ("GET", "/recordings/r-1/meta"):
+                return (200, json(meta(title: "Acme QBR")))
+            case ("GET", "/folders"):
+                return (200, json(["folders": [["id": "f-acme", "name": "Acme Corp", "orgId": NSNull()]]]))
+            case ("POST", "/v1/chat/completions"):
+                return (
+                    200,
+                    chatReply(
+                        #"{"title":"Acme renewal terms","folders":[{"name":"Acme Corp","isNew":false,"reason":"customer"}]}"#
+                    ))
+            case ("POST", "/recordings/r-1"):
+                return (200, json(["ok": true]))
+            default:
+                XCTFail("unexpected request \(request.httpMethod ?? "") \(request.url!.path)")
+                return (500, Data())
+            }
+        }
+        let result = await FilingPass().run(
+            id: "r-1", cloud: stubbedCloud(), language: .english, named: true)
+        XCTAssertEqual(result?.title, "")
+        XCTAssertEqual(result?.folders.map(\.folderId), ["f-acme"])
+        let push = try XCTUnwrap(FilingStubProtocol.requests.first { $0.httpMethod == "POST" && $0.url!.path == "/recordings/r-1" })
+        let pushBody = try XCTUnwrap(try JSONSerialization.jsonObject(with: push.body) as? [String: Any])
+        let pushedMeta = try XCTUnwrap(pushBody["meta"] as? [String: Any])
+        XCTAssertEqual(pushedMeta["title"] as? String, "Acme QBR")
+        let suggestion = try XCTUnwrap(pushedMeta["filingSuggestion"] as? [String: Any])
+        XCTAssertEqual(suggestion["title"] as? String, "")
+    }
+
+    /// Named and filed while recording: nothing left to ask, so nothing is.
+    func testANamedAndFiledRecordingAsksNothing() async {
+        FilingStubProtocol.handler = { request in
+            XCTFail("unexpected request \(request.httpMethod ?? "") \(request.url!.path)")
+            return (500, Data())
+        }
+        let result = await FilingPass().run(
+            id: "r-1", cloud: stubbedCloud(), language: .english, named: true, filed: true)
+        XCTAssertNil(result)
+    }
+
     // MARK: the summary pushed beside a meta
 
     func testTheSummaryIsProjectedFromTheMeta() {

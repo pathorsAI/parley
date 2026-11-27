@@ -34,7 +34,7 @@
     /// routed frame came out as the launch tab behind a modal. A launch
     /// argument never leaves the process.
     ///
-    /// Routes: `record`, `settled`, `adjust`, `library`, `transcript`,
+    /// Routes: `record`, `record-paused`, `settled`, `adjust`, `library`, `transcript`,
     /// `keyboard`, `settings`, `dictation`, and some that are not store frames
     /// but review frames: `movetofolder` (the transcript with the folder
     /// picker open over fifteen folders), `resetchecklist` (Settings'
@@ -55,11 +55,16 @@
         @Published var showTranscript = false
         /// Settings scrolls the voice-keyboard section into view.
         @Published var focusKeyboardSection = false
-        /// The record screen seeds a finished, uploaded recording with a filing
-        /// suggestion on it instead of a meeting in progress.
-        @Published var showSettledFiling = false
-        /// The filing suggestion's Adjust sheet, open. Flipped by `seedSettled`
-        /// rather than by the route, because the card watches this and cannot
+        /// The Record tab before any meeting, nothing seeded (`record-idle`).
+        @Published var showIdleRecord = false
+        /// A meeting that has just landed, handed to its result page through
+        /// the real `TabRouter.openEndedMeeting` (`settled`, `adjust`).
+        /// `MainTabs` passes it on; the Library takes it like any other.
+        @Published var endedMeeting: EndedMeeting?
+        /// The record screen's meeting in progress is seeded paused.
+        var showPausedMeeting = false
+        /// The filing suggestion's Adjust sheet, open. Flipped by
+        /// `seedEndedMeetingFiling` rather than by the route, because the card watches this and cannot
         /// know which of the two `task`s SwiftUI ran first — set from the route
         /// it can open onto a model that has not been seeded yet.
         @Published var openFilingAdjust = false
@@ -125,7 +130,8 @@
         /// whether the lit turn stays lit so the frame can be taken.
         var jumpOnOpen: UInt64?
         var holdsLitTurn = false
-        /// `adjust` asks for the sheet; `seedSettled` is what grants it.
+        /// `adjust` asks for the sheet; `seedEndedMeetingFiling` is what grants
+        /// it.
         private var wantsFilingAdjust = false
 
         /// `-ParleyDemo signedIn` seeds an account; `-ParleyDemo signedOut` runs
@@ -188,7 +194,9 @@
         func route(_ route: String) -> Bool {
             showTranscript = false
             focusKeyboardSection = false
-            showSettledFiling = false
+            endedMeeting = nil
+            showIdleRecord = false
+            showPausedMeeting = false
             openFilingAdjust = false
             wantsFilingAdjust = false
             openFolderPicker = false
@@ -204,13 +212,20 @@
             holdsLitTurn = false
             switch route {
             case "record": tab = .record
+            case "record-idle":
+                // The Record tab before a meeting: nothing seeded.
+                tab = .record
+                showIdleRecord = true
+            case "record-paused":
+                tab = .record
+                showPausedMeeting = true
             case "settled":
-                tab = .record
-                showSettledFiling = true
+                tab = .library
+                endedMeeting = Self.endedMeetingFixture
             case "adjust":
-                tab = .record
-                showSettledFiling = true
+                tab = .library
                 wantsFilingAdjust = true
+                endedMeeting = Self.endedMeetingFixture
             case "library": tab = .library
             case "voicehistory":
                 // Review frame for the history's polish labels (1.25): one
@@ -533,6 +548,17 @@
 
         static var featured: CloudRecordingSummary { recordings[0] }
 
+        /// What the Library lists: the fixtures, with the featured one still
+        /// unfiled while it is the meeting that has just ended (`settled`,
+        /// `adjust`) — a recording that lands with its home still on offer,
+        /// which is the state the filing card is about.
+        static var libraryRecordings: [CloudRecordingSummary] {
+            guard shared.endedMeeting != nil else { return recordings }
+            var list = recordings
+            list[0].folderId = nil
+            return list
+        }
+
         /// The fixture `showTranscript` pushes.
         static var pushed: CloudRecordingSummary {
             recordings.first { $0.id == shared.recordingID } ?? featured
@@ -733,37 +759,53 @@
 
         // MARK: live screen
 
-        /// The record screen, in whichever of its two states the route asked
-        /// for: a meeting in progress, or one that has just landed with a filing
-        /// suggestion on it. One entry point so `LiveView` does not have to know
-        /// the routes.
-        static func seedRecordScreen(_ recorder: MeetingRecorder, filing: FilingSuggestionModel) {
-            guard servesFixtures else { return }
-            if shared.showSettledFiling {
-                seedSettled(recorder, filing: filing)
-            } else {
-                seedLive(recorder)
+        /// The record screen with a meeting in progress, unless the route asked
+        /// for it before a meeting (`record-idle`) or for a meeting that has
+        /// already ended and gone to its result page (`settled`, `adjust`) —
+        /// which leaves Record as the handoff leaves it, cleared. One entry
+        /// point so `LiveView` does not have to know the routes.
+        static func seedRecordScreen(_ recorder: MeetingRecorder) {
+            guard servesFixtures, !shared.showIdleRecord, shared.endedMeeting == nil else {
+                return
             }
+            seedLive(recorder)
         }
 
-        /// The beat after a meeting: every turn final, the upload landed, and the
-        /// suggestion offering a name and a home. The recorder is idle — this is
-        /// a recording that is over, not one being made.
-        private static func seedSettled(
-            _ recorder: MeetingRecorder, filing: FilingSuggestionModel
-        ) {
-            guard recorder.segments.isEmpty else { return }
-            recorder.seedDemoSettled(
-                segments: lines.map { line in
-                    TranscriptSegment(
-                        id: "mix-\(line.ms)", source: "mix", speaker: line.speaker,
-                        text: line.text, isFinal: true,
-                        startMs: line.ms, endMs: line.ms + 12_000)
-                },
-                status: String(localized: "Synced to the cloud"))
+        /// The meeting that has just landed: named on the live screen while it
+        /// recorded (`seedLive`'s title) but left without a folder, every turn
+        /// final.
+        private static var endedMeetingFixture: EndedMeeting {
+            EndedMeeting(
+                settled: MeetingRecorder.Settled(
+                    id: featured.id, title: featured.title, folderId: nil,
+                    segments: lines.map { line in
+                        TranscriptSegment(
+                            id: "mix-\(line.ms)", source: "mix", speaker: line.speaker,
+                            text: line.text, isFinal: true,
+                            startMs: line.ms, endMs: line.ms + 12_000)
+                    },
+                    named: true, filed: false),
+                finished: nil)
+        }
+
+        /// The result page's filing card for the ended meeting, seeded straight
+        /// into its model rather than through the pass, which would need the
+        /// network the demo exists to avoid. Named live, so the card opens on
+        /// that name — no rename on offer, no "Was:" — with the folders to
+        /// confirm.
+        static func seedEndedMeetingFiling(_ filing: FilingSuggestionModel) {
             filing.seedDemo(
-                suggestion: filingSuggestion, currentTitle: clockTitle, folders: folders)
-            if shared.wantsFilingAdjust { shared.openFilingAdjust = true }
+                suggestion: filingSuggestion.answering(named: true, filed: false)
+                    ?? filingSuggestion,
+                currentTitle: featured.title, folders: folders)
+            guard shared.wantsFilingAdjust else { return }
+            // A beat for the push and the card to be on screen: the card opens
+            // its sheet on this flag changing, and cannot see a change made
+            // before it existed.
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(900))
+                shared.openFilingAdjust = true
+            }
         }
 
         /// Fills the live screen with a recording already in progress: settled
@@ -784,7 +826,13 @@
                         "兩週的前提是你們的 SSO 已經"),
                     isFinal: false, startMs: 58_000, endMs: 62_000))
             recorder.seedDemo(
-                segments: seeded, status: String(localized: "Transcribing live"))
+                segments: seeded, status: String(localized: "Transcribing live"),
+                paused: shared.showPausedMeeting,
+                title: featured.title,
+                folder: .init(
+                    destination: SaveDestination(
+                        scope: "personal", orgId: nil, folderId: folders[0].id),
+                    label: folders[0].name))
         }
     }
 

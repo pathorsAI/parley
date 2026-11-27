@@ -136,6 +136,13 @@ final class MeetingUploader {
         /// the next attempt skips the PUT and only makes the follow-up calls.
         /// Nil until then — and on every manifest written before it existed.
         var audioUploadedAt: Date?
+        /// The user named the meeting, or picked its folder, on the live screen
+        /// while it was recording. The title is in `title` and the folder in
+        /// `defaultSave` either way; these only say the choice was theirs, so
+        /// the filing pass does not propose over it (`FilingPass`). False on an
+        /// import and on every manifest written before they existed.
+        var namedByUser = false
+        var filedByUser = false
 
         /// Both new fields decode with a default, because this manifest is
         /// written to disk and read back by a *later build of the app*. Someone
@@ -146,6 +153,7 @@ final class MeetingUploader {
         enum CodingKeys: String, CodingKey {
             case id, startedAt, durationMs, segments, defaultSave, source, title
             case queuedAt, failureCount, lastError, parking, audioUploadedAt
+            case namedByUser, filedByUser
         }
 
         init(
@@ -182,6 +190,8 @@ final class MeetingUploader {
             lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
             parking = try container.decodeIfPresent(UploadParking.self, forKey: .parking)
             audioUploadedAt = try container.decodeIfPresent(Date.self, forKey: .audioUploadedAt)
+            namedByUser = try container.decodeIfPresent(Bool.self, forKey: .namedByUser) ?? false
+            filedByUser = try container.decodeIfPresent(Bool.self, forKey: .filedByUser) ?? false
         }
 
         /// The name this recording lands under.
@@ -202,9 +212,15 @@ final class MeetingUploader {
     /// succeeds, or when the user deletes the recording.
     ///
     /// nil means the recording was too short to keep.
+    ///
+    /// `title`: the name typed on the live screen, if any — nil or blank lands
+    /// the recording under its clock name. `filedByUser`: `defaultSave` is the
+    /// folder the user picked there rather than the app's default.
     func finishAndQueue(
         segments: [TranscriptSegment],
-        defaultSave: SaveDestination
+        defaultSave: SaveDestination,
+        title: String? = nil,
+        filedByUser: Bool = false
     ) async throws -> Queued? {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             queue.async { [self] in
@@ -219,14 +235,17 @@ final class MeetingUploader {
             return nil
         }
 
-        let pending = PendingUpload(
+        let named = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var pending = PendingUpload(
             id: id,
             startedAt: startedAt,
             durationMs: durationMs,
             segments: segments.filter { $0.isFinal && !$0.id.hasSuffix("-tail") },
             defaultSave: defaultSave,
             source: "live",
-            title: nil)
+            title: named.isEmpty ? nil : named)
+        pending.namedByUser = !named.isEmpty
+        pending.filedByUser = filedByUser
         try Self.persist(pending, audioAt: fileURL)
         // Saved on the phone is saved: whatever the upload does next, the
         // meeting is safe and the queue will deliver it.
@@ -621,7 +640,15 @@ final class MeetingUploader {
             // show the card. The pass persists its answer into the meta, so
             // the recording screen offers it whenever this is next opened; the
             // record screen, when it is waiting, joins this same pass.
-            FilingPass.shared.start(id: pending.id, cloud: cloud)
+            //
+            // Whatever the user already chose on the live screen is not asked
+            // about; both chosen, the pass is skipped (`buildMeta` marks it
+            // spent so the desktop does not run one either).
+            if !(pending.namedByUser && pending.filedByUser) {
+                FilingPass.shared.start(
+                    id: pending.id, cloud: cloud,
+                    named: pending.namedByUser, filed: pending.filedByUser)
+            }
         }
 
         // The cloud now holds everything, so the *queue's* copy has done its job
@@ -779,6 +806,9 @@ final class MeetingUploader {
             "analyzed": false,
         ]
         if let folderId { raw["folderId"] = folderId }
+        // Named and filed by the user while recording: the filing question is
+        // answered, and the flag is how every platform knows not to ask it.
+        if pending.namedByUser && pending.filedByUser { raw["filingSuggested"] = true }
         return RecordingMeta(raw: raw)
     }
 
