@@ -31,6 +31,8 @@ import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.library.MovePlan
 import com.pathors.parley.library.MoveRules
 import com.pathors.parley.library.SaveDestination
+import com.pathors.parley.meeting.EndedMeeting
+import com.pathors.parley.meeting.EndedMeetings
 import com.pathors.parley.onboarding.SampleRecordingStore
 import com.pathors.parley.playback.PlaybackController
 import com.pathors.parley.playback.PlaybackPhase
@@ -651,8 +653,10 @@ class RecordingDetailViewModel(
         FilingCardController(
             model = FilingSuggestionModel(
                 cloud = container.cloud,
-                // No pass: the meeting screen and the import run one, and
-                // persist it; this page presents what they left on the meta.
+                // Run only for a meeting the record screen just handed over
+                // ([endedMeeting]); opened any other way, this page presents
+                // what a pass left on the meta.
+                pass = container.filingPass,
                 onFiled = { container.gettingStarted.mark(GettingStartedStep.FILED) },
                 makeFolder = if (DemoMode.isActive) {
                     { name -> demoFolder(name) }
@@ -674,6 +678,18 @@ class RecordingDetailViewModel(
     } else {
         null
     }
+
+    /**
+     * The meeting that ended on the record screen and opened this page — End's
+     * result page, as on the desktop. Taken once, when the page is made, so a
+     * rotation does not ask again and the same recording opened later from the
+     * Library is an ordinary read. iOS `RecordingDetailView.endedMeeting`.
+     *
+     * For it the page runs the filing pass itself (keeping what the user named
+     * or filed while recording) and shows the card on top, with the
+     * `mic_recovery` prompt under it when the microphone kept dropping.
+     */
+    val endedMeeting: EndedMeeting? = EndedMeetings.take(recordingId)
 
     /** GuideBar hook: wash the filing card for 1.2 s. A no-op when there is no card. */
     fun washFilingCard() {
@@ -851,6 +867,7 @@ class RecordingDetailViewModel(
             viewModelScope.launch { syncRetranscribe() }
             if (orgId == null) {
                 _filing.update { it.copy(folders = DemoMode.pickerFolders()) }
+                seedDemoEndedMeeting()
             } else {
                 viewModelScope.launch { loadOrgPlacement(orgId) }
             }
@@ -866,7 +883,7 @@ class RecordingDetailViewModel(
                 UiState(loading = false, failure = classifyLoadFailure(e))
             }
             openPlayer()
-            presentFiling()
+            if (endedMeeting != null) considerEndedMeeting(endedMeeting) else presentFiling()
             openStudy()
             syncRetranscribe()
             decidePrompts()
@@ -933,6 +950,8 @@ class RecordingDetailViewModel(
      */
     private suspend fun presentFiling() {
         val card = filingCard ?: return
+        // The ended meeting's pass owns the card on this visit.
+        if (endedMeeting != null && !isSample) return
         if (DemoMode.isActive && !isSample) return
         val meta = _state.value.meta ?: return
         val (offer, target) = pendingOffer(
@@ -942,6 +961,52 @@ class RecordingDetailViewModel(
             sample = container.sampleFiling.takeIf { isSample },
         ) ?: return
         card.model.present(offer, target)
+    }
+
+    /**
+     * The filing pass for the meeting the record screen just handed over, with
+     * the same rules the record screen used to apply: only a recording in the
+     * personal library with something said in it, and never asking again what
+     * the user named or filed while it recorded. iOS
+     * `FilingSuggestionModel.consider`.
+     */
+    private suspend fun considerEndedMeeting(meeting: EndedMeeting) {
+        val card = filingCard ?: return
+        val finished = meeting.finished
+        val spoken = FilingSuggestionModel.spoken(meeting.segments)
+        // Where it was saved: the folder picked on the record screen, else the
+        // default save location — an organization copy is not this page's to file.
+        val destination = finished.chosenDestination ?: runCatching { container.saveLocation.current() }
+            .getOrElse { error ->
+                if (error is CancellationException) throw error
+                SaveDestination.PERSONAL_ROOT
+            }
+        val skip = FilingSuggestionModel.skipReason(finished, destination, spoken, DemoMode.isActive)
+        if (card.model.claim(recordingId, skip)) {
+            card.model.run(recordingId, spoken, named = finished.namedByUser, filed = finished.filedByUser)
+        }
+    }
+
+    /**
+     * The screenshot demo's `settled` and `adjust`: the ended meeting's card,
+     * seeded straight into its model rather than through the pass, which would
+     * need the network the demo exists to avoid. Named on the record screen, so
+     * the card opens on that name with the folders to confirm.
+     */
+    private fun seedDemoEndedMeeting() {
+        val card = filingCard ?: return
+        val meeting = endedMeeting ?: return
+        val suggestion = DemoMode.filingSuggestion()
+        card.model.seedDemo(
+            recordingId = recordingId,
+            suggestion = suggestion.answering(
+                named = meeting.finished.namedByUser,
+                filed = meeting.finished.filedByUser,
+            ) ?: suggestion,
+            currentTitle = _state.value.meta?.title.orEmpty(),
+            folders = DemoMode.pickerFolders(),
+        )
+        if (DemoMode.navigation.value?.scenario == DemoMode.MeetingScenario.ADJUST) card.openPicker()
     }
 
     /**

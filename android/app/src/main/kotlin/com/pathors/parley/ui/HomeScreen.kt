@@ -1,10 +1,13 @@
 package com.pathors.parley.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.annotation.StringRes
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +20,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,23 +31,25 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
@@ -56,38 +62,32 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.Measurable
-import androidx.compose.ui.layout.MeasureResult
-import androidx.compose.ui.layout.MeasureScope
-import androidx.compose.ui.layout.Placeable
-import androidx.compose.ui.layout.layoutId
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -96,11 +96,10 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -110,13 +109,11 @@ import com.pathors.parley.R
 import com.pathors.parley.cloud.CloudFolder
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.OrgRole
-import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
 import com.pathors.parley.library.FolderFilter
 import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.MeetingService
-import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.meeting.isInProgress
 import com.pathors.parley.kit.GettingStartedState
 import com.pathors.parley.kit.SampleManifest
@@ -131,19 +128,28 @@ import kotlinx.coroutines.launch
  * The library: everything this account has in the cloud, with whatever is still
  * queued on the device pinned above it, plus the two ways to add a recording.
  *
+ * It opens on an overview, like the desktop's 總覽 and iOS's Library (#741):
+ * the large title with import, the scope switcher and the account level with
+ * it, the search field, then — over the desktop's light bars — what needs the
+ * user (the upload queue, a failure), the getting-started list, the folders as
+ * cards in one sideways row, and the four newest recordings. Everything else is
+ * one tap away on the full list: See all opens it with its folder chips and
+ * pager, unchanged; a folder card opens that folder alone. Both are pages of
+ * this one screen rather than routes of their own, because they read and act
+ * on the same view model state (the scope, the folders, the dialogs); the
+ * system back gesture returns to the overview.
+ *
  * Queued items sit at the top on purpose — they are the only rows that need the
  * user to do anything (stay on network), and they are the newest.
  *
- * Two ways to reload it, deliberately. The pull is the gesture anybody arriving
- * from any other Android list already has in their thumb, and it is the one that
- * works while the list is scrolled; the toolbar button stays because it is the
- * only one TalkBack can reach as a control, and it is what a screen with nothing
- * in it to pull on still offers.
+ * The pull refreshes, on every page; the screen also reloads whenever it comes
+ * back to the front.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     onRecord: () -> Unit,
+    /** The bottom button: onto the record screen with the meeting already started. */
+    onStartRecording: () -> Unit,
     onImport: () -> Unit,
     onOpenRecording: (id: String, orgId: String?, guided: Boolean) -> Unit,
 ) {
@@ -154,7 +160,7 @@ fun HomeScreen(
     val audio by viewModel.audio.collectAsState()
     val importNotice by viewModel.importNotice.collectAsState()
     var showAccount by remember { mutableStateOf(false) }
-    val listState = rememberLazyListState()
+    val overviewState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
     // The recording the user has asked to delete, held until they confirm.
@@ -163,19 +169,22 @@ fun HomeScreen(
     // The recording the folder picker is moving, while it is up.
     var moving by remember { mutableStateOf<RecordingSummary?>(null) }
 
-    // The chip row's name dialog (new folder or rename), while it is up, and
-    // the folder the user has asked to delete, held until they confirm.
+    // The folder name dialog (new folder or rename), while it is up, and the
+    // folder the user has asked to delete, held until they confirm.
     var namingFolder by remember { mutableStateOf<FolderNaming?>(null) }
     var confirmingFolderDelete by remember { mutableStateOf<CloudFolder?>(null) }
 
-    // The search field, and what is in it. See [LibrarySearch].
-    val search = remember { LibrarySearch() }
+    // Which page is up, and the search typed into it. See [LibraryPage].
+    var pageKey by rememberSaveable { mutableStateOf(LibraryPage.Overview.key) }
+    val page = LibraryPage.parse(pageKey)
+    var query by rememberSaveable { mutableStateOf("") }
+
     // The personal library with the bundled sample merged in — see
     // `SampleRecordingStore`. Everything below reads this, not the cloud's list.
     val library = remember(state.recordings, sample, state.isPersonal) {
         HomeViewModel.withSample(state.recordings, sample, state.isPersonal)
     }
-    val checklist = rememberChecklist(viewModel, state, sample, search.query) { id ->
+    val checklist = rememberChecklist(viewModel, state, sample, query) { id ->
         onOpenRecording(id, null, true)
     }
 
@@ -195,12 +204,41 @@ fun HomeScreen(
     // button in the top bar. Pull to refresh stays for the impatient.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
 
-    DemoAccountRequest { open ->
-        showAccount = open
-        if (open) viewModel.loadAccount()
+    // Opening a page leaves the last one's search behind, and the pager's
+    // folder follows the page: All for See all, the folder for its card.
+    fun openPage(target: LibraryPage) {
+        query = ""
+        viewModel.selectFolder(
+            when (target) {
+                is LibraryPage.Folder -> FolderFilter.Folder(target.id)
+                else -> FolderFilter.All
+            },
+        )
+        pageKey = target.key
+    }
+    BackHandler(enabled = page != LibraryPage.Overview) { openPage(LibraryPage.Overview) }
+    // A folder page whose folder has gone (deleted here or elsewhere, or a
+    // scope switch) has nothing left to show: back to the overview.
+    LaunchedEffect(page, state.folders, state.loading) {
+        if (page is LibraryPage.Folder && !state.loading && state.folders.none { it.id == page.id }) {
+            openPage(LibraryPage.Overview)
+        }
+    }
+
+    DemoLibraryRequest { target ->
+        showAccount = target.screen == DemoMode.Screen.ACCOUNT
+        if (showAccount) viewModel.loadAccount()
+        viewModel.selectScope(if (target.library == DemoMode.LibraryPage.ORG) DemoMode.ORG_ID else null)
         // A lap route re-seeds the fixtures under a screen that may already be
         // up, so every demo request re-reads them.
         viewModel.refresh()
+        openPage(
+            when (target.library) {
+                DemoMode.LibraryPage.ALL -> LibraryPage.All
+                DemoMode.LibraryPage.FOLDER_EMPTY -> LibraryPage.Folder(DemoMode.EMPTY_FOLDER_ID)
+                DemoMode.LibraryPage.OVERVIEW, DemoMode.LibraryPage.ORG -> LibraryPage.Overview
+            },
+        )
     }
 
     val callbacks = LibraryCallbacks(
@@ -254,50 +292,121 @@ fun HomeScreen(
         },
     )
 
-    Scaffold(
-        topBar = {
-            HomeTopBar(
-                state = state,
-                onSelectScope = { orgId ->
-                    // A folder filter or a search belongs to the library
-                    // it was typed into; the next one starts clean.
-                    search.close()
-                    viewModel.selectScope(orgId)
-                },
-                onToggleSearch = search::toggle,
-                onAccount = {
-                    showAccount = true
-                    viewModel.loadAccount()
-                },
-            )
-        },
-        bottomBar = {
-            HomeBottomBar(isPersonal = state.isPersonal, onRecord = onRecord, onImport = onImport)
-        },
-    ) { padding ->
-        LibraryBody(
-            state = state,
-            library = library,
-            search = search,
-            meetingLive = meetingLive,
-            callbacks = callbacks,
-            lap = LibraryLap(checklist, listState),
-            modifier = Modifier
+    val language = LocalConfiguration.current.locales[0].language
+    val walkingThrough by viewModel.walkingThrough.collectAsState()
+    val searchHint = stringResource(R.string.home_search_hint)
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        // The overview's light bars reach the top edge of the window, behind
+        // the status bar, the title and the search field, as the desktop's run
+        // from the top of its page (iOS's `ignoresSafeArea`): this screen is
+        // the one destination the root leaves the status bar's inset to, and
+        // the column below takes it. Only on the overview: the full list and
+        // a search's results are plain pages.
+        val showsBackdrop = page == LibraryPage.Overview && query.isBlank()
+        val backdropAlpha by animateFloatAsState(if (showsBackdrop) 1f else 0f, tween(250), label = "backdrop")
+        if (backdropAlpha > 0f) {
+            OverviewBackdrop(Modifier.graphicsLayer { alpha = backdropAlpha })
+        }
+        Column(
+            Modifier
                 .fillMaxSize()
-                .padding(padding),
-        )
+                .underStatusBarInset(),
+        ) {
+            when (page) {
+                LibraryPage.Overview -> LibraryPageHeader(title = stringResource(R.string.home_title)) {
+                    LibraryActions(
+                        state = state,
+                        onImport = onImport,
+                        onSelectScope = { orgId ->
+                            // A search belongs to the library it was typed into.
+                            query = ""
+                            viewModel.selectScope(orgId)
+                        },
+                        onAccount = {
+                            showAccount = true
+                            viewModel.loadAccount()
+                        },
+                    )
+                }
+
+                else -> FullListHeader(
+                    title = when (page) {
+                        is LibraryPage.Folder -> state.folders.firstOrNull { it.id == page.id }?.name.orEmpty()
+                        else -> stringResource(R.string.library_all_recordings)
+                    },
+                    onBack = { openPage(LibraryPage.Overview) },
+                )
+            }
+            PageSearchField(
+                query = query,
+                onQueryChange = { query = it },
+                hint = searchHint,
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 8.dp),
+            )
+            val body = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+            when {
+                // Searching from the overview searches the whole library, the
+                // way the Library always has.
+                page == LibraryPage.All || (page == LibraryPage.Overview && query.isNotBlank()) -> LibraryBody(
+                    state = state,
+                    library = library,
+                    query = query,
+                    meetingLive = meetingLive,
+                    callbacks = callbacks,
+                    modifier = body,
+                )
+
+                page is LibraryPage.Folder -> FolderBody(
+                    folderId = page.id,
+                    state = state,
+                    library = library,
+                    query = query,
+                    meetingLive = meetingLive,
+                    callbacks = callbacks,
+                    modifier = body,
+                )
+
+                else -> LibraryOverviewBody(
+                    state = state,
+                    library = library,
+                    meetingLive = meetingLive,
+                    callbacks = callbacks,
+                    checklist = checklist,
+                    listState = overviewState,
+                    recentEmpty = RecentEmpty(
+                        // The checklist already offers the sample — don't say it twice.
+                        offersSample = state.isPersonal && checklist == null && viewModel.canLoadSample(language),
+                        transcribing = walkingThrough,
+                        onUseSample = { viewModel.walkThroughSample(language) },
+                    ),
+                    onOpen = ::openPage,
+                    modifier = body,
+                )
+            }
+            // While a meeting runs, the active-meeting card is the way back
+            // to it; a Start button beside it would only start nothing.
+            if (!meetingLive) HomeBottomBar(onStart = onStartRecording)
+        }
     }
 
     if (showAccount) {
         AccountSheet(
             viewModel = viewModel,
             onDismiss = { showAccount = false },
-            onShowGettingStarted = {
+            onRerunOnboarding = {
                 showAccount = false
-                search.close()
-                viewModel.showChecklistAgain()
-                viewModel.selectFolder(FolderFilter.All)
-                coroutineScope.launch { listState.animateScrollToItem(0) }
+                openPage(LibraryPage.Overview)
+                // The wizard covers the library; when it is left with "Try the
+                // sample", the checklist is at the top of the overview.
+                viewModel.rerunOnboarding()
+                coroutineScope.launch { overviewState.animateScrollToItem(0) }
             },
         )
     }
@@ -348,28 +457,45 @@ fun HomeScreen(
 }
 
 /**
- * The library's search field, and what is in it. [query] is the whole of the
- * "is a search live" state: the field can be up with nothing typed, which is not
- * a search and must not narrow anything.
+ * Which page of the Library is up: the overview it opens on, or the full list
+ * pushed over it — everything (See all), or one folder (its card). [key] is
+ * what `rememberSaveable` keeps, so the page survives a rotation.
  */
-@Stable
-private class LibrarySearch {
-    var open by mutableStateOf(false)
-    var query by mutableStateOf("")
+private sealed interface LibraryPage {
+    val key: String
 
-    fun toggle() {
-        open = !open
+    data object Overview : LibraryPage {
+        override val key = "overview"
     }
 
-    /**
-     * Closing clears, because a search that is out of sight must not leave the
-     * library filtered — there is no field left to explain why three of eleven
-     * recordings are showing.
-     */
-    fun close() {
-        open = false
-        query = ""
+    data object All : LibraryPage {
+        override val key = "all"
     }
+
+    data class Folder(val id: String) : LibraryPage {
+        override val key = FOLDER_PREFIX + id
+    }
+
+    companion object {
+        private const val FOLDER_PREFIX = "folder:"
+
+        fun parse(key: String): LibraryPage = when {
+            key == All.key -> All
+            key.startsWith(FOLDER_PREFIX) -> Folder(key.removePrefix(FOLDER_PREFIX))
+            else -> Overview
+        }
+    }
+}
+
+/**
+ * Lets a full-width row (the folder cards) run to both edges of the screen
+ * from inside a list padded by [inset] on each side.
+ */
+private fun Modifier.edgeToEdge(inset: Dp): Modifier = layout { measurable, constraints ->
+    val extra = (inset * 2).roundToPx()
+    val width = constraints.maxWidth + extra
+    val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+    layout(constraints.maxWidth, placeable.height) { placeable.place(-extra / 2, 0) }
 }
 
 /**
@@ -383,7 +509,7 @@ private class LibraryCallbacks(
     val onUpload: () -> Unit,
     val onRefresh: () -> Unit,
     val onSelectFolder: (FolderFilter) -> Unit,
-    /** The chip row's long-press Rename / Delete and its trailing "+". */
+    /** The folders' long-press Rename / Delete and the "+" / New folder. */
     val folderActions: FolderChipActions = FolderChipActions(),
     /** The "keeps failing to sync" prompt under a queued row: send, or ×. */
     val syncPrompt: SyncPromptActions = SyncPromptActions(),
@@ -408,14 +534,14 @@ private class SyncPromptActions(
 private class ImportNoticeText(val title: String, val orgName: String?)
 
 /**
- * The getting-started checklist above the list, when it shows: the personal
+ * The getting-started checklist on the overview, when it shows: the personal
  * library, no search, and then the checklist's own rule
  * ([GettingStartedState.showsInLibrary], unit-tested in parleykit).
  */
 private class ChecklistModel(val state: GettingStartedState, val header: ChecklistHeader)
 
-/** The checklist, and the list state "Show the getting-started list again" scrolls. */
-private class LibraryLap(val checklist: ChecklistModel?, val listState: LazyListState)
+/** 最近錄音 with nothing in it: whether it offers the sample, and the walk-through's state. */
+private class RecentEmpty(val offersSample: Boolean, val transcribing: Boolean, val onUseSample: () -> Unit)
 
 @Composable
 private fun rememberChecklist(
@@ -459,92 +585,261 @@ private fun rememberMeetingLive(): Boolean {
 }
 
 /**
- * `parley://demo/account` lands on the library and opens the account sheet —
- * the one screen the store listing needs that has no route of its own.
- * [onRequest] is told whether the latest demo request is for the account.
+ * `parley://demo/…` lands on the library: the account sheet open for the
+ * account route, the organization's library for `library-org`, the full list
+ * for `library-all`, an empty folder's page for `library-folder-empty`, and the
+ * personal overview for everything else. [onRequest] is told about each new
+ * request.
  */
 @Composable
-private fun DemoAccountRequest(onRequest: (Boolean) -> Unit) {
+private fun DemoLibraryRequest(onRequest: (DemoMode.Navigation) -> Unit) {
     val demoNavigation by DemoMode.navigation.collectAsState()
+    val latest by rememberUpdatedState(onRequest)
     LaunchedEffect(demoNavigation) {
         val target = demoNavigation ?: return@LaunchedEffect
-        onRequest(target.screen == DemoMode.Screen.ACCOUNT)
+        latest(target)
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The Library's actions, level with its title: import (personal only), the
+ * switch between the personal library and each organization's, and the
+ * account. Import is a glyph — `UploadDoc`, the same one a row uses for a
+ * recording that came in this way, so the button and what it makes look alike.
+ *
+ * Personal scope only, as on iOS: an import files into the personal library
+ * first and shares from there (the default save location decides that), so
+ * offering it under an org's name would promise a destination the flow does not
+ * have.
+ */
 @Composable
-private fun HomeTopBar(
+private fun LibraryActions(
     state: HomeViewModel.UiState,
+    onImport: () -> Unit,
     onSelectScope: (String?) -> Unit,
-    onToggleSearch: () -> Unit,
     onAccount: () -> Unit,
 ) {
-    TopAppBar(
-        title = { ScopeTitle(state = state, onSelectScope = onSelectScope) },
-        actions = {
-            IconButton(onClick = onToggleSearch) {
-                Icon(Icons.Default.Search, stringResource(R.string.home_search))
+    HeaderActions {
+        if (state.isPersonal) {
+            IconButton(onClick = onImport) {
+                Icon(
+                    imageVector = LibraryIcons.UploadDoc,
+                    contentDescription = stringResource(R.string.library_import_audio),
+                    modifier = Modifier.size(22.dp),
+                )
             }
-            IconButton(onClick = onAccount) {
-                Icon(Icons.Default.Person, stringResource(R.string.home_account))
-            }
-        },
-    )
+        }
+        ScopeSwitcher(state = state, onSelectScope = onSelectScope, onAccount = onAccount)
+    }
 }
 
+/**
+ * The full list's top: back to the overview, and what this page is — 全部錄音,
+ * or the folder's name. A plain Android app bar row: this page is pushed over
+ * the overview, so it reads as one level down rather than as a tab root.
+ */
 @Composable
-private fun HomeBottomBar(isPersonal: Boolean, onRecord: () -> Unit, onImport: () -> Unit) {
-    Column(
+private fun FullListHeader(title: String, onBack: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .height(64.dp)
+            .padding(start = 4.dp, end = 16.dp),
     ) {
-        Button(
-            onClick = onRecord,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.home_record),
-                style = MaterialTheme.typography.titleMedium,
-            )
+        IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.action_back))
         }
-        // Personal scope only, as on iOS. An import files into the
-        // personal library first and shares from there (the default
-        // save location decides that), so offering it under an org's
-        // name would promise a destination the flow does not have.
-        if (isPersonal) {
-            OutlinedButton(
-                onClick = onImport,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
+        Spacer(Modifier.width(4.dp))
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * Start recording, along the bottom — the record screen's own button, the
+ * same words and the same light-primary look (primary ink on a faint primary
+ * wash, the desktop's Resume), and it starts the meeting on the tap: one press
+ * from the library to recording, as Android always had. The meeting is named
+ * and filed on the record screen while it runs.
+ */
+@Composable
+private fun HomeBottomBar(onStart: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    Row(
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(primary.copy(alpha = 0.12f))
+            .clickable(role = Role.Button, onClick = onStart),
+    ) {
+        Box(
+            Modifier
+                .size(9.dp)
+                .background(primary, CircleShape),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.meeting_start),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = primary,
+        )
+    }
+}
+
+/**
+ * What the Library opens on — the desktop's 總覽, iOS's overview: what needs
+ * the user (an import landing, a meeting still running, a failure, the upload
+ * queue), the getting-started list, the folders as cards in one sideways row,
+ * and the four newest recordings. Everything follows the scope switcher.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun LibraryOverviewBody(
+    state: HomeViewModel.UiState,
+    library: List<RecordingSummary>,
+    meetingLive: Boolean,
+    callbacks: LibraryCallbacks,
+    checklist: ChecklistModel?,
+    listState: LazyListState,
+    recentEmpty: RecentEmpty,
+    onOpen: (LibraryPage) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val recent = remember(library) { LibraryRules.recentRecordings(library) }
+    PullToRefreshBox(
+        isRefreshing = state.loading,
+        onRefresh = callbacks.onRefresh,
+        state = rememberPullToRefreshState(),
+        modifier = modifier,
+    ) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = OverviewInset, end = OverviewInset, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            libraryHeader(
+                meetingLive = meetingLive,
+                state = state,
+                searching = false,
+                importNotice = callbacks.importNotice,
+                onRecord = callbacks.onRecord,
+                onUpload = callbacks.onUpload,
+                syncPrompt = callbacks.syncPrompt,
+            )
+            checklist?.let {
+                item(key = "getting-started") {
+                    GettingStartedList(state = it.state, header = it.header, modifier = Modifier.padding(bottom = 8.dp))
+                }
+            }
+            item(key = "folders") {
+                OverviewFolders(state = state, library = library, actions = callbacks.folderActions, onOpen = onOpen)
+            }
+            item(key = "recent-heading") {
+                OverviewHeading(
+                    title = stringResource(R.string.library_overview_recent),
+                    modifier = Modifier.padding(top = 16.dp),
+                ) {
+                    if (recent.isNotEmpty()) {
+                        OverviewLink(stringResource(R.string.library_overview_see_all), leading = false) {
+                            onOpen(LibraryPage.All)
+                        }
+                    }
+                }
+            }
+            when {
+                recent.isNotEmpty() -> itemsIndexed(recent, key = { _, rec -> "recent-" + rec.id }) { index, recording ->
+                    Column {
+                        if (index > 0) {
+                            HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+                        RecordingRow(
+                            model = LibraryRules.recordingRow(state, recording, callbacks.audioOf(recording.id)),
+                            actions = callbacks.rowActions(recording),
+                            compact = true,
+                        )
+                    }
+                }
+
+                state.loading -> item(key = "recent-loading") { LoadingRow() }
+                else -> item(key = "recent-empty") {
+                    RecentEmptyBox(
+                        offersSample = recentEmpty.offersSample,
+                        transcribing = recentEmpty.transcribing,
+                        onUseSample = recentEmpty.onUseSample,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** The overview's side margin, iOS's 20pt. */
+private val OverviewInset = 20.dp
+
+/**
+ * 資料夾: the heading with + 新增資料夾 beside it (a folder is made from the
+ * heading, not from a card in the row: the row is for the folders there are),
+ * then a card per folder in the scope, in one row that scrolls sideways and
+ * runs to both edges of the screen.
+ */
+@Composable
+private fun OverviewFolders(
+    state: HomeViewModel.UiState,
+    library: List<RecordingSummary>,
+    actions: FolderChipActions,
+    onOpen: (LibraryPage) -> Unit,
+) {
+    Column(Modifier.padding(top = 8.dp)) {
+        OverviewHeading(title = stringResource(R.string.library_overview_folders)) {
+            OverviewLink(stringResource(R.string.library_folder_add), leading = true, onClick = actions.onCreate)
+        }
+        if (state.folders.isNotEmpty()) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = OverviewInset, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                modifier = Modifier.edgeToEdge(OverviewInset),
             ) {
-                Text(stringResource(R.string.home_import))
+                items(state.folders, key = { "folder-card-" + it.id }) { folder ->
+                    FolderCard(
+                        name = folder.name,
+                        count = HomeViewModel.folderRecordingCount(library, folder.id),
+                        onOpen = { onOpen(LibraryPage.Folder(folder.id)) },
+                        onRename = { actions.onRename(folder) },
+                        onDelete = { actions.onDelete(folder) },
+                    )
+                }
             }
         }
     }
 }
 
 /**
- * The search field, the folder chips and, under them, one pull-to-refresh pager
- * with a page per chip: the finger drags the pages, a fling carries them, and
- * the pager snaps. The pager and `state.folderFilter` are kept in step both
- * ways, each effect bailing when the other already agrees, so a chip tap moves
- * the pager and a settled swipe moves the chip without either echoing back.
+ * The full list from See all (or a search from the overview): the folder chips
+ * and, under them, one pull-to-refresh pager with a page per chip: the finger
+ * drags the pages, a fling carries them, and the pager snaps. The pager and
+ * `state.folderFilter` are kept in step both ways, each effect bailing when the
+ * other already agrees, so a chip tap moves the pager and a settled swipe moves
+ * the chip without either echoing back.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LibraryBody(
     state: HomeViewModel.UiState,
     library: List<RecordingSummary>,
-    search: LibrarySearch,
+    query: String,
     meetingLive: Boolean,
     callbacks: LibraryCallbacks,
-    lap: LibraryLap,
     modifier: Modifier = Modifier,
 ) {
     val pages = remember(state.folders) { LibraryFolders.pages(state.folders) }
@@ -561,14 +856,6 @@ private fun LibraryBody(
         pages.getOrNull(pagerState.settledPage)?.let { if (it != latestFilter) callbacks.onSelectFolder(it) }
     }
     Column(modifier) {
-        if (search.open) {
-            SearchField(
-                query = search.query,
-                onQueryChange = { search.query = it },
-                hint = stringResource(R.string.home_search_hint),
-                onClose = search::close,
-            )
-        }
         // The row is up whenever there is a folder, or once a load has
         // finished without one: with no folders it is only the "+", which is
         // the one place an org library can make its first folder. It waits
@@ -595,23 +882,58 @@ private fun LibraryBody(
                 modifier = Modifier.fillMaxSize(),
             ) { page ->
                 val filter = pages[page]
-                val visible = remember(library, state.folders, page, search.query) {
-                    HomeViewModel.visibleRecordings(library, state.folders, filter, search.query)
+                val visible = remember(library, state.folders, page, query) {
+                    HomeViewModel.visibleRecordings(library, state.folders, filter, query)
                 }
-                // All is always page 0 and always present, so it alone can own
-                // the list state "show the getting-started list again" scrolls.
-                val listState = if (page == 0) lap.listState else rememberLazyListState()
                 LibraryList(
                     state = state,
                     visible = visible,
-                    query = search.query,
+                    filter = filter,
+                    query = query,
                     meetingLive = meetingLive,
                     callbacks = callbacks,
-                    lap = lap,
-                    listState = listState,
+                    listState = rememberLazyListState(),
                 )
             }
         }
+    }
+}
+
+/**
+ * One folder, opened from its card: its recordings and nothing else — no chip
+ * row and no swipe to the next folder, the folders were already chosen between
+ * on the overview (iOS #741).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FolderBody(
+    folderId: String,
+    state: HomeViewModel.UiState,
+    library: List<RecordingSummary>,
+    query: String,
+    meetingLive: Boolean,
+    callbacks: LibraryCallbacks,
+    modifier: Modifier = Modifier,
+) {
+    val filter = FolderFilter.Folder(folderId)
+    val visible = remember(library, state.folders, folderId, query) {
+        HomeViewModel.visibleRecordings(library, state.folders, filter, query)
+    }
+    PullToRefreshBox(
+        isRefreshing = state.loading,
+        onRefresh = callbacks.onRefresh,
+        state = rememberPullToRefreshState(),
+        modifier = modifier,
+    ) {
+        LibraryList(
+            state = state,
+            visible = visible,
+            filter = filter,
+            query = query,
+            meetingLive = meetingLive,
+            callbacks = callbacks,
+            listState = rememberLazyListState(),
+        )
     }
 }
 
@@ -626,10 +948,10 @@ private fun pageKey(page: FolderFilter): String = when (page) {
 private fun LibraryList(
     state: HomeViewModel.UiState,
     visible: List<RecordingSummary>,
+    filter: FolderFilter,
     query: String,
     meetingLive: Boolean,
     callbacks: LibraryCallbacks,
-    lap: LibraryLap,
     listState: LazyListState,
 ) {
     LazyColumn(
@@ -652,21 +974,12 @@ private fun LibraryList(
             onUpload = callbacks.onUpload,
             syncPrompt = callbacks.syncPrompt,
         )
-        lap.checklist?.let { checklist ->
-            item(key = "getting-started") {
-                GettingStartedList(
-                    state = checklist.state,
-                    header = checklist.header,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
-            }
-        }
         libraryPlaceholders(
             state = state,
             visible = visible,
+            filter = filter,
             query = query,
             onImport = callbacks.onImport,
-            checklistShown = lap.checklist != null,
         )
         // Namespaced keys: a recording drained from the pending
         // queue can show up in both lists for one refresh, and two
@@ -685,7 +998,8 @@ private fun LibraryList(
 /**
  * The whitespace between two recordings — iOS `RecordingRow.spacing`, 28pt —
  * made of the list's 8dp item spacing and this much above and below each row.
- * Whitespace is the only separator: no card, no fill, no hairline.
+ * Whitespace is the only separator on the full list: no card, no fill, no
+ * hairline. (The overview's four recent rows are hairline-split, as iOS's are.)
  */
 private val RowGapPadding = 10.dp
 
@@ -738,21 +1052,19 @@ private fun LibraryErrorDialogs(viewModel: HomeViewModel, state: HomeViewModel.U
 }
 
 /**
- * The library's title, which is also the switch between the personal library
- * and each organization's — the Android place for iOS's scope menu, since a
- * trailing toolbar menu with an org name in it would crowd out the three
- * actions already there.
+ * The switch between the personal library and each organization's — iOS's
+ * scope menu, in the header's pill: the scope's glyph (a folder for personal,
+ * two people for an organization), its name, and the menu under it.
  *
- * An account in no organization has nothing to switch between, so it gets the
- * plain title and no menu: a switcher with one entry is a control that does
- * nothing.
+ * An account in no organization has nothing to switch between, so it gets no
+ * switcher at all: a menu with one entry is a control that does nothing.
  */
 @Composable
-private fun ScopeTitle(state: HomeViewModel.UiState, onSelectScope: (String?) -> Unit) {
-    if (state.orgs.isEmpty()) {
-        Text(stringResource(R.string.home_title))
-        return
-    }
+private fun ScopeSwitcher(
+    state: HomeViewModel.UiState,
+    onSelectScope: (String?) -> Unit,
+    onAccount: () -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     val personal = stringResource(R.string.library_scope_personal)
     val name = state.scopeOrg?.name ?: personal
@@ -761,20 +1073,24 @@ private fun ScopeTitle(state: HomeViewModel.UiState, onSelectScope: (String?) ->
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .clickable(onClickLabel = chooseLabel) { open = true }
-                .padding(vertical = 4.dp),
+                .heightIn(min = 48.dp)
+                .clickable(onClickLabel = chooseLabel, role = Role.Button) { open = true }
+                .padding(start = 8.dp, end = 2.dp),
         ) {
             Icon(
-                imageVector = if (state.isPersonal) LibraryIcons.Folder else LibraryIcons.Group,
+                // One person for the personal library, people for an organization's.
+                imageVector = if (state.isPersonal) Icons.Default.Person else LibraryIcons.Group,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
             Text(
                 text = name,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier.widthIn(max = 112.dp),
             )
             Icon(Icons.Default.ArrowDropDown, contentDescription = chooseLabel)
         }
@@ -782,7 +1098,7 @@ private fun ScopeTitle(state: HomeViewModel.UiState, onSelectScope: (String?) ->
             ScopeMenuItem(
                 title = personal,
                 role = null,
-                icon = LibraryIcons.Folder,
+                icon = Icons.Default.Person,
                 selected = state.isPersonal,
                 onClick = {
                     open = false
@@ -801,6 +1117,20 @@ private fun ScopeTitle(state: HomeViewModel.UiState, onSelectScope: (String?) ->
                     },
                 )
             }
+            // The account sheet (sign-out, where recordings are saved, re-run
+            // onboarding) lives here, under the libraries, rather than as a
+            // third glyph in the header: the header keeps iOS's two actions,
+            // import and the scope. Which is also why the menu is shown with
+            // no organization to switch to.
+            HorizontalDivider(Modifier.padding(vertical = 4.dp))
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.home_account_settings)) },
+                leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onAccount()
+                },
+            )
         }
     }
 }
@@ -1213,41 +1543,29 @@ private fun LazyListScope.libraryHeader(
 }
 
 /**
- * What stands in for the library while it is loading, when there is none, and
- * when a search has narrowed it to nothing.
- *
- * The last two are different states and get different words. "No recordings
- * yet" on a library of eleven that a typo has emptied is a lie, and the way out
- * of each is different too: one is answered by importing something, the other by
- * editing the query — so only the first carries a button.
+ * What stands in for a list while it is loading, and when it has nothing to
+ * show: the desktop's empty state for why ([LibraryRules.emptyState]) — a
+ * search that found nothing, an empty folder, an organization with nothing
+ * shared, the unfiled page with everything filed, or a library with nothing in
+ * it yet. Only the last carries a button, because the way out of each is
+ * different: importing something, not editing the query.
  */
 private fun LazyListScope.libraryPlaceholders(
     state: HomeViewModel.UiState,
     visible: List<RecordingSummary>,
+    filter: FolderFilter,
     query: String,
     onImport: () -> Unit,
-    /** The checklist is the first-run welcome when it is up; the empty state stands down. */
-    checklistShown: Boolean,
 ) {
     if (state.loading && state.recordings.isEmpty()) {
         item { LoadingRow() }
     }
     if (state.loading || visible.isNotEmpty()) return
-    if (query.isNotBlank()) {
-        item { NoMatches() }
-    } else {
-        // The whole personal library being empty is a first run, and gets the
-        // welcome and the import door. An empty folder page or an empty team
-        // library is just a place with nothing in it yet — telling someone to
-        // "record a meeting, or import" there would be answering a question
-        // they did not ask.
-        val wholePersonal = state.isPersonal && state.folderFilter == FolderFilter.All
-        if (!wholePersonal) {
-            item { EmptyLibrary(onImport = null, firstRun = false) }
-        } else if (state.pending.isEmpty() && !checklistShown) {
-            item { EmptyLibrary(onImport = onImport, firstRun = true) }
-        }
-    }
+    val empty = LibraryRules.emptyState(query, filter, state.isPersonal)
+    // Recordings still on the phone are the library's first rows; "nothing
+    // yet" above them would contradict the screen.
+    if (empty == EmptyLibraryState.NOTHING_YET && state.pending.isNotEmpty()) return
+    item(key = "empty") { LibraryEmptyState(empty, onImport) }
 }
 
 @Composable
@@ -1506,6 +1824,10 @@ private fun DeletePendingDialog(title: String, onConfirm: () -> Unit, onDismiss:
  * and lost: it hides the action behind a gesture with no affordance, and it puts
  * an irreversible one behind something a thumb does by accident while scrolling.
  *
+ * [compact] is the overview's recent row (iOS `RecentRecordingRow`): one line
+ * of title, no overflow button — it is a shortcut, so the long press alone
+ * opens the menu — and its own vertical padding between the hairlines.
+ *
  * iOS puts the organizations in submenus. A Material `DropdownMenu` has none, so
  * "Share to organization" opens a second page of the same menu — the org
  * names under a Back row — rather than a second popup stacked on the first.
@@ -1513,9 +1835,6 @@ private fun DeletePendingDialog(title: String, onConfirm: () -> Unit, onDismiss:
  * While a delete, move or share is in flight the row goes half-opaque and
  * stops responding — the request can take a moment on a bad connection, and a
  * row that still looks live invites a second tap on something already changing.
- *
- * No card: iOS separates rows with whitespace alone (see [RowGapPadding]), and
- * a filled surface per row was the loudest thing on the page.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1523,6 +1842,7 @@ private fun RecordingRow(
     model: RecordingRowModel,
     actions: RecordingRowActions,
     modifier: Modifier = Modifier,
+    compact: Boolean = false,
 ) {
     var menu by remember { mutableStateOf<RowMenuPage?>(null) }
     val actionsLabel = stringResource(R.string.home_recording_actions)
@@ -1538,64 +1858,81 @@ private fun RecordingRow(
                 onClick = actions.onClick,
             ),
     ) {
-        Row(verticalAlignment = Alignment.Top) {
-            RecordingRowText(model, Modifier.weight(1f).padding(top = 4.dp))
-            // Nudged out by the button's own inset, so the glyph — not the
-            // 48dp touch target around it — lines up with the list's edge.
-            Box(Modifier.offset(x = 12.dp, y = (-8).dp)) {
-                if (model.working) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .padding(12.dp)
-                            .size(20.dp),
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    IconButton(onClick = { menu = RowMenuPage.ROOT }) {
-                        Icon(Icons.Default.MoreVert, actionsLabel)
+        if (compact) {
+            RecordingRowText(model, compact = true, modifier = Modifier.padding(vertical = 11.dp))
+            RowMenu(page = menu, model = model, actions = actions, onPage = { menu = it })
+        } else {
+            Row(verticalAlignment = Alignment.Top) {
+                RecordingRowText(model, compact = false, modifier = Modifier.weight(1f).padding(top = 4.dp))
+                // Nudged out by the button's own inset, so the glyph — not the
+                // 48dp touch target around it — lines up with the list's edge.
+                Box(Modifier.offset(x = 12.dp, y = (-8).dp)) {
+                    if (model.working) {
+                        CircularProgressIndicator(
+                            modifier = Modifier
+                                .padding(12.dp)
+                                .size(20.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        IconButton(onClick = { menu = RowMenuPage.ROOT }) {
+                            Icon(Icons.Default.MoreVert, actionsLabel)
+                        }
                     }
+                    RowMenu(
+                        page = menu,
+                        model = model,
+                        actions = actions,
+                        onPage = { menu = it },
+                    )
                 }
-                RowMenu(
-                    page = menu,
-                    model = model,
-                    actions = actions,
-                    onPage = { menu = it },
-                )
             }
         }
     }
 }
 
-/** The row's words: source, title, snippet, the counts, and what is in flight. */
+/**
+ * The row's words — iOS `RecordingCard`: where it came from as a glyph
+ * ([RecordingSourceIcon]; the bundled sample also says 範例, since it is
+ * neither the user's meeting nor their file), the title, then one line: when
+ * the meeting was and how many people spoke ([RecordingMetaLine]), and at the
+ * far end where the audio is ([AudioIndicator]). No transcript snippet,
+ * duration, folder or findings.
+ */
 @Composable
-private fun RecordingRowText(model: RecordingRowModel, modifier: Modifier = Modifier) {
+private fun RecordingRowText(model: RecordingRowModel, compact: Boolean, modifier: Modifier = Modifier) {
     val recording = model.recording
     Column(modifier) {
         Row(verticalAlignment = Alignment.Top) {
-            SourceBadge(recording)
-            Spacer(Modifier.width(8.dp))
+            // On the title's first line when the title wraps to two.
+            RecordingSourceIcon(recording.source, Modifier.padding(top = 3.dp))
+            Spacer(Modifier.width(6.dp))
+            if (SampleManifest.isSample(recording.id)) {
+                Text(
+                    text = stringResource(R.string.recording_source_sample),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(top = 3.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+            }
             Text(
-                text = recording.title.ifEmpty {
-                    stringResource(R.string.recording_untitled)
-                },
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 2,
+                text = recording.title.ifEmpty { stringResource(R.string.recording_untitled) },
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = if (compact) 1 else 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        val snippet = recording.snippet.orEmpty()
-        if (snippet.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = snippet,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RecordingMetaLine(recording, Modifier.weight(1f, fill = false))
+            Spacer(Modifier.weight(1f).widthIn(min = 10.dp))
+            AudioIndicator(model.audio)
         }
-        Spacer(Modifier.height(8.dp))
-        RecordingMeta(recording, model.folderName, model.audio)
         if (model.working) {
             Spacer(Modifier.height(6.dp))
             Text(
@@ -1744,216 +2081,6 @@ private fun RowMenuOrgs(
 }
 
 /**
- * Where a recording came from, as small caps rather than a tinted chip.
- *
- * `LIVE` keeps the recording red — it is the one word on this screen that says
- * a microphone was open — and `UPLOAD` is secondary, because a file somebody
- * imported is the unremarkable case. A filled `Badge` was the other candidate
- * and lost: there is one on this screen already, on the upload queue, where it
- * means "these need you". Two filled badges meaning two different things is one
- * too many.
- *
- * Aligned to the title's first line by baseline-ish padding rather than by
- * `alignByBaseline`, which cannot work here: the title is allowed two lines and
- * a `Row` that aligned baselines would pin the badge to the *last* of them.
- */
-@Composable
-private fun SourceBadge(recording: RecordingSummary) {
-    val live = recording.source != RecordingSource.UPLOAD
-    Text(
-        // The bundled sample says what it is, in the same quiet grey as UPLOAD.
-        text = when {
-            SampleManifest.isSample(recording.id) -> stringResource(R.string.recording_source_sample)
-            live -> stringResource(R.string.recording_source_live)
-            else -> stringResource(R.string.recording_source_upload)
-        },
-        style = MaterialTheme.typography.labelSmall,
-        fontWeight = FontWeight.SemiBold,
-        color = if (live) {
-            ParleyTheme.colors.recording
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
-        maxLines = 1,
-        softWrap = false,
-        modifier = Modifier.padding(top = 4.dp),
-    )
-}
-
-/**
- * The line under a recording, iOS's `RecordingCard` meta row item for item:
- * how long, how many people, how many findings, the folder, then — pushed to
- * the far edge — when it happened, whether it has audio, and whether that audio
- * is on this phone.
- *
- * One line, never two. The counts and the audio glyphs are short and exact, so
- * they are pinned (`softWrap = false`, iOS's `fixedSize`). The folder and the
- * date share what is left by [LibraryRules.metaWidths]: the folder truncates
- * first but keeps its glyph and first few characters, and only then does the
- * date shorten — so a long customer name degrades once the row is actually full,
- * never down to a glyph and "…". The date is iOS's short form, month, day and
- * time without the year ([formatRowTimestamp]), which is most of what keeps
- * the folder readable on a phone. The previous `FlowRow` answered the same
- * pressure by wrapping to a second line, which put the date under the duration
- * on every row that had a long customer name.
- *
- * Zero counts are absent rather than shown as "0": a recording nobody has
- * analyzed has no findings line to report, and a row of zeroes reads as a
- * failure rather than as an absence.
- */
-@Composable
-private fun RecordingMeta(
-    recording: RecordingSummary,
-    folderName: String?,
-    audio: AudioDownloadState,
-) {
-    val gap = with(LocalDensity.current) { MetaGap.roundToPx() }
-    val folderMin = folderName?.let { rememberFolderMinWidth(it) } ?: 0
-    Layout(
-        modifier = Modifier.fillMaxWidth(),
-        content = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(MetaGap),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.layoutId(MetaSlot.COUNTS),
-            ) {
-                MetaItem(
-                    icon = LibraryIcons.Clock,
-                    label = stringResource(R.string.recording_meta_duration),
-                    value = formatDuration(recording.durationMs),
-                )
-                recording.speakerCount?.takeIf { it > 0 }?.let { speakers ->
-                    MetaItem(
-                        icon = LibraryIcons.Group,
-                        label = stringResource(R.string.recording_meta_speakers),
-                        value = speakers.toString(),
-                    )
-                }
-                recording.findingsCount?.takeIf { it > 0 }?.let { findings ->
-                    // The lightbulb, the glyph the detail screen's findings carry on iOS.
-                    MetaItem(
-                        icon = LibraryIcons.Lightbulb,
-                        label = stringResource(R.string.detail_findings),
-                        value = findings.toString(),
-                    )
-                }
-            }
-            if (folderName != null) {
-                FolderMetaItem(folderName, Modifier.layoutId(MetaSlot.FOLDER))
-            }
-            Text(
-                text = formatRowTimestamp(recording.createdAt),
-                style = metaTextStyle(),
-                color = MaterialTheme.colorScheme.outline,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.layoutId(MetaSlot.DATE),
-            )
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(MetaGap),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.layoutId(MetaSlot.AUDIO),
-            ) {
-                if (recording.hasAudio) {
-                    MetaItem(
-                        icon = LibraryIcons.Speaker,
-                        label = stringResource(R.string.recording_meta_audio),
-                        value = null,
-                    )
-                }
-                AudioIndicator(audio)
-            }
-        },
-    ) { measurables, constraints ->
-        layoutMeta(measurables, constraints, gap, folderMin)
-    }
-}
-
-/** The meta line's four parts, in the order they are placed. */
-private enum class MetaSlot { COUNTS, FOLDER, DATE, AUDIO }
-
-/** The gap between two meta items, iOS's `HStack(spacing: 10)`. */
-private val MetaGap = 10.dp
-
-/** Glyph, gap, and the folder name's first few characters: what a folder keeps. */
-private const val FolderMinChars = 6
-private val FolderGlyphSize = 13.dp
-private val FolderGlyphGap = 3.dp
-
-/**
- * The narrowest a folder item gets before the date gives way — see
- * [LibraryRules.metaWidths]. Measured from the name itself (its first
- * [FolderMinChars] characters and an ellipsis), so six Chinese characters get
- * the room six Chinese characters need and six Latin ones do not take more.
- */
-@Composable
-private fun rememberFolderMinWidth(name: String): Int {
-    val measurer = rememberTextMeasurer()
-    val style = metaTextStyle()
-    val density = LocalDensity.current
-    return remember(name, style, density) {
-        val text = if (name.length > FolderMinChars) name.take(FolderMinChars) + "…" else name
-        val glyph = with(density) { (FolderGlyphSize + FolderGlyphGap).roundToPx() }
-        glyph + measurer.measure(text, style, maxLines = 1, softWrap = false).size.width
-    }
-}
-
-/**
- * Counts from the start, the audio glyphs at the far edge, and the date just
- * before them — all at their natural widths — then the folder and the date share
- * what is left by [LibraryRules.metaWidths]: the folder truncates first, down to
- * a few characters, and only then does the date shorten.
- */
-private fun MeasureScope.layoutMeta(
-    measurables: List<Measurable>,
-    constraints: Constraints,
-    gap: Int,
-    folderMin: Int,
-): MeasureResult {
-    val width = constraints.maxWidth
-    val loose = constraints.copy(minWidth = 0, minHeight = 0)
-    fun slot(id: MetaSlot) = measurables.firstOrNull { it.layoutId == id }
-
-    val counts = slot(MetaSlot.COUNTS)!!.measure(loose)
-    val audio = slot(MetaSlot.AUDIO)!!.measure(loose)
-    val dateSlot = slot(MetaSlot.DATE)!!
-    val folderSlot = slot(MetaSlot.FOLDER)
-    val rowHeight = maxOf(counts.height, audio.height)
-    val dateNatural = dateSlot.maxIntrinsicWidth(rowHeight)
-    val folderNatural = folderSlot?.maxIntrinsicWidth(rowHeight) ?: 0
-
-    val gaps = gap + // counts → folder, or counts → date
-        (if (folderSlot != null) gap else 0) + // folder → date
-        (if (audio.width > 0) gap else 0) // date → audio glyphs
-    val widths = LibraryRules.metaWidths(
-        available = width - counts.width - audio.width - gaps,
-        dateNatural = dateNatural,
-        folderNatural = folderNatural,
-        folderMin = folderMin,
-    )
-    val date = dateSlot.measure(Constraints.fixedWidth(widths.date).copy(minHeight = 0))
-    val folder = folderSlot?.measure(Constraints.fixedWidth(widths.folder).copy(minHeight = 0))
-
-    val height = maxOf(rowHeight, date.height, folder?.height ?: 0)
-    return layout(width, height) {
-        fun Placeable.placeCentred(x: Int) = placeRelative(x, (height - this.height) / 2)
-        counts.placeCentred(0)
-        folder?.placeCentred(counts.width + gap)
-        val audioX = width - audio.width
-        audio.placeCentred(audioX)
-        date.placeCentred(audioX - (if (audio.width > 0) gap else 0) - date.width)
-    }
-}
-
-/** The meta line's type: 12sp, tabular figures so counts do not reflow. */
-@Composable
-private fun metaTextStyle(): TextStyle = MaterialTheme.typography.labelSmall.copy(
-    fontSize = 12.sp,
-    fontFeatureSettings = "tnum",
-)
-
-/**
  * The last thing on the meta line — iOS `RecordingCard.audioIndicator`: a
  * phone glyph when the audio is here, a ring while it is arriving, words when
  * the last attempt failed, and nothing at all otherwise.
@@ -2041,160 +2168,35 @@ private fun DownloadRing(fraction: Float) {
 }
 
 /**
- * The folder a recording is in. Unlike [MetaItem] it ellipsizes: the others
- * are numbers that would be wrong if cut, and a folder name is still
- * recognisable from its first dozen characters. [modifier] carries the weight
- * that gives it the row's slack — see [RecordingMeta].
- */
-@Composable
-private fun FolderMetaItem(name: String, modifier: Modifier = Modifier) {
-    val label = stringResource(R.string.library_folder_meta)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(FolderGlyphGap),
-        modifier = modifier
-            .semantics(mergeDescendants = true) { contentDescription = "$label $name" },
-    ) {
-        Icon(
-            imageVector = LibraryIcons.Folder,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.size(FolderGlyphSize),
-        )
-        Text(
-            text = name,
-            // The same style [rememberFolderMinWidth] measures with.
-            style = metaTextStyle(),
-            color = MaterialTheme.colorScheme.outline,
-            maxLines = 1,
-            // Cut at a character, not a word: "Northw…" says more than "…".
-            softWrap = false,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-/**
- * One glyph and its number, as an indivisible unit.
+ * A list with nothing in it — the desktop's empty box, a title and a hint
+ * ([EmptyRecords]), in the words [state] calls for. The hints name the phone's
+ * own gestures where the desktop's name its buttons.
  *
- * The glyph carries the meaning, so it carries the accessibility label too and
- * the number beside it is left unlabelled — TalkBack reads "Speakers, 2" rather
- * than "2" next to an unnamed image. A glyph with no value (the audio mark) is a
- * fact on its own. A value with no glyph says what it is in the row's semantics
- * instead, so the duration is still announced as a duration and not as a bare
- * pair of numbers; the date is the one item that needs neither, because a
- * formatted date reads as one.
+ * A personal library with nothing in it is also the second door into import:
+ * the same picker the header's glyph opens, under the same glyph.
  */
 @Composable
-private fun MetaItem(icon: ImageVector?, label: String?, value: String?) {
-    val spoken = if (icon == null && label != null && value != null) "$label $value" else null
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(3.dp),
-        modifier = if (spoken != null) {
-            Modifier.semantics(mergeDescendants = true) { contentDescription = spoken }
-        } else {
-            Modifier
-        },
-    ) {
-        if (icon != null) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = MaterialTheme.colorScheme.outline,
-                modifier = Modifier.size(13.dp),
-            )
-        }
-        if (value != null) {
-            Text(
-                text = value,
-                // Tabular figures, so a row of counts does not reflow a digit at
-                // a time when the list refreshes under it.
-                style = metaTextStyle(),
-                color = MaterialTheme.colorScheme.outline,
-                maxLines = 1,
-                softWrap = false,
-            )
-        }
+private fun LibraryEmptyState(state: EmptyLibraryState, onImport: () -> Unit) {
+    val (title, hint) = when (state) {
+        EmptyLibraryState.NO_MATCH -> R.string.library_empty_search_title to R.string.library_empty_search_hint
+        EmptyLibraryState.EMPTY_FOLDER -> R.string.library_empty_folder_title to R.string.library_empty_folder_hint
+        EmptyLibraryState.EMPTY_ORG -> R.string.library_empty_org_title to R.string.library_empty_org_hint
+        EmptyLibraryState.ALL_FILED -> R.string.library_empty_unfiled_title to R.string.library_empty_unfiled_hint
+        EmptyLibraryState.NOTHING_YET -> R.string.home_empty_title to R.string.home_empty_body
     }
-}
-
-/**
- * A library with nothing in it, and the second door into import.
- *
- * The button duplicates the one on the bottom bar on purpose: this is where
- * somebody who has just signed in is looking, and "record a meeting" is not the
- * answer for the person who already has the audio. Text, not a filled button —
- * the bottom bar's two are the primary actions on this screen, and a third
- * filled control in the middle of an empty page would outrank both.
- */
-@Composable
-private fun EmptyLibrary(onImport: (() -> Unit)?, firstRun: Boolean) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            imageVector = Icons.AutoMirrored.Filled.List,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.size(40.dp),
-        )
-        Spacer(Modifier.height(16.dp))
-        if (!firstRun) {
-            Text(
-                text = stringResource(R.string.library_empty_here),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            return@Column
-        }
-        Text(
-            text = stringResource(R.string.home_empty_title),
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = stringResource(R.string.home_empty_body),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (onImport != null) {
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onImport) {
-                Text(stringResource(R.string.home_empty_import))
+    EmptyRecords(
+        title = stringResource(title),
+        hint = stringResource(hint),
+        action = if (state == EmptyLibraryState.NOTHING_YET) {
+            {
+                TextButton(onClick = onImport) {
+                    Icon(LibraryIcons.UploadDoc, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.home_empty_import))
+                }
             }
-        }
-    }
-}
-
-/**
- * A search that found nothing. The same shape as [EmptyLibrary] with the glyph
- * swapped for the magnifier, so the two read as one state answering differently
- * rather than as two unrelated screens — and with no button, because the way out
- * of this one is the field the reader is already typing in.
- */
-@Composable
-private fun NoMatches() {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 48.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(
-            imageVector = Icons.Default.Search,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.outline,
-            modifier = Modifier.size(40.dp),
-        )
-        Spacer(Modifier.height(16.dp))
-        Text(
-            text = stringResource(R.string.home_search_empty),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
+        } else {
+            null
+        },
+    )
 }

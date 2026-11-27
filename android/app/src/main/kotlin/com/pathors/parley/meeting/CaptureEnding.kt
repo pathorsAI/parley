@@ -161,3 +161,15 @@ data class UploadOutcome(val pending: Boolean, val refused: Boolean) {
         }
     }
 }
+
+/**
+ * [state], carrying what the user chose on the record screen ([choices]) when
+ * it is a saved recording — the filing pass reads them so it does not ask
+ * again what was already answered. Anything else is returned as is.
+ */
+fun withChoices(state: MeetingState, choices: MeetingChoices): MeetingState =
+    if (state is MeetingState.Finished && state.recordingId != null) {
+        state.copy(namedByUser = choices.named, chosenDestination = choices.folder?.destination)
+    } else {
+        state
+    }

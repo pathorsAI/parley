@@ -11,6 +11,7 @@ import com.pathors.parley.auth.AuthManager
 import com.pathors.parley.auth.SignInError
 import com.pathors.parley.cloud.CloudClient
 import com.pathors.parley.filing.FilingPass
+import com.pathors.parley.meeting.MeetingDraft
 import com.pathors.parley.study.StudyPass
 import com.pathors.parley.study.StudySettings
 import com.pathors.parley.filing.SampleFilingTarget
@@ -39,6 +40,7 @@ import com.pathors.parley.meeting.RecordingFiles
 import com.pathors.parley.onboarding.AnnouncementStore
 import com.pathors.parley.onboarding.GettingStartedStore
 import com.pathors.parley.onboarding.LapCelebrations
+import com.pathors.parley.onboarding.OnboardingFlags
 import com.pathors.parley.onboarding.SampleRecordingStore
 import com.pathors.parley.onboarding.WhatsNewPresenter
 import com.pathors.parley.onboarding.parleyAnnouncementsStore
@@ -335,6 +337,9 @@ class AppContainer(private val app: Application) {
      */
     val sampleFiling: SampleFilingTarget
         get() = sample
+
+    /** The onboarding wizard's step, sign-in hand-off and speaker background. */
+    val onboarding: OnboardingFlags = OnboardingFlags.device(app)
 
     /** Whether the guided lap's finish has had its burst, per recording. */
     val lapCelebrations: LapCelebrations = LapCelebrations.device(app)
@@ -642,6 +647,10 @@ class AppContainer(private val app: Application) {
             title = title,
             orgName = { orgId -> cloud.myOrgs().firstOrNull { it.id == orgId }?.name },
             hintTerms = lexicon::recognitionTerms,
+            // The record screen's name and folder for this meeting, saved with
+            // it and then let go of — iOS `MeetingRecorder.upload`.
+            choices = { MeetingDraft.choices.value },
+            onChoicesSaved = MeetingDraft::clear,
         )
 
     /** Start importing [uri], replacing (and cancelling) any previous import. */

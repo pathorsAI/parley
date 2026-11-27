@@ -69,15 +69,17 @@ object QuickRecord {
      *
      * Off the meeting screen, always: a new meeting screen adopts a meeting in
      * progress (a second tap is someone checking it is still going, not asking
-     * for another) and starts one otherwise. On it, only when the meeting
-     * there has an outcome — the new entry clears it and records again, as the
-     * iOS Record tab does. A meeting screen with nothing settled on it is left
-     * alone: it is recording, wrapping up, waiting on the microphone
-     * permission, or has just asked the service to start and not heard back,
-     * and replacing it could only ever be worse.
+     * for another) and starts one otherwise. On it, when there is no meeting
+     * (the screen before one, where the tap is a press of Start) or the
+     * meeting there has an outcome — the new entry clears it and records
+     * again, as the iOS Record tab does. A meeting in progress or wrapping up
+     * is left alone, and replacing it could only ever be worse. A screen that
+     * has just asked the service to start and not heard back is safe to
+     * replace too: the service begins a recording only when it has none, so a
+     * second start finds the first one's session and adopts it.
      */
     fun shouldOpenMeeting(onMeetingScreen: Boolean, meeting: MeetingState?): Boolean =
-        !onMeetingScreen || (meeting != null && isSettled(meeting))
+        !onMeetingScreen || meeting == null || isSettled(meeting)
 
     /** The intent every door opens — explicit, so nothing else can answer it. */
     fun intent(context: Context): Intent =

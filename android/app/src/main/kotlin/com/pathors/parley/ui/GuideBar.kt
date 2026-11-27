@@ -8,7 +8,9 @@ import android.view.View
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -488,3 +490,12 @@ private val CONFETTI_MS = (LapMotion.CONFETTI_DURATION * MS_PER_SECOND).toLong()
 private val CONFETTI_HEIGHT = 260.dp
 private val CONFETTI_RISE = 250.dp
 private val LINE_SHIFT = 8.dp
+
+/**
+ * The lap's one spring — iOS `LapMotion.spring` — for anything that moves.
+ * Internal so the rest of the lap (the filing card) can move on the same curve.
+ */
+internal fun <T> lapSpring(): FiniteAnimationSpec<T> = spring(
+    dampingRatio = LapMotion.SPRING_DAMPING.toFloat(),
+    stiffness = LapMotion.springStiffness.toFloat(),
+)

@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
 import com.pathors.parley.auth.AuthCallback
 import com.pathors.parley.auth.SignInError
@@ -31,6 +32,13 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Edge-to-edge on every version, not only on Android 15+, where
+        // targetSdk 35 makes it compulsory: below 15 the window otherwise stops
+        // under an opaque status bar, and the Library's light bars, which run
+        // up behind it, end on a hard white edge. The root takes the
+        // safe-drawing insets either way (`ParleyRoot`), so nothing else moves;
+        // `ParleyTheme` still sets the bars' icon colours.
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // A recreated activity (rotation, say) is handed its original intent
         // again; that is not a new foreground arriving by a link.
