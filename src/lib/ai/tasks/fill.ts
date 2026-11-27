@@ -26,10 +26,19 @@ export type SlotDef =
       template: string;
     };
 
+/** Plain UTF-16 code-unit order — what a bare `.sort()` does — on every runtime. */
+function byCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 /** The variant key for a set of params: `k=v` pairs sorted by key, joined by commas; "" for none. */
 export function variantKey(params: Record<string, string>): string {
+  // Code-unit order, not localeCompare: the cloud (parley-internal
+  // apps/cloud/src/aiTasks.ts) sorts with the default `.sort()`, which is the
+  // same order on every runtime; a locale's order is not.
   return Object.keys(params)
-    .sort()
+    .sort(byCodeUnits)
     .map((k) => `${k}=${params[k]}`)
     .join(",");
 }

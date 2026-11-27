@@ -484,68 +484,17 @@ export async function polishTranscriptOutcome(opts: {
     { style: style === "concise" ? "concise" : "tidy" },
     polishSlots(protectedTerms, speakerTerms, customInstructions),
   );
-  let effort = hostedReasoningEffort(settings);
   try {
-    let result: Awaited<ReturnType<typeof generateText>>;
-    for (;;) {
-      try {
-        result = await generateText({
-          model: getModel(settings, "realtime", {
-            modelId: polishModelOverride(settings, style),
-            task,
-          }),
-          providerOptions: withReasoningEffort(getProviderOptions(settings, "realtime"), effort),
-          system: polishSystemPrompt(protectedTerms, style, speakerTerms, customInstructions),
-          prompt: raw,
-          temperature: 0.2,
-          maxOutputTokens: 2048,
-          // No retries. The SDK's first backoff is two seconds — half the
-          // budget — so a single 429/5xx would sleep, retry, and be cut off
-          // by the timeout, and the log would show a TimeoutError in place of
-          // the status that explains it. One attempt, then the raw text.
-          maxRetries: 0,
-          abortSignal: controller.signal,
-        });
-        break;
-      } catch (error) {
-        // The one exception: the backend refused the reasoning effort we
-        // asked for. That answer is quick and says nothing about the
-        // dictation, so ask again with the next value (or none) at once.
-        if (!effort || controller.signal.aborted || !refusesReasoningEffort(error)) throw error;
-        log.info("voice-typing: polish backend refused reasoning_effort; asking without it", {
-          effort,
-          ms: Math.round(performance.now() - startedAt),
-        });
-        hostedEffortRefused(effort);
-        effort = hostedReasoningEffort(settings);
-      }
-    }
-    const polished = result.text.trim();
-    const ms = Math.round(performance.now() - startedAt);
-    const answer = { ...answerMeta(result), effort: effort ?? null };
-    const verdict = polishVerdict(raw, polished, style);
-    if (verdict !== "polished") {
-      // Not an error — the guard doing its job. Logged at info because a run of
-      // these means the prompt or the lane's model is wrong, and that is only
-      // ever visible here.
-      log.info("voice-typing: polish rejected, keeping raw", {
-        ms,
-        rawChars,
-        polishedChars: polished.length,
-        outcome: verdict,
-        style,
-        ...answer,
-      });
-      return { text: null, outcome: verdict };
-    }
-    log.info("voice-typing: polished", {
-      ms,
-      rawChars,
-      chars: polished.length,
+    const { result, effort } = await requestPolish({
+      settings,
       style,
-      ...answer,
+      task,
+      system: polishSystemPrompt(protectedTerms, style, speakerTerms, customInstructions),
+      raw,
+      abortSignal: controller.signal,
+      startedAt,
     });
-    return { text: polished, outcome: "polished" };
+    return judgePolish({ raw, result, style, effort, ms: Math.round(performance.now() - startedAt) });
   } catch (error) {
     const ms = Math.round(performance.now() - startedAt);
     // The user walked away from this dictation; nothing failed.
@@ -553,22 +502,120 @@ export async function polishTranscriptOutcome(opts: {
       log.info("voice-typing: polish cancelled", { ms });
       return { text: null, outcome: "cancelled" };
     }
-    // Includes the timeout. Everything here means the same thing to the caller,
-    // so it is logged for us and swallowed for them. `ms` is what tells an
-    // instant transport refusal from the budget running out; the provider and
-    // model name the lane it ran on (neither is personal data).
-    const outcome: PolishOutcome = timedOut ? "timedOut" : "failed";
-    const provider = settings.llmProviders.realtime;
-    logAiError(
-      "voice-typing.polish",
-      { rawChars, ms, provider, model: settings.models[provider]?.realtime, outcome },
-      error,
-    );
-    return { text: null, outcome };
+    return failedPolish(settings, error, { rawChars, ms, timedOut });
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onCancel);
   }
+}
+
+type PolishAnswer = Awaited<ReturnType<typeof generateText>>;
+
+/**
+ * The polish request itself, once — or again at once, with the next value or
+ * none, when the backend refused the reasoning effort we asked for. That
+ * answer is quick and says nothing about the dictation. Any other failure is
+ * thrown to the caller.
+ */
+async function requestPolish(req: {
+  settings: Settings;
+  style: VoiceTypingPolishStyle;
+  task: ReturnType<typeof aiTask>;
+  system: string;
+  raw: string;
+  abortSignal: AbortSignal;
+  startedAt: number;
+}): Promise<{ result: PolishAnswer; effort: string | undefined }> {
+  const { settings, style, task, system, raw, abortSignal, startedAt } = req;
+  let effort = hostedReasoningEffort(settings);
+  for (;;) {
+    try {
+      const result = await generateText({
+        model: getModel(settings, "realtime", {
+          modelId: polishModelOverride(settings, style),
+          task,
+        }),
+        providerOptions: withReasoningEffort(getProviderOptions(settings, "realtime"), effort),
+        system,
+        prompt: raw,
+        temperature: 0.2,
+        maxOutputTokens: 2048,
+        // No retries. The SDK's first backoff is two seconds — half the
+        // budget — so a single 429/5xx would sleep, retry, and be cut off
+        // by the timeout, and the log would show a TimeoutError in place of
+        // the status that explains it. One attempt, then the raw text.
+        maxRetries: 0,
+        abortSignal,
+      });
+      return { result, effort };
+    } catch (error) {
+      if (!effort || abortSignal.aborted || !refusesReasoningEffort(error)) throw error;
+      log.info("voice-typing: polish backend refused reasoning_effort; asking without it", {
+        effort,
+        ms: Math.round(performance.now() - startedAt),
+      });
+      hostedEffortRefused(effort);
+      effort = hostedReasoningEffort(settings);
+    }
+  }
+}
+
+/** Whether the model's answer is used, logged either way. */
+function judgePolish(a: {
+  raw: string;
+  result: PolishAnswer;
+  style: VoiceTypingPolishStyle;
+  effort: string | undefined;
+  ms: number;
+}): { text: string | null; outcome: PolishOutcome } {
+  const { raw, result, style, effort, ms } = a;
+  const rawChars = raw.trim().length;
+  const polished = result.text.trim();
+  const answer = { ...answerMeta(result), effort: effort ?? null };
+  const verdict = polishVerdict(raw, polished, style);
+  if (verdict !== "polished") {
+    // Not an error — the guard doing its job. Logged at info because a run of
+    // these means the prompt or the lane's model is wrong, and that is only
+    // ever visible here.
+    log.info("voice-typing: polish rejected, keeping raw", {
+      ms,
+      rawChars,
+      polishedChars: polished.length,
+      outcome: verdict,
+      style,
+      ...answer,
+    });
+    return { text: null, outcome: verdict };
+  }
+  log.info("voice-typing: polished", {
+    ms,
+    rawChars,
+    chars: polished.length,
+    style,
+    ...answer,
+  });
+  return { text: polished, outcome: "polished" };
+}
+
+/**
+ * A polish that failed, timeout included. Everything here means the same
+ * thing to the caller, so it is logged for us and swallowed for them. `ms` is
+ * what tells an instant transport refusal from the budget running out; the
+ * provider and model name the lane it ran on (neither is personal data).
+ */
+function failedPolish(
+  settings: Settings,
+  error: unknown,
+  at: { rawChars: number; ms: number; timedOut: boolean },
+): { text: null; outcome: PolishOutcome } {
+  const outcome: PolishOutcome = at.timedOut ? "timedOut" : "failed";
+  const provider = settings.llmProviders.realtime;
+  logAiError(
+    "voice-typing.polish",
+    { rawChars: at.rawChars, ms: at.ms, provider, model: settings.models[provider]?.realtime, outcome },
+    error,
+  );
+  return { text: null, outcome };
 }
 
 /**

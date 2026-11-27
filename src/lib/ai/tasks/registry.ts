@@ -231,7 +231,7 @@ export async function buildTaskRegistry(previous?: TaskRegistry | null): Promise
   const current: TaskDef[] = [];
   for (const id of AI_TASK_IDS) current.push(await buildTask(id));
   const kept = (previous?.tasks ?? []).filter((t) => {
-    const now = AI_TASK_META[t.id as AiTaskId];
+    const now = AI_TASK_META[t.id];
     return now !== undefined && t.version < now.version;
   });
   return {
