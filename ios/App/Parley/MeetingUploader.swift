@@ -143,6 +143,12 @@ final class MeetingUploader {
         /// import and on every manifest written before they existed.
         var namedByUser = false
         var filedByUser = false
+        /// The context the meeting was prepared with — a meeting draft's, when
+        /// it was started from one (`MeetingRecorder.meetingContext`). Lands
+        /// in the recording's `meetingContext`. Nil on an import, on a meeting
+        /// started from the record button, and on every manifest written
+        /// before it existed; all of those save "".
+        var meetingContext: String?
 
         /// Both new fields decode with a default, because this manifest is
         /// written to disk and read back by a *later build of the app*. Someone
@@ -153,7 +159,7 @@ final class MeetingUploader {
         enum CodingKeys: String, CodingKey {
             case id, startedAt, durationMs, segments, defaultSave, source, title
             case queuedAt, failureCount, lastError, parking, audioUploadedAt
-            case namedByUser, filedByUser
+            case namedByUser, filedByUser, meetingContext
         }
 
         init(
@@ -192,6 +198,7 @@ final class MeetingUploader {
             audioUploadedAt = try container.decodeIfPresent(Date.self, forKey: .audioUploadedAt)
             namedByUser = try container.decodeIfPresent(Bool.self, forKey: .namedByUser) ?? false
             filedByUser = try container.decodeIfPresent(Bool.self, forKey: .filedByUser) ?? false
+            meetingContext = try container.decodeIfPresent(String.self, forKey: .meetingContext)
         }
 
         /// The name this recording lands under.
@@ -216,11 +223,14 @@ final class MeetingUploader {
     /// `title`: the name typed on the live screen, if any — nil or blank lands
     /// the recording under its clock name. `filedByUser`: `defaultSave` is the
     /// folder the user picked there rather than the app's default.
+    /// `meetingContext`: what the meeting was prepared with (a draft's
+    /// context), saved into the recording's meta; blank saves "".
     func finishAndQueue(
         segments: [TranscriptSegment],
         defaultSave: SaveDestination,
         title: String? = nil,
-        filedByUser: Bool = false
+        filedByUser: Bool = false,
+        meetingContext: String = ""
     ) async throws -> Queued? {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             queue.async { [self] in
@@ -246,6 +256,9 @@ final class MeetingUploader {
             title: named.isEmpty ? nil : named)
         pending.namedByUser = !named.isEmpty
         pending.filedByUser = filedByUser
+        if !meetingContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            pending.meetingContext = meetingContext
+        }
         try Self.persist(pending, audioAt: fileURL)
         // Saved on the phone is saved: whatever the upload does next, the
         // meeting is safe and the queue will deliver it.
@@ -798,7 +811,7 @@ final class MeetingUploader {
             "speakerNames": [String: String](),
             "findings": [Any](),
             "actionItems": [Any](),
-            "meetingContext": "",
+            "meetingContext": pending.meetingContext ?? "",
             "meetingBatna": "",
             "meetingTarget": "",
             "meetingFloor": "",

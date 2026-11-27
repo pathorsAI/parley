@@ -5,8 +5,10 @@ import SwiftUI
 // 即將開始的會議 and 會議草稿 (`src/components/home/UpcomingMeetings.tsx`,
 // `DraftRow.tsx`), and a page that shows one draft. Drafts are made and
 // edited on the desktop (or by an AI over the cloud MCP); the phone shows
-// them and nothing more — no create, edit, delete, or start. `LibraryView`
-// loads them and places the sections; everything here only draws.
+// them, and starts a meeting from one (開始, as the desktop's row) — never
+// create, edit or delete. Starting hides the draft on this phone rather than
+// deleting it (`TabRouter.startedDraftIDs`). `LibraryView` loads them, places
+// the sections and routes 開始; everything here only draws.
 
 // MARK: - Sections
 
@@ -109,8 +111,8 @@ struct DraftTitle: View {
 
 /// The desktop's `DraftRow`, phone-sized: the lead column (16:00 today, 10/31
 /// another day, 未定 without a time), the title, and under it how soon and
-/// which folder. No 開始 button: starting a recording from a draft waits for
-/// the record flow's redesign (#759).
+/// which folder. The row's 開始 is `DraftStartButton`, set beside it by
+/// whoever places the row, so the button is not inside the row's link.
 struct DraftRow: View {
     let draft: CloudMeetingDraft
     let now: Double
@@ -163,6 +165,34 @@ struct DraftRow: View {
     }
 
     private var soon: DraftSoon? { DraftSoon(draft, now: now) }
+}
+
+/// The desktop's 開始 (`DraftRow.tsx`): a small outline button at the row's
+/// trailing edge — page-coloured fill, hairline border, label-coloured
+/// medium text, 28 pt tall — under a 44 pt tap target.
+struct DraftStartButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text("Start")
+                .font(.parley.caption.weight(.medium))
+                .foregroundStyle(Color(.label))
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Theme.background))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(Color(.separator), lineWidth: 1))
+                .frame(minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 }
 
 /// What a draft's row says about its time, as the desktop's row does. A draft
@@ -254,12 +284,15 @@ enum DraftTime {
 // MARK: - Detail
 
 /// One draft, read-only: its title, when, which folder the recording will be
-/// filed into, the context the desktop prepared, and the agenda. Editing is
-/// the desktop's; the page says so at the bottom rather than offering a
-/// button that cannot work.
+/// filed into, the context the desktop prepared, and the agenda, with 開始錄音
+/// under the heading — the row's 開始 at the page's size. Editing is the
+/// desktop's; the page says so at the bottom rather than offering a button
+/// that cannot work.
 struct MeetingDraftDetailView: View {
     let draft: CloudMeetingDraft
     let folder: String?
+    /// Start a meeting from this draft (`TabRouter.startDraft`).
+    let onStart: () -> Void
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { timeline in
@@ -267,6 +300,7 @@ struct MeetingDraftDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     header(now: now)
+                    startButton
                     if !preparedContext.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             OverviewHeading(title: "Draft context")
@@ -312,6 +346,29 @@ struct MeetingDraftDetailView: View {
         .background(Theme.background)
         .navigationTitle("Meeting draft")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// The record screen's light-primary start control: blue ink and the
+    /// record dot on a faint blue wash, full width.
+    private var startButton: some View {
+        Button(action: onStart) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Theme.primary)
+                    .frame(width: 10, height: 10)
+                    .accessibilityHidden(true)
+                Text("Start recording")
+                    .font(.parley.subheadlineEmphasized)
+            }
+            .foregroundStyle(Theme.primary)
+            .frame(maxWidth: .infinity, minHeight: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Theme.primary.opacity(0.12)))
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// The context the desktop prepared (its 補充背景), as written.
@@ -377,7 +434,7 @@ struct MeetingDraftDetailView: View {
 
     #Preview("Draft detail") {
         NavigationStack {
-            MeetingDraftDetailView(draft: ScreenshotDemo.drafts[0], folder: "Renewals")
+            MeetingDraftDetailView(draft: ScreenshotDemo.drafts[0], folder: "Renewals", onStart: {})
         }
     }
 #endif

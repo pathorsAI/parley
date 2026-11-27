@@ -66,6 +66,11 @@ struct LiveView: View {
     /// written on iOS 18, which can report scroll geometry; on 17 it stays
     /// false and the way back is the "Latest" control alone.
     @State private var transcriptAtBottom = false
+    /// The last `TabRouter.draftStartRequest` acted on.
+    @State private var handledDraftStart = 0
+    /// The draft the meeting now starting was started from, until the
+    /// microphone is open (then the draft is hidden) or the start fails.
+    @State private var startingDraftId: String?
 
     var body: some View {
         NavigationStack {
@@ -99,6 +104,18 @@ struct LiveView: View {
             // `.onReceive` covers a warm one, where it already does.
             .onAppear { takeQuickRecord() }
             .onReceive(QuickRecordInbox.shared.$requestedAt) { if $0 != nil { takeQuickRecord() } }
+            // A meeting draft's 開始, from the Library (`TabRouter.startDraft`).
+            .task(id: router.draftStartRequest) { takeDraftStart() }
+            .onChange(of: recorder.phase) {
+                guard let id = startingDraftId else { return }
+                switch recorder.phase {
+                case .recording:
+                    router.markDraftStarted(id)
+                    startingDraftId = nil
+                case .starting: break
+                default: startingDraftId = nil
+                }
+            }
             // Coming back from Settings is the moment a refused microphone may
             // have been turned on; checking here is what takes the "Open
             // Settings" button down without asking for another tap on record.
@@ -1180,6 +1197,44 @@ struct LiveView: View {
     private func takeQuickRecord() {
         guard QuickRecordInbox.shared.take() else { return }
         guard !recorder.isBusy, !recorder.isInMeeting, app.hasAccount else { return }
+        Task { await recorder.start(token: KeychainStore.get(AppState.tokenKey)) }
+    }
+
+    /// Start the meeting a draft's 開始 asked for, as the desktop's
+    /// `startDraft` does: the draft's name, folder and context become this
+    /// meeting's, then the meeting starts the way the record button starts
+    /// one. With a meeting already going (or wrapping up) nothing starts —
+    /// the tab switch has already brought that meeting up, which is all the
+    /// desktop does either — and the draft stays on the Library.
+    ///
+    /// The draft is hidden on this phone once the meeting is underway, never
+    /// deleted: the phone only reads drafts. A start that did not get going
+    /// (the microphone refused) leaves it listed, to be tried again.
+    private func takeDraftStart() {
+        guard router.draftStartRequest != handledDraftStart else { return }
+        handledDraftStart = router.draftStartRequest
+        guard let start = router.draftStart,
+            !recorder.isBusy, !recorder.isInMeeting, app.hasAccount
+        else { return }
+        #if DEBUG
+            // The demo has no microphone and no network: stand the meeting up
+            // as the record routes do, under the draft's name and folder.
+            if ScreenshotDemo.servesFixtures {
+                recorder.seedDemo(
+                    segments: [], status: String(localized: "Transcribing live"),
+                    title: start.title, folder: start.folder)
+                recorder.meetingContext = start.context
+                router.markDraftStarted(start.draftId)
+                return
+            }
+        #endif
+        recorder.meetingTitle = start.title
+        recorder.meetingFolder = start.folder
+        recorder.meetingContext = start.context
+        startingDraftId = start.draftId
+        // Unstructured, as the record button's: `start` runs on through the
+        // transcription handshake, which must not be cancelled by the next
+        // request re-keying the task above.
         Task { await recorder.start(token: KeychainStore.get(AppState.tokenKey)) }
     }
 

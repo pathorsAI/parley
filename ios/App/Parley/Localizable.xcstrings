@@ -7768,6 +7768,24 @@
         }
       }
     },
+    "Start" : {
+      "comment" : "A meeting draft's button on the Library: start recording this meeting",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "開始"
+          }
+        }
+      }
+    },
     "Start Parley voice typing right where you are, without switching apps." : {
       "extractionState" : "manual",
       "localizations" : {

@@ -145,6 +145,12 @@ final class MeetingRecorder: ObservableObject {
     /// straight into, like the title: a choice that waited for the filing
     /// card after stop would be lost to a locked phone or a failed pass.
     @Published var meetingFolder: ChosenFolder?
+    /// The context the meeting was prepared with: a draft's 補充背景, when
+    /// the meeting was started from one (`TabRouter.startDraft`). Not shown
+    /// on the live screen; saved into the recording's `meetingContext`, as
+    /// the desktop's meeting carries its prep's. Blank for a meeting started
+    /// from the record button. Cleared with the title.
+    var meetingContext = ""
     /// When this meeting started, for the date on the live screen's heading.
     @Published private(set) var startedAt: Date?
 
@@ -535,6 +541,7 @@ final class MeetingRecorder: ObservableObject {
         startedAt = nil
         meetingTitle = ""
         meetingFolder = nil
+        meetingContext = ""
         status = nil
         phase = .idle
     }
@@ -906,6 +913,7 @@ final class MeetingRecorder: ObservableObject {
             status = nil
             meetingTitle = ""
             meetingFolder = nil
+            meetingContext = ""
             return
         }
         self.uploader = nil
@@ -916,6 +924,7 @@ final class MeetingRecorder: ObservableObject {
             // meeting starts unnamed and unfiled.
             meetingTitle = ""
             meetingFolder = nil
+            meetingContext = ""
         }
 
         let queued: MeetingUploader.Queued
@@ -924,7 +933,8 @@ final class MeetingRecorder: ObservableObject {
                 let filed = try await uploader.finishAndQueue(
                     segments: segments,
                     defaultSave: meetingFolder?.destination ?? app.defaultSave,
-                    title: meetingTitle, filedByUser: meetingFolder != nil)
+                    title: meetingTitle, filedByUser: meetingFolder != nil,
+                    meetingContext: meetingContext)
             else {
                 status = String(localized: "That recording was too short to keep")
                 return

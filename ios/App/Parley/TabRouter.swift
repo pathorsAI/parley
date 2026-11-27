@@ -51,6 +51,86 @@ final class TabRouter: ObservableObject {
         endedMeetingRequest += 1
         tab = .library
     }
+
+    /// Bumped each time a meeting draft's 開始 is pressed: the phone's version
+    /// of the desktop's `startDraft` (`src/components/home/DraftRow.tsx`). The
+    /// Record screen watches it and starts the meeting with the draft's name,
+    /// folder and context — or, with a meeting already going, only comes up,
+    /// as the desktop refuses a second meeting and brings the first one's
+    /// window forward. A counter for the same reasons as `checklistRequest`.
+    @Published private(set) var draftStartRequest = 0
+    /// What the latest `draftStartRequest` is about. Written just before the
+    /// counter, which is what the Record screen watches.
+    private(set) var draftStart: DraftStart?
+
+    /// Switch to Record and start a meeting from a draft.
+    func startDraft(_ start: DraftStart) {
+        draftStart = start
+        draftStartRequest += 1
+        tab = .record
+    }
+
+    /// Drafts a meeting has been started from on this phone. The desktop
+    /// deletes a draft it records ("taking a draft is recording it"), but
+    /// the phone only reads drafts and never writes them, so it hides the
+    /// one it took instead; the cloud copy stays for the desktop to settle.
+    /// Kept across launches, and pruned to the drafts the cloud still lists
+    /// (`pruneStartedDrafts`), so the set never outgrows the draft list.
+    @Published private(set) var startedDraftIDs: Set<String>
+
+    private static let startedDraftsKey = "ParleyStartedMeetingDraftIDs"
+
+    init() {
+        #if DEBUG
+            // The demo's fixtures are the same every launch; a draft hidden in
+            // one screenshot run must not be missing from the next.
+            if ScreenshotDemo.isActive {
+                startedDraftIDs = []
+                return
+            }
+        #endif
+        startedDraftIDs = Set(
+            UserDefaults.standard.stringArray(forKey: Self.startedDraftsKey) ?? [])
+    }
+
+    /// A meeting was started from this draft: hide it on this phone.
+    func markDraftStarted(_ id: String) {
+        guard !startedDraftIDs.contains(id) else { return }
+        startedDraftIDs.insert(id)
+        saveStartedDrafts()
+    }
+
+    /// Forget hidden drafts the cloud no longer lists. Only with a list that
+    /// actually loaded: an empty answer from a failed request would unhide
+    /// nothing worth unhiding, but would lose every id.
+    func pruneStartedDrafts(keeping listed: Set<String>) {
+        let kept = startedDraftIDs.intersection(listed)
+        guard kept != startedDraftIDs else { return }
+        startedDraftIDs = kept
+        saveStartedDrafts()
+    }
+
+    private func saveStartedDrafts() {
+        #if DEBUG
+            if ScreenshotDemo.isActive { return }
+        #endif
+        UserDefaults.standard.set(Array(startedDraftIDs).sorted(), forKey: Self.startedDraftsKey)
+    }
+}
+
+/// A meeting to start from a draft, as the Record screen needs it: what the
+/// desktop's `prepFromDraft` carries into its meeting. Resolved on the
+/// Library, which has the draft and the personal folders in hand.
+struct DraftStart {
+    let draftId: String
+    /// The draft's title, trimmed; empty leaves the meeting unnamed.
+    let title: String
+    /// The draft's folder, when it is one of the personal folders; nil
+    /// leaves the app's default destination.
+    let folder: MeetingRecorder.ChosenFolder?
+    /// The context the desktop prepared (its 補充背景), saved into the
+    /// recording's `meetingContext`.
+    let context: String
 }
 
 /// A meeting that ended and landed in the cloud, as its result page needs it:

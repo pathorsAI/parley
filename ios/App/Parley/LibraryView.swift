@@ -182,7 +182,8 @@ struct LibraryView: View {
                 case .draft(let id):
                     if let draft = drafts.first(where: { $0.id == id }) {
                         MeetingDraftDetailView(
-                            draft: draft, folder: personalFolderName(draft.meetingFolderId))
+                            draft: draft, folder: personalFolderName(draft.meetingFolderId),
+                            onStart: { startMeeting(from: draft) })
                     }
                 }
             }
@@ -439,11 +440,43 @@ struct LibraryView: View {
         seeAll: (() -> Void)? = nil, showsHeading: Bool = true
     ) -> some View {
         OverviewDraftSections(
-            drafts: drafts, part: part, limit: limit, seeAll: seeAll, showsHeading: showsHeading,
-            folderName: personalFolderName
+            drafts: shownDrafts, part: part, limit: limit, seeAll: seeAll,
+            showsHeading: showsHeading, folderName: personalFolderName
         ) { draft, row in
-            NavigationLinkRow(id: draft.id, row: row)
+            NavigationLinkRow(id: draft.id, row: row) { startMeeting(from: draft) }
         }
+    }
+
+    /// The drafts the overview lists: all of them but those a meeting was
+    /// started from on this phone, which the phone hides because it cannot
+    /// delete them (`TabRouter.startedDraftIDs`).
+    private var shownDrafts: [CloudMeetingDraft] {
+        drafts.filter { !router.startedDraftIDs.contains($0.id) }
+    }
+
+    /// A draft's 開始: the desktop's `startDraft`. The draft's title, folder
+    /// and context go to the Record tab, which starts the meeting — or, with
+    /// one already going, only comes up (`LiveView.takeDraftStart`). The
+    /// folder carries over only when it is one of the personal folders, as
+    /// the record screen's picker would have offered it.
+    private func startMeeting(from draft: CloudMeetingDraft) {
+        let folder = draft.meetingFolderId.flatMap { id in
+            folders.first { $0.id == id && $0.orgId == nil }
+        }
+        let chosen = folder.flatMap { f in
+            SaveDestination(.folder(id: f.id, orgId: nil)).map {
+                MeetingRecorder.ChosenFolder(destination: $0, label: f.name)
+            }
+        }
+        // Off the draft's page, so coming back to the Library does not land
+        // on the page of a draft that is now hidden.
+        path.removeAll { $0 == .draft(draft.id) }
+        router.startDraft(
+            DraftStart(
+                draftId: draft.id,
+                title: draft.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                folder: scope == nil ? chosen : nil,
+                context: draft.meetingContext))
     }
 
     /// 會議草稿's 查看全部: every draft that is not starting soon, soonest first.
@@ -462,7 +495,7 @@ struct LibraryView: View {
     /// Read when the overview renders; the section itself re-splits every
     /// 30 s, so a draft crossing into the hour moves at the next render.
     private func hasDrafts(_ part: OverviewDraftSections<NavigationLinkRow>.Part) -> Bool {
-        let split = MeetingDraftSchedule.split(drafts, now: Date().timeIntervalSince1970 * 1000)
+        let split = MeetingDraftSchedule.split(shownDrafts, now: Date().timeIntervalSince1970 * 1000)
         return part == .startingSoon ? !split.startingSoon.isEmpty : !split.later.isEmpty
     }
 
@@ -1533,7 +1566,13 @@ struct LibraryView: View {
                 async let d = loadDrafts()
                 recordings = try await r
                 folders = try await f.filter { $0.orgId == nil }
-                drafts = await d
+                if let loaded = await d {
+                    drafts = loaded
+                    // Hidden drafts the cloud no longer lists are forgotten.
+                    router.pruneStartedDrafts(keeping: Set(loaded.map(\.id)))
+                } else {
+                    drafts = []
+                }
                 // Before `personalLoaded` flips, so an existing user's library
                 // has dismissed the checklist before it could be drawn.
                 gettingStarted.noteLibraryLoaded(recordingCount: recordings.count)
@@ -1552,9 +1591,10 @@ struct LibraryView: View {
 
     private static let draftLog = Logger(subsystem: ParleyLog.subsystem, category: "drafts")
 
-    /// The account's drafts, or none: a failure is logged (its status, never
-    /// a draft's content) and the overview goes on without the two sections.
-    private func loadDrafts() async -> [CloudMeetingDraft] {
+    /// The account's drafts, or nil when they could not be loaded: a failure
+    /// is logged (its status, never a draft's content) and the overview goes
+    /// on without the two sections.
+    private func loadDrafts() async -> [CloudMeetingDraft]? {
         do {
             return try await app.cloud.listDrafts()
         } catch let e as CloudError {
@@ -1563,7 +1603,7 @@ struct LibraryView: View {
             Self.draftLog.error(
                 "drafts: load failed, \(String(describing: type(of: error)), privacy: .public)")
         }
-        return []
+        return nil
     }
 
     /// The picker's confirm. Throws back to the sheet, which keeps itself up
@@ -2214,13 +2254,19 @@ private struct RecordingCard: View {
     }
 #endif
 
-/// A draft row that opens the draft's read-only page.
+/// A draft row that opens the draft's read-only page, with the desktop's 開始
+/// at its trailing edge — beside the link, not inside it, so a tap on 開始
+/// never also opens the page.
 private struct NavigationLinkRow: View {
     let id: String
     let row: DraftRow
+    let onStart: () -> Void
 
     var body: some View {
-        NavigationLink(value: LibraryRoute.draft(id)) { row }
-            .buttonStyle(.plain)
+        HStack(spacing: 8) {
+            NavigationLink(value: LibraryRoute.draft(id)) { row }
+                .buttonStyle(.plain)
+            DraftStartButton(action: onStart)
+        }
     }
 }
