@@ -29,6 +29,8 @@ struct OverviewDraftSections<Row: View>: View {
     var limit: Int? = nil
     /// Opens every draft of this part (the overview's 查看全部).
     var seeAll: (() -> Void)? = nil
+    /// The section's own heading; off on the 查看全部 page, whose title says it.
+    var showsHeading = true
     let folderName: (String?) -> String?
     /// Wraps a row in whatever opens it (a navigation link on the overview).
     @ViewBuilder var link: (CloudMeetingDraft, DraftRow) -> Row
@@ -54,29 +56,31 @@ struct OverviewDraftSections<Row: View>: View {
         -> some View
     {
         VStack(alignment: .leading, spacing: 6) {
-            // `OverviewHeading`'s look, with the desktop's count right beside
-            // the title rather than across the row.
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.parley.caption.weight(.semibold))
-                    .accessibilityAddTraits(.isHeader)
-                Text(verbatim: "\(rows.count)")
-                    .font(.parley.caption.monospacedDigit())
-                    .accessibilityHidden(true)
-            }
-            .foregroundStyle(Color(.secondaryLabel))
-            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
-            .overlay(alignment: .trailing) {
-                // 最近錄音's 查看全部, only when there are more than are shown.
-                if let limit, rows.count > limit, let seeAll {
-                    Button(action: seeAll) {
-                        HStack(spacing: 3) {
-                            Text("See all")
-                            Image(systemName: "arrow.right").imageScale(.small)
+            if showsHeading {
+                // `OverviewHeading`'s look, with the desktop's count right beside
+                // the title rather than across the row.
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.parley.caption.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    Text(verbatim: "\(rows.count)")
+                        .font(.parley.caption.monospacedDigit())
+                        .accessibilityHidden(true)
+                }
+                .foregroundStyle(Color(.secondaryLabel))
+                .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                .overlay(alignment: .trailing) {
+                    // 最近錄音's 查看全部, only when there are more than are shown.
+                    if let limit, rows.count > limit, let seeAll {
+                        Button(action: seeAll) {
+                            HStack(spacing: 3) {
+                                Text("See all")
+                                Image(systemName: "arrow.right").imageScale(.small)
+                            }
+                            .font(.parley.caption)
                         }
-                        .font(.parley.caption)
+                        .buttonStyle(.borderless)
                     }
-                    .buttonStyle(.borderless)
                 }
             }
             HairlineList(items: limit.map { Array(rows.prefix($0)) } ?? rows) { draft in

@@ -426,10 +426,11 @@ struct LibraryView: View {
     /// 查看全部 away.
     private func draftSection(
         _ part: OverviewDraftSections<NavigationLinkRow>.Part, limit: Int? = nil,
-        seeAll: (() -> Void)? = nil
+        seeAll: (() -> Void)? = nil, showsHeading: Bool = true
     ) -> some View {
         OverviewDraftSections(
-            drafts: drafts, part: part, limit: limit, seeAll: seeAll, folderName: personalFolderName
+            drafts: drafts, part: part, limit: limit, seeAll: seeAll, showsHeading: showsHeading,
+            folderName: personalFolderName
         ) { draft, row in
             NavigationLinkRow(id: draft.id, row: row)
         }
@@ -438,7 +439,7 @@ struct LibraryView: View {
     /// 會議草稿's 查看全部: every draft that is not starting soon, soonest first.
     private var allDrafts: some View {
         ScrollView {
-            draftSection(.later)
+            draftSection(.later, showsHeading: false)
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
                 .padding(.bottom, 32)
