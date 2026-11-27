@@ -3,6 +3,7 @@ package com.pathors.parley.screenshot
 import android.net.Uri
 import com.pathors.parley.BuildConfig
 import com.pathors.parley.cloud.CloudFolder
+import com.pathors.parley.cloud.CloudInvitation
 import com.pathors.parley.cloud.CloudOrg
 import com.pathors.parley.cloud.CloudUser
 import com.pathors.parley.cloud.HostedQuota
@@ -10,6 +11,8 @@ import com.pathors.parley.cloud.OrgRole
 import com.pathors.parley.cloud.RecordingMeta
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.RecordingSummary
+import com.pathors.parley.kit.CloudDraftTodo
+import com.pathors.parley.kit.CloudMeetingDraft
 import com.pathors.parley.kit.FilingFolderSuggestion
 import com.pathors.parley.kit.FilingSuggestion
 import com.pathors.parley.kit.GettingStartedState
@@ -19,10 +22,17 @@ import com.pathors.parley.kit.StudyArtifact
 import com.pathors.parley.study.RecordingStudy
 import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.SaveDestination
+import com.pathors.parley.meeting.ChosenFolder
+import com.pathors.parley.meeting.DraftSnapshot
+import com.pathors.parley.meeting.EndedMeeting
 import com.pathors.parley.meeting.ImportFailure
 import com.pathors.parley.meeting.ImportState
 import com.pathors.parley.meeting.ImportTranscript
+import com.pathors.parley.meeting.MeetingAgenda
+import com.pathors.parley.meeting.MeetingChoices
+import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.onboarding.SampleRecordingStore
+import java.util.Calendar
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,13 +70,27 @@ import kotlinx.serialization.json.putJsonObject
  * adb shell am start -a android.intent.action.VIEW -d "'parley://demo/library'"
  * ```
  *
- * Routes: `library`, `transcript`, `record` (alias `meeting`), `account`
+ * Routes: `library` (the overview it opens on), `library-all` (the full list,
+ * as See all opens it), `library-folder-empty` (an empty folder's page, for its
+ * empty state), `library-org` (the organization's library), the meeting
+ * drafts (`library-overview-drafts`, the overview scrolled to them;
+ * `library-drafts`, the full list; `library-draft` and `library-draft-short`,
+ * a draft's read-only page), `transcript`,
+ * `record` (alias `meeting`; a meeting in progress), `record-idle` (the record
+ * screen before a meeting), `record-paused`, `record-draft` (a meeting started
+ * from the 北風 draft, its draft open in the sheet), `settled` (the result page an
+ * ended meeting opens, filing card on top), `adjust` (the same, its folder
+ * picker open), `account`
  * (alias `settings`), `movetofolder` (the transcript with the folder picker
- * open over fifteen folders — a review frame, not a store frame, the same one
+ * open over sixteen folders — a review frame, not a store frame, the same one
  * iOS has), the import screen's endings (`import-partial`, `import-offline`,
  * `import-quota`, `import-signed-out`), the getting-started frames
  * (`checklist`, `checklist-partial`, `sample`, `share-menu` — see
- * [LAP_ROUTES]), and `off`.
+ * [LAP_ROUTES]), the onboarding wizard's steps (`welcome`,
+ * `onboarding-account`, `onboarding-signed-in`, `onboarding-org`,
+ * `onboarding-invited`, `onboarding-joined`, `onboarding-perms`,
+ * `onboarding-mic`, `onboarding-context`, `onboarding-done` — see
+ * [OnboardingScenario]), and `off`.
  *
  * The meeting route takes an optional `?scenario=` naming a [MeetingScenario] —
  * the states a real meeting only reaches when a microphone is taken away or the
@@ -162,6 +186,12 @@ object DemoMode {
      */
     enum class MeetingScenario(val route: String) {
         LIVE("live"),
+
+        /** The record screen before any meeting — iOS `parley://demo/record-idle`. Its own route, `record-idle`. */
+        IDLE("idle"),
+
+        /** [LIVE], paused — iOS `parley://demo/record-paused`. Its own route, `record-paused`. */
+        PAUSED("paused"),
         MIC_SILENCED("mic-silenced"),
         MIC_RECOVERING("mic-recovering"),
 
@@ -175,22 +205,94 @@ object DemoMode {
         INTERRUPTED("interrupted"),
 
         /**
-         * Stopped and uploaded, with the filing suggestion on offer — iOS
-         * `parley://demo/settled`. Also its own top-level route, `settled`.
+         * Ended and uploaded: the result page, with the filing suggestion on
+         * top — iOS `parley://demo/settled`. Also its own top-level route,
+         * `settled`.
          */
         SETTLED("settled"),
 
         /** [SETTLED] with the filing card's folder picker open — iOS `parley://demo/adjust`. */
         ADJUST("adjust"),
+
+        /**
+         * [LIVE], started from a meeting draft: named and filed after it, with
+         * the record screen's meeting-draft link. The draft is
+         * the one 開始 was pressed on ([Navigation.draftChoices]), or the 北風
+         * draft ([draftChoices]). `record-draft` also opens its sheet.
+         */
+        DRAFT("draft"),
         ;
 
-        /** The meeting is over and uploaded, and the filing offer is up. */
+        /** The meeting is over and uploaded: the result page, with the filing offer up. */
         val isSettled: Boolean get() = this == SETTLED || this == ADJUST
 
         companion object {
             fun fromRoute(route: String?): MeetingScenario =
                 entries.firstOrNull { it.route == route } ?: LIVE
         }
+    }
+
+    /**
+     * The onboarding wizard's frames — iOS `ScreenshotDemo.OnboardingScenario`,
+     * under the same route names. [signedOut] ones stand in front of the
+     * sign-in wall (the welcome and the account choice); the rest cover the
+     * signed-in library, as the wizard does after a sign-in. Each names its
+     * step explicitly, so the step saved on the device never overrides it.
+     */
+    enum class OnboardingScenario(val route: String, val signedOut: Boolean = false) {
+        WELCOME("welcome", signedOut = true),
+        ACCOUNT("onboarding-account", signedOut = true),
+        ACCOUNT_CONFIRMED("onboarding-signed-in"),
+        ORG("onboarding-org"),
+        ORG_INVITED("onboarding-invited"),
+        ORG_JOINED("onboarding-joined"),
+        PERMS("onboarding-perms"),
+        MIC("onboarding-mic"),
+        CONTEXT("onboarding-context"),
+        DONE("onboarding-done"),
+    }
+
+    private val _onboarding = MutableStateFlow<OnboardingScenario?>(null)
+
+    /** The onboarding frame the last `parley://demo/…` asked for, if it was one. */
+    val onboarding: StateFlow<OnboardingScenario?> = _onboarding.asStateFlow()
+
+    /** The wizard was left (Skip, or one of its last buttons): back to the library. */
+    fun clearOnboarding() {
+        _onboarding.value = null
+    }
+
+    /**
+     * Which page of the Library a request lands on — iOS's `library-…` routes.
+     * Every request lands on the library first; these say where on it.
+     */
+    enum class LibraryPage(val route: String?) {
+        /** The personal overview. */
+        OVERVIEW(null),
+
+        /** The full list, as See all opens it over the overview. */
+        ALL("library-all"),
+
+        /** [EMPTY_FOLDER_ID]'s page, as its card opens it: the empty folder state. */
+        FOLDER_EMPTY("library-folder-empty"),
+
+        /** The overview of the organization's library, as the scope switcher opens it. */
+        ORG("library-org"),
+
+        /**
+         * The personal overview scrolled down to its meeting drafts, so
+         * 即將開始的會議, the folders and 會議草稿 with its 查看全部 are in one frame.
+         */
+        OVERVIEW_DRAFTS("library-overview-drafts"),
+
+        /** Every 會議草稿, as 查看全部 opens it over the overview. */
+        DRAFTS("library-drafts"),
+
+        /** [DRAFT_FULL_ID]'s read-only page: a draft with context and an agenda. */
+        DRAFT("library-draft"),
+
+        /** [DRAFT_SHORT_ID]'s read-only page: a draft with only a time and a folder. */
+        DRAFT_SHORT("library-draft-short"),
     }
 
     /**
@@ -202,6 +304,11 @@ object DemoMode {
         val serial: Long,
         val scenario: MeetingScenario = MeetingScenario.LIVE,
         val report: ReportScenario? = null,
+        val library: LibraryPage = LibraryPage.OVERVIEW,
+        /** [MeetingScenario.DRAFT]: the draft's sheet opens on arrival (`record-draft`). */
+        val draftSheet: Boolean = false,
+        /** [MeetingScenario.DRAFT] started from a draft's 開始 ([startDraft]); null = the 北風 draft. */
+        val draftChoices: MeetingChoices? = null,
     )
 
     private val _enabled = MutableStateFlow(false)
@@ -239,10 +346,12 @@ object DemoMode {
         }
         // Every other frame is of the product, not of the lap: no checklist.
         if (route !in LAP_ROUTES) resetLap()
+        _onboarding.value = ONBOARDING_ROUTES[route]
         val screen = when (route) {
-            "library", "recordings" -> Screen.LIBRARY
+            in ONBOARDING_ROUTES -> Screen.LIBRARY
+            "library", "recordings", in LIBRARY_ROUTES -> Screen.LIBRARY
             "transcript", "recording" -> Screen.TRANSCRIPT
-            "record", "meeting", in FILING_ROUTES -> Screen.MEETING
+            "record", "meeting", in MEETING_ROUTES -> Screen.MEETING
             "account", "settings" -> Screen.ACCOUNT
             "movetofolder" -> Screen.MOVE_TO_FOLDER
             in REPORT_ROUTES -> Screen.REPORT
@@ -261,17 +370,38 @@ object DemoMode {
         _navigation.value = Navigation(
             screen = screen,
             serial = serial,
-            scenario = FILING_ROUTES[route]
+            scenario = MEETING_ROUTES[route]
                 ?: MeetingScenario.fromRoute(uri.getQueryParameter(QUERY_SCENARIO)),
             report = REPORT_ROUTES[route],
+            library = LIBRARY_ROUTES[route] ?: LibraryPage.OVERVIEW,
+            draftSheet = route == ROUTE_RECORD_DRAFT,
         )
         return true
+    }
+
+    /**
+     * A draft's 開始 in the demo: no microphone and no meeting service, so the
+     * demo record screen comes up as a meeting started from that draft
+     * ([MeetingScenario.DRAFT]) — named and filed after it, with its button.
+     * Nothing is taken into [com.pathors.parley.meeting.MeetingDraft] for a
+     * real meeting, and nothing is hidden.
+     */
+    fun startDraft(choices: MeetingChoices) {
+        if (!isActive) return
+        serial += 1
+        _navigation.value = Navigation(
+            screen = Screen.MEETING,
+            serial = serial,
+            scenario = MeetingScenario.DRAFT,
+            draftChoices = choices,
+        )
     }
 
     /** Leave demo mode. In-memory only, so this is the whole clean-up. */
     fun disable() {
         _enabled.value = false
         _navigation.value = null
+        _onboarding.value = null
         resetLap()
     }
 
@@ -363,6 +493,14 @@ object DemoMode {
     private const val RENEWALS_FOLDER_ID = "f-renewals"
     private const val NEW_BUSINESS_FOLDER_ID = "f-new"
     private const val PIPELINE_FOLDER_ID = "of-pipeline"
+    private const val ACCOUNTS_FOLDER_ID = "of-accounts"
+
+    /**
+     * The personal folder nothing is filed in, so the overview's folder row
+     * shows a card drawn without its papers, and `library-folder-empty` has an
+     * empty page to open.
+     */
+    const val EMPTY_FOLDER_ID = "f-team"
 
     fun orgs(locale: Locale = Locale.getDefault()): List<CloudOrg> = listOf(
         CloudOrg(
@@ -373,10 +511,38 @@ object DemoMode {
         ),
     )
 
-    /** The personal folders the library's chip row shows — iOS `ScreenshotDemo.folders`. */
+    /**
+     * The invitation the onboarding's organization step offers in its
+     * "invited" state — iOS `ScreenshotDemo.onboardingInvitation`. Pending with
+     * no expiry, so [CloudInvitation.isLive] keeps it whatever the clock says.
+     */
+    fun onboardingInvitation(locale: Locale = Locale.getDefault()): CloudInvitation = CloudInvitation(
+        id = "demo-invitation",
+        organizationId = "demo-org-invite",
+        organizationName = t(locale, "Northwind Sales", "北風業務部"),
+        role = OrgRole.MEMBER,
+        status = CloudInvitation.PENDING,
+        expiresAtMs = null,
+    )
+
+    /**
+     * What `CloudClient.myInvitations` would answer for the demo account: the
+     * one [onboardingInvitation]. The organization step's other states need no
+     * fixture of their own — "no invitations" is an empty list, and "joined"
+     * is the names of [orgs] (or, after a demo create, the name typed in).
+     */
+    fun invitations(locale: Locale = Locale.getDefault()): List<CloudInvitation> =
+        listOf(onboardingInvitation(locale))
+
+    /**
+     * The personal folders the overview's cards and the chip row show — iOS
+     * `ScreenshotDemo.folders`: two with recordings in them and [EMPTY_FOLDER_ID],
+     * which also makes the card row run past the screen's edge.
+     */
     fun folders(locale: Locale = Locale.getDefault()): List<CloudFolder> = listOf(
         CloudFolder(id = RENEWALS_FOLDER_ID, name = t(locale, "Renewals", "續約")),
         CloudFolder(id = NEW_BUSINESS_FOLDER_ID, name = t(locale, "New business", "新客戶")),
+        CloudFolder(id = EMPTY_FOLDER_ID, name = t(locale, "Team syncs", "團隊週會")),
     )
 
     /**
@@ -407,25 +573,73 @@ object DemoMode {
             listOf(
                 CloudFolder(
                     id = PIPELINE_FOLDER_ID,
-                    name = t(locale, "Pipeline", "商機追蹤"),
+                    name = t(locale, "Pipeline review", "業務檢討"),
                     orgId = ORG_ID,
                 ),
                 CloudFolder(
-                    id = "of-accounts",
+                    id = ACCOUNTS_FOLDER_ID,
                     name = t(locale, "Key accounts", "重點客戶"),
                     orgId = ORG_ID,
                 ),
             )
         }
 
-    /** What the team library holds: two of the recordings, shared in. */
+    /**
+     * The team library — iOS `ScreenshotDemo.orgRecordings`: a different set
+     * from the personal one, so switching the Library's scope to the
+     * organization visibly changes the page — filed in the org's own folders,
+     * one of them left outside a folder.
+     */
     fun orgRecordings(orgId: String, locale: Locale = Locale.getDefault()): List<RecordingSummary> =
         if (orgId != ORG_ID) {
             emptyList()
         } else {
-            recordings(locale)
-                .filter { it.id != FEATURED_ID }
-                .map { it.copy(folderId = if (it.id == DISCOVERY_ID) PIPELINE_FOLDER_ID else null) }
+            listOf(
+                RecordingSummary(
+                    id = "demo-org-pipeline",
+                    title = t(locale, "Weekly pipeline review", "每週業務檢討"),
+                    source = RecordingSource.LIVE,
+                    createdAt = EPOCH_MS - 2 * DAY_MS,
+                    durationMs = 2_410_000.0,
+                    speakerCount = 5,
+                    hasAudio = true,
+                    folderId = PIPELINE_FOLDER_ID,
+                    snippet = t(
+                        locale,
+                        "Three deals slip to next quarter; Northwind renewal is the priority.",
+                        "三個案子延到下一季；北風續約列為優先。",
+                    ),
+                ),
+                RecordingSummary(
+                    id = "demo-org-account",
+                    title = t(locale, "Account plan — Halcyon Labs", "客戶經營規劃 — 晴光實驗室"),
+                    source = RecordingSource.UPLOAD,
+                    createdAt = EPOCH_MS - 6 * DAY_MS,
+                    durationMs = 1_580_000.0,
+                    speakerCount = 3,
+                    hasAudio = true,
+                    folderId = ACCOUNTS_FOLDER_ID,
+                    snippet = t(
+                        locale,
+                        "Expand to the second business unit after the security review.",
+                        "資安審查通過後，擴展到第二個事業部。",
+                    ),
+                ),
+                RecordingSummary(
+                    id = "demo-org-kickoff",
+                    title = t(locale, "Quarter kickoff", "季度開工會議"),
+                    source = RecordingSource.LIVE,
+                    createdAt = EPOCH_MS - 15 * DAY_MS,
+                    durationMs = 3_120_000.0,
+                    speakerCount = 8,
+                    hasAudio = false,
+                    snippet = t(
+                        locale,
+                        "Targets set per region; weekly reviews move to Tuesdays.",
+                        "各區目標確定；每週檢討改到週二。",
+                    ),
+                ),
+            )
         }
 
     /**
@@ -435,6 +649,116 @@ object DemoMode {
      */
     fun saveDestination(): SaveDestination =
         SaveDestination(orgId = ORG_ID, folderId = PIPELINE_FOLDER_ID)
+
+    // ── meeting drafts ───────────────────────────────────────────────────────
+
+    /** The draft `library-draft` opens: the meeting starting soon, with context and an agenda. */
+    const val DRAFT_FULL_ID = "demo-draft-northwind"
+
+    /** The draft `library-draft-short` opens: the weekly sync, only a time and a folder. */
+    const val DRAFT_SHORT_ID = "demo-draft-weekly"
+
+    /**
+     * The overview's meeting drafts — iOS `ScreenshotDemo.drafts`, draft for
+     * draft: one starting within the hour, so 即將開始的會議 shows, and five
+     * for 會議草稿 — tomorrow, later in the week, and one with no time yet —
+     * one more than the section shows, so 查看全部 is there to open.
+     *
+     * Relative to [nowMs] rather than to the fixed epoch the recordings use,
+     * because which section a draft sits in depends on the clock. Read-only,
+     * as on a real phone.
+     */
+    fun drafts(
+        locale: Locale = Locale.getDefault(),
+        nowMs: Long = System.currentTimeMillis(),
+    ): List<CloudMeetingDraft> {
+        val minute = 60_000L
+        val day = 24 * 60 * minute
+        val now = nowMs / minute * minute
+        // Tomorrow and later on a round half hour, as the desktop's time
+        // picker offers them.
+        fun on(days: Int, hour: Int, minuteOfHour: Int): Long =
+            Calendar.getInstance().apply {
+                timeInMillis = now + days * day
+                set(Calendar.HOUR_OF_DAY, hour)
+                set(Calendar.MINUTE, minuteOfHour)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        fun todo(id: String, en: String, zh: String) = CloudDraftTodo(id = id, text = t(locale, en, zh))
+        return listOf(
+            CloudMeetingDraft(
+                id = DRAFT_FULL_ID,
+                title = t(locale, "Northwind renewal — pricing call", "北風工業續約 — 報價會議"),
+                meetingAt = now + 25 * minute,
+                meetingEndAt = now + 85 * minute,
+                meetingContext = t(
+                    locale,
+                    "Lin Mei-hua (procurement lead) and Chen Wei (plant manager) from Northwind. Last month " +
+                        "they asked for a two-year term at this year's price; finance can go to a 4% discount on " +
+                        "two years, not more. Their main worry is delivery lead times after the Q3 delays.",
+                    "北風工業採購主管林美華、廠長陳偉。上個月他們提出想簽兩年約、價格維持今年的水準；" +
+                        "財務那邊兩年約最多能給 4% 折扣，再多不行。他們最在意的是第三季延遲之後的交期。",
+                ),
+                todos = listOf(
+                    todo("t1", "Confirm the two-year term and start date", "確認兩年約與起約日"),
+                    todo("t2", "Walk through the new delivery schedule", "說明新的交期安排"),
+                    todo("t3", "Ask what volume they expect next year", "詢問明年預估用量"),
+                ),
+                meetingFolderId = RENEWALS_FOLDER_ID,
+                updatedAt = now - 2 * day,
+            ),
+            CloudMeetingDraft(
+                id = "demo-draft-harbor",
+                title = t(locale, "Blue Harbor Hotels — first meeting", "藍港酒店 — 初次拜訪"),
+                meetingAt = on(1, 10, 30),
+                meetingEndAt = on(1, 11, 30),
+                meetingContext = t(
+                    locale,
+                    "Referred by Northwind. Twelve properties, front desk calls handled in-house. " +
+                        "Find out who signs off on new tools.",
+                    "北風工業介紹。旗下十二間飯店，櫃台電話目前自己接。先弄清楚導入新工具由誰拍板。",
+                ),
+                todos = listOf(todo("t1", "Who decides, and by when", "誰決定、何時決定")),
+                meetingFolderId = NEW_BUSINESS_FOLDER_ID,
+                updatedAt = now - day,
+            ),
+            CloudMeetingDraft(
+                id = DRAFT_SHORT_ID,
+                title = t(locale, "Sales weekly sync", "業務週會"),
+                meetingAt = on(3, 9, 0),
+                meetingEndAt = on(3, 10, 0),
+                meetingFolderId = EMPTY_FOLDER_ID,
+                updatedAt = now - 3 * day,
+            ),
+            CloudMeetingDraft(
+                id = "demo-draft-halcyon",
+                title = t(locale, "Halcyon Labs — security review", "晴光實驗室 — 資安審查"),
+                meetingAt = on(4, 14, 0),
+                meetingEndAt = on(4, 15, 0),
+                meetingFolderId = NEW_BUSINESS_FOLDER_ID,
+                updatedAt = now - 2 * day,
+            ),
+            CloudMeetingDraft(
+                id = "demo-draft-quarterly",
+                title = t(locale, "Quarterly planning", "季度規劃"),
+                meetingAt = on(6, 13, 30),
+                meetingEndAt = on(6, 15, 0),
+                meetingFolderId = EMPTY_FOLDER_ID,
+                updatedAt = now - 5 * day,
+            ),
+            CloudMeetingDraft(
+                id = "demo-draft-meridian",
+                title = t(locale, "Meridian — contract questions", "子午線 — 合約問題"),
+                meetingContext = t(
+                    locale,
+                    "They have questions on the data-retention clause. No date yet.",
+                    "對方對資料保存條款有疑問，時間還沒約。",
+                ),
+                updatedAt = now - 4 * day,
+            ),
+        )
+    }
 
     // ── library fixtures ─────────────────────────────────────────────────────
 
@@ -495,11 +819,43 @@ object DemoMode {
                 "使用量季增 22%；兩項待辦順延到下一季。",
             ),
         ),
+        // Two more, as on iOS, so the overview's four recent rows are full and
+        // the full list behind See all has more than they show.
+        RecordingSummary(
+            id = "demo-pricing",
+            title = t(locale, "Pricing follow-up — Northwind", "報價追蹤 — 北風工業"),
+            source = RecordingSource.LIVE,
+            createdAt = EPOCH_MS - 8 * DAY_MS,
+            durationMs = 742_000.0,
+            speakerCount = 2,
+            findingsCount = 0,
+            actionItemsCount = 0,
+            hasAudio = true,
+            folderId = RENEWALS_FOLDER_ID,
+            snippet = t(locale, "Volume discount approved above sixty seats.", "六十席以上的量價折扣已核准。"),
+        ),
+        RecordingSummary(
+            id = "demo-intro",
+            title = t(locale, "Intro call — Blue Harbor Hotels", "初次接觸 — 藍港酒店"),
+            source = RecordingSource.UPLOAD,
+            createdAt = EPOCH_MS - 12 * DAY_MS,
+            durationMs = 1_310_000.0,
+            speakerCount = 2,
+            findingsCount = 0,
+            actionItemsCount = 0,
+            hasAudio = true,
+            folderId = NEW_BUSINESS_FOLDER_ID,
+            snippet = t(
+                locale,
+                "Twelve properties; front desk wants call summaries in the PMS.",
+                "旗下十二間飯店；櫃檯希望通話摘要能寫回 PMS。",
+            ),
+        ),
     )
 
     /** The meta the detail screen renders, or null for an id we don't have. */
     fun meta(id: String, locale: Locale = Locale.getDefault()): RecordingMeta? {
-        val summary = recordings(locale).firstOrNull { it.id == id } ?: return null
+        val summary = (recordings(locale) + orgRecordings(ORG_ID, locale)).firstOrNull { it.id == id } ?: return null
         return RecordingMeta(
             buildJsonObject {
                 put("id", summary.id)
@@ -895,9 +1251,6 @@ object DemoMode {
 
     // ── filing suggestion fixture ────────────────────────────────────────────
 
-    /** The recording the settled meeting screen has just uploaded. */
-    const val SETTLED_ID = "demo-settled"
-
     /**
      * What the live meeting is called when it lands: the clock name every
      * phone recording starts with, and the thing the suggestion replaces.
@@ -930,10 +1283,65 @@ object DemoMode {
         ),
     )
 
-    /** The top-level routes that land on the meeting screen in a filing scenario. */
-    private val FILING_ROUTES = mapOf(
+    /**
+     * The top-level routes that name a meeting scenario: the record screen
+     * before a meeting and paused, and the result page an ended meeting opens.
+     */
+    private val MEETING_ROUTES = mapOf(
+        "record-idle" to MeetingScenario.IDLE,
+        "record-paused" to MeetingScenario.PAUSED,
+        ROUTE_RECORD_DRAFT to MeetingScenario.DRAFT,
         MeetingScenario.SETTLED.route to MeetingScenario.SETTLED,
         MeetingScenario.ADJUST.route to MeetingScenario.ADJUST,
+    )
+
+    /**
+     * The demo meeting as the record screen names and files it while it
+     * records — iOS `ScreenshotDemo.seedLive`: the featured recording's name,
+     * and its Renewals folder.
+     */
+    fun liveChoices(locale: Locale = Locale.getDefault()): MeetingChoices = MeetingChoices(
+        title = recordings(locale).first { it.id == FEATURED_ID }.title,
+        folder = ChosenFolder(
+            destination = SaveDestination(folderId = RENEWALS_FOLDER_ID),
+            label = t(locale, "Renewals", "續約"),
+        ),
+    )
+
+    /**
+     * The demo meeting started from the 北風 draft ([DRAFT_FULL_ID]), as a
+     * draft's 開始 loads it: the draft's name, its Renewals folder, its context
+     * and the draft itself, for the record screen's sheet.
+     */
+    fun draftChoices(locale: Locale = Locale.getDefault()): MeetingChoices {
+        val draft = drafts(locale).first { it.id == DRAFT_FULL_ID }
+        val renewals = t(locale, "Renewals", "續約")
+        return MeetingChoices(
+            title = draft.title.trim(),
+            folder = ChosenFolder(destination = SaveDestination(folderId = RENEWALS_FOLDER_ID), label = renewals),
+            meetingContext = draft.meetingContext,
+            draftId = draft.id,
+            draft = DraftSnapshot(draft, renewals),
+            agenda = MeetingAgenda.fromDraft(draft.todos),
+        )
+    }
+
+    /**
+     * The meeting that has just landed, as the record screen hands it to its
+     * result page: the featured recording, named on the record screen while it
+     * recorded but left without a folder (so the card offers folders, and no
+     * rename), every turn final. iOS `ScreenshotDemo.endedMeetingFixture`.
+     */
+    fun endedMeeting(locale: Locale = Locale.getDefault()): EndedMeeting = EndedMeeting(
+        recordingId = FEATURED_ID,
+        finished = MeetingState.Finished(
+            recordingId = FEATURED_ID,
+            pendingUpload = false,
+            dropped = false,
+            namedByUser = true,
+        ),
+        segments = liveScript(locale),
+        elapsedMs = 1_122_000L,
     )
 
     // ── import fixture ───────────────────────────────────────────────────────
@@ -959,6 +1367,8 @@ object DemoMode {
     }
 
     private val REPORT_ROUTES = ReportScenario.entries.associateBy { it.route }
+
+    private val LIBRARY_ROUTES = LibraryPage.entries.filter { it.route != null }.associateBy { it.route!! }
 
     /**
      * The study as the report face of [id] shows it in a screenshot run: the
@@ -997,10 +1407,13 @@ object DemoMode {
         "share-menu" to (Screen.SHARE_MENU to Lap.SAMPLE),
     )
 
+    private val ONBOARDING_ROUTES = OnboardingScenario.entries.associateBy { it.route }
+
     private const val SCHEME = "parley"
     private const val HOST = "demo"
     private const val ROUTE_OFF = "off"
     private const val QUERY_SCENARIO = "scenario"
+    private const val ROUTE_RECORD_DRAFT = "record-draft"
 
     /** A fixed clock, so a re-capture months later produces identical frames. */
     private const val EPOCH_MS = 1_786_498_800_000.0

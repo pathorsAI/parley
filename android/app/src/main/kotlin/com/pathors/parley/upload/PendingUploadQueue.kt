@@ -4,6 +4,7 @@ import android.content.Context
 import com.pathors.parley.cloud.CloudJson
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.TranscriptSegmentDto
+import com.pathors.parley.meeting.AgendaItem
 import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import kotlinx.serialization.Serializable
@@ -66,6 +67,29 @@ data class PendingUpload(
      * Null = an ordinary pending upload.
      */
     val parked: ParkedUpload? = null,
+    /**
+     * The user named the meeting, or picked its folder, on the record screen
+     * while it was recording. The title is in [title] and the folder in
+     * [folderId] / [shareOrgId] either way; these only say the choice was
+     * theirs, so the filing pass does not propose over it. False on an import
+     * and on every manifest written before they existed (decoded by default).
+     */
+    val namedByUser: Boolean = false,
+    val filedByUser: Boolean = false,
+    /**
+     * The context the meeting was prepared with — a meeting draft's, when it
+     * was started from one — which the meta's `meetingContext` carries. In the
+     * manifest, so a retry hours later still has it. Empty on an import, a
+     * meeting started from the record button, and every manifest written
+     * before it existed (decoded by default).
+     */
+    val meetingContext: String = "",
+    /**
+     * The meeting's agenda as it was ticked — a meeting draft's, when it was
+     * started from one — which the meta's `agenda` carries. Empty otherwise,
+     * and on every manifest written before it existed (decoded by default).
+     */
+    val agenda: List<AgendaItem> = emptyList(),
 )
 
 /**

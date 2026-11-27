@@ -46,10 +46,10 @@ data class LexiconTerm(val text: String, val updatedAt: Long = 0)
  * than on the file-backed [LexiconStore], so they are tested without a disk,
  * and [DictionarySync] can fold a whole exchange into a copy and compare.
  *
- * The keyboard learning (`record`) and the substitution pass (`apply`) iOS has
- * on the same type are not ported: Android's keyboard does not learn from edits
- * yet, so nothing would call them. What is here is what the dictionary screen,
- * sync and recognition need.
+ * The keyboard learning (`record`) iOS has on the same type is not ported:
+ * Android's keyboard does not learn from edits yet, so nothing would call it.
+ * The substitution pass ([apply]) is, for onboarding's microphone check, which
+ * runs the user's corrections over their self-introduction.
  */
 data class Lexicon(
     val pairs: List<LexiconPair> = emptyList(),
@@ -151,6 +151,58 @@ data class Lexicon(
 
     val isEmpty: Boolean get() = pairs.isEmpty() && terms.isEmpty()
 
+    // ── applying ─────────────────────────────────────────────────────────────
+
+    /** What [applyCounting] did: the rewritten text and how many places it changed. */
+    data class Applied(val text: String, val hits: Int)
+
+    /**
+     * Rewrite the corrections the user has confirmed — iOS `Lexicon.apply(to:)`.
+     *
+     * Four rules, each of them a way of not doing damage:
+     *
+     * - **Only confirmed pairs.** `count >= AUTO_APPLY_THRESHOLD`; see there.
+     * - **Longest original first.** With both "parley" and "parley cloud" on
+     *   file the longer one has to win, or it gets half-rewritten by the
+     *   shorter one and comes out as neither.
+     * - **Word boundaries for Latin, plain substring for CJK.** An all-ASCII
+     *   original matches case-insensitively and only as a whole word:
+     *   dictation capitalises arbitrarily, and "api" must not eat the "api"
+     *   inside "rapid". Chinese has no word boundaries to assert, so there the
+     *   match is a plain substring — which is exactly what makes 在來 → 再來
+     *   possible.
+     * - **Never a single CJK character, never a pair that grows.** [problem]
+     *   refuses both, but the file is synced and may hold either from an
+     *   older build or another device; 派 → 帕 as a substring would rewrite
+     *   派對 too.
+     *
+     * Deterministic: the same lexicon and the same text always give the same
+     * answer, ties in original length broken alphabetically.
+     */
+    fun apply(text: String): String = applyCounting(text).text
+
+    /** [apply], and how many replacements it made. */
+    fun applyCounting(text: String): Applied {
+        if (text.isEmpty()) return Applied(text, 0)
+        val usable = pairs
+            .filter {
+                it.isConfirmed && it.original.isNotEmpty() && it.replacement.isNotEmpty() &&
+                    !isLoneIdeograph(it.original) && !loops(it.original, it.replacement)
+            }
+            .sortedWith(
+                compareByDescending<LexiconPair> { it.original.codePointCount(0, it.original.length) }
+                    .thenBy { it.original },
+            )
+        var out = text
+        var hits = 0
+        for (pair in usable) {
+            val step = substitute(pair.original, pair.replacement, out)
+            out = step.text
+            hits += step.hits
+        }
+        return Applied(out, hits)
+    }
+
     // ── file format ──────────────────────────────────────────────────────────
 
     /** `{ pairs: [...], terms: [...] }`, the same field names iOS writes. */
@@ -217,6 +269,48 @@ data class Lexicon(
         internal fun loops(from: String, to: String): Boolean {
             if (to.codePointCount(0, to.length) <= from.codePointCount(0, from.length)) return false
             return to.contains(from, ignoreCase = isLatinWordLike(from))
+        }
+
+        /**
+         * One pair's rewrite of [text], by the same matching rule [apply] uses —
+         * whole words case-insensitively for Latin, a plain substring for CJK —
+         * and how many places it changed. iOS `Lexicon.substitute`.
+         */
+        fun substitute(original: String, replacement: String, text: String): Applied {
+            if (original.isEmpty() || text.isEmpty()) return Applied(text, 0)
+            if (isLatinWordLike(original)) return replaceWord(original, replacement, text)
+            val hits = countOccurrences(original, text)
+            if (hits == 0) return Applied(text, 0)
+            return Applied(text.replace(original, replacement), hits)
+        }
+
+        /**
+         * Case-insensitive whole-word replacement, mirroring the desktop's
+         * `asciiVariantRe`: the boundary is asserted only on the sides that
+         * actually begin or end with a word character, so a pair like "sql,"
+         * still matches at the end of a clause. Both sides are literals — a
+         * `+` in the original or a `$` in the replacement means itself.
+         */
+        private fun replaceWord(original: String, replacement: String, text: String): Applied {
+            val before = if (isWordChar(original.first())) "(?<![A-Za-z0-9_])" else ""
+            val after = if (isWordChar(original.last())) "(?![A-Za-z0-9_])" else ""
+            val regex = Regex(before + Regex.escape(original) + after, RegexOption.IGNORE_CASE)
+            val hits = regex.findAll(text).count()
+            if (hits == 0) return Applied(text, 0)
+            return Applied(regex.replace(text, Regex.escapeReplacement(replacement)), hits)
+        }
+
+        private fun isWordChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
+
+        /** Non-overlapping occurrences, the way `String.replace` will rewrite them. */
+        private fun countOccurrences(needle: String, haystack: String): Int {
+            var count = 0
+            var from = haystack.indexOf(needle)
+            while (from >= 0) {
+                count += 1
+                from = haystack.indexOf(needle, from + needle.length)
+            }
+            return count
         }
 
         /** All-ASCII with a letter or digit — the shape that has word boundaries worth asserting. */

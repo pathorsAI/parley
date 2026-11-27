@@ -153,4 +153,126 @@ class LexiconTest {
         assertEquals(listOf(PARLEY), frame.hints?.terms)
         assertNull(SttRelayClient.startFrame(SttRelayClient.Options(bearerToken = "t", hintTerms = listOf(" "))).hints)
     }
+
+    // ── applying — iOS `LexiconTests`, the `apply(to:)` cases ────────────────
+
+    /** A pair confirmed enough times to be worth applying. */
+    private fun confirmed(original: String, replacement: String) =
+        LexiconPair(original, replacement, count = Lexicon.AUTO_APPLY_THRESHOLD, updatedAt = 1)
+
+    @Test
+    fun `a stated correction applies at once`() {
+        val lexicon = Lexicon().recordConfirmed(" 派斯 ", "Pathors", now = 1)!!
+        assertEquals("我們Pathors的產品", lexicon.apply("我們派斯的產品"))
+    }
+
+    @Test
+    fun `a singly seen pair is not applied`() {
+        val lexicon = Lexicon(pairs = listOf(LexiconPair("pearly", PARLEY, count = 1)))
+        assertEquals("we use pearly", lexicon.apply("we use pearly"))
+    }
+
+    @Test
+    fun `a confirmed pair is applied`() {
+        val lexicon = Lexicon(pairs = listOf(confirmed("pearly", PARLEY)))
+        assertEquals("we use Parley today", lexicon.apply("we use pearly today"))
+    }
+
+    @Test
+    fun `Latin pairs need word boundaries`() {
+        // "rapid" contains "api" and must be left alone.
+        val lexicon = Lexicon(pairs = listOf(confirmed("api", "API")))
+        assertEquals("a rapid API call", lexicon.apply("a rapid api call"))
+    }
+
+    @Test
+    fun `Latin pairs match regardless of case`() {
+        val lexicon = Lexicon(pairs = listOf(confirmed("pearly", PARLEY)))
+        assertEquals("Parley and Parley", lexicon.apply("Pearly and pearly"))
+    }
+
+    @Test
+    fun `CJK pairs are a plain substring replacement`() {
+        val lexicon = Lexicon(pairs = listOf(confirmed("在來", "再來")))
+        assertEquals("我再來一次", lexicon.apply("我在來一次"))
+    }
+
+    @Test
+    fun `the longest original wins`() {
+        // With both on file, "pearly clod" must not be half-rewritten by "pearly".
+        val lexicon = Lexicon(pairs = listOf(confirmed("pearly", PARLEY), confirmed("pearly clod", "Parley Cloud")))
+        assertEquals("ship on Parley Cloud", lexicon.apply("ship on pearly clod"))
+    }
+
+    @Test
+    fun `a looping pair is never applied even if it is on file`() {
+        // recordConfirmed refuses these, but the file is synced and may hold one.
+        val lexicon = Lexicon(pairs = listOf(confirmed("api", "api endpoint")))
+        assertEquals("the api", lexicon.apply("the api"))
+    }
+
+    @Test
+    fun `apply is deterministic and leaves unknown text alone`() {
+        val lexicon = Lexicon(pairs = listOf(confirmed("pearly", PARLEY), confirmed("在說", "再說")))
+        val text = "我在說 pearly 的事"
+        val once = lexicon.apply(text)
+        assertEquals("我再說 Parley 的事", once)
+        assertEquals(once, lexicon.apply(text))
+    }
+
+    @Test
+    fun `a widened CJK pair leaves other words with the same character alone`() {
+        val lexicon = Lexicon(pairs = listOf(confirmed("派斯", "帕斯")))
+        assertEquals("帕斯的派對", lexicon.apply("派斯的派對"))
+        assertEquals("派對", lexicon.apply("派對"))
+        assertEquals("帕斯辦了派對", lexicon.apply("派斯辦了派對"))
+    }
+
+    @Test
+    fun `a legacy single-character pair is not applied`() {
+        val lexicon = Lexicon(pairs = listOf(confirmed("派", "帕")))
+        assertEquals("派對", lexicon.apply("派對"))
+    }
+
+    @Test
+    fun `apply counts its replacements`() {
+        val lexicon = Lexicon(pairs = listOf(confirmed("pearly", PARLEY), confirmed("派斯", "Pathors")))
+        val result = lexicon.applyCounting("pearly, Pearly, 派斯 and rapid")
+        assertEquals("Parley, Parley, Pathors and rapid", result.text)
+        assertEquals(3, result.hits)
+        assertEquals(0, lexicon.applyCounting("nothing here").hits)
+    }
+
+    @Test
+    fun `substitute uses the same matching rules`() {
+        assertEquals("a rapid API", Lexicon.substitute("api", "API", "a rapid api").text)
+        assertEquals(2, Lexicon.substitute("派斯", "Pathors", "派斯派斯").hits)
+        assertEquals(0, Lexicon.substitute("zzz", "y", "abc").hits)
+    }
+
+    @Test
+    fun `apply on an empty lexicon and on empty text`() {
+        assertEquals("untouched", Lexicon().apply("untouched"))
+        assertEquals("", Lexicon(pairs = listOf(confirmed("a", "b"))).apply(""))
+    }
+
+    @Test
+    fun `a regex metacharacter in a pair is a literal`() {
+        val lexicon = Lexicon(pairs = listOf(confirmed("c++", "C++")))
+        assertEquals("wrote C++ today", lexicon.apply("wrote c++ today"))
+    }
+
+    @Test
+    fun `a dollar in a replacement is a literal`() {
+        val lexicon = Lexicon(pairs = listOf(confirmed("usd", "\$")))
+        assertEquals("10 \$", lexicon.apply("10 usd"))
+    }
+
+    @Test
+    fun `the store applies what is on disk`() {
+        val store = LexiconStore(File(temporary.root, LexiconStore.FILE_NAME)) { 1L }
+        assertEquals("we use pearly", store.apply("we use pearly"))
+        assertTrue(store.recordConfirmed("pearly", PARLEY))
+        assertEquals("we use Parley", store.apply("we use pearly"))
+    }
 }

@@ -42,14 +42,24 @@ fun formatTimestamp(epochMs: Double): String =
 
 /**
  * A recording's creation time as a library row shows it — iOS
- * `RecordingCard.dateLabel`, `.dateTime.month(.abbreviated).day().hour().minute()`:
- * abbreviated month, day and time, no year. "Aug 12, 9:40 AM" on an English
- * phone, 「8月12日 上午9:40」 on a Chinese one. The skeleton goes through the
+ * `RecordingMetaLine.dateLabel`, `.dateTime.month(.abbreviated).day().hour().minute()`:
+ * abbreviated month, day and time. "Aug 12, 9:40 AM" on an English phone,
+ * 「8月12日 上午9:40」 on a Chinese one. The skeleton goes through the
  * platform's best-pattern lookup so the order, the 12/24-hour clock and the
  * separators are the locale's, not ours.
+ *
+ * The year is added for anything outside the current one
+ * ([LibraryRules.showsYear]). Without it a list sorted newest first reads as
+ * out of order the moment it crosses a new year: Mar 8 (this year) above
+ * Jul 17 (last year) looks backwards.
  */
-fun formatRowTimestamp(epochMs: Double, locale: Locale = Locale.getDefault()): String {
-    val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, "MMMdjmm")
+fun formatRowTimestamp(
+    epochMs: Double,
+    locale: Locale = Locale.getDefault(),
+    nowMs: Long = System.currentTimeMillis(),
+): String {
+    val skeleton = if (LibraryRules.showsYear(epochMs.toLong(), nowMs)) "yMMMdjmm" else "MMMdjmm"
+    val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, skeleton)
     return java.text.SimpleDateFormat(pattern, locale).format(Date(epochMs.toLong()))
 }
 

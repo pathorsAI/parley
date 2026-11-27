@@ -237,21 +237,24 @@ class SampleRecordingTest {
         assertEquals(OpenFor.READ, OpenFor.parse("something-newer"))
     }
 
-    // ── the sign-in film ─────────────────────────────────────────────────────
+    // ── the welcome demo ─────────────────────────────────────────────────────
 
     @Test
-    fun `the film casts the sample's first three lines, its folder and its title`() {
+    fun `the demo casts the sample's first two lines, its folder, title, findings and action items`() {
         for (lang in listOf(EN, ZH)) {
             val manifest = manifest(lang)
             val film = IntroFilm.of(manifest)
 
-            assertEquals(3, film.lines.size)
-            assertEquals(listOf(true, false, true), film.lines.map { it.isMe })
+            assertEquals(2, film.lines.size)
+            assertEquals(listOf(true, false), film.lines.map { it.isMe })
             assertEquals(manifest.speakers.me, film.lines.first().speaker)
-            assertTrue(film.lines.all { it.text.length <= CLIP_WITH_ELLIPSIS })
+            assertEquals(manifest.segments.first().text, film.lines.first().text)
+            assertTrue(film.lines.all { it.time.matches(Regex("""\d+:\d{2}""")) })
             assertEquals(manifest.suggestion?.folders?.first()?.name, film.folderName)
             assertEquals(manifest.suggestion?.title, film.cardTitle)
-            assertEquals(film.lines.size, film.schedule.lines.size)
+            assertEquals(2, film.points.size)
+            assertEquals(2, film.actions.size)
+            assertTrue(film.points.all { it.isNotBlank() } && film.actions.all { it.isNotBlank() })
         }
     }
 
@@ -264,8 +267,5 @@ class SampleRecordingTest {
         const val SECOND = "rec-second"
         const val RENAMED = "Hongsheng kickoff"
         const val MANIFEST_TITLE = "Sample: first call"
-
-        /** `LapMotion.clip`'s limit plus the ellipsis. */
-        const val CLIP_WITH_ELLIPSIS = 35
     }
 }

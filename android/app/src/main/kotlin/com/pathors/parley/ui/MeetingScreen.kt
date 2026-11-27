@@ -14,30 +14,24 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.interaction.DragInteraction
-import androidx.compose.runtime.State
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.path
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -51,37 +45,59 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -91,31 +107,52 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.pathors.parley.R
+import com.pathors.parley.audio.MicRecoveryState
+import com.pathors.parley.feedback.AudioRouteLabel
 import com.pathors.parley.feedback.FeedbackTrigger
 import com.pathors.parley.feedback.ProblemSignals
 import com.pathors.parley.feedback.RecordingContext
-import com.pathors.parley.R
-import com.pathors.parley.filing.FilingSuggestionViewModel
-import com.pathors.parley.parleyContainer
-import com.pathors.parley.audio.MicRecoveryState
 import com.pathors.parley.kit.CaptureRecovery
 import com.pathors.parley.kit.TranscriptSegment
+import com.pathors.parley.library.FolderDirectory
+import com.pathors.parley.library.FolderScope
+import com.pathors.parley.library.SaveDestination
+import com.pathors.parley.meeting.AgendaItem
+import com.pathors.parley.meeting.ChosenFolder
+import com.pathors.parley.meeting.DraftSnapshot
+import com.pathors.parley.meeting.EndedMeeting
+import com.pathors.parley.meeting.EndedMeetings
 import com.pathors.parley.meeting.LiveMeeting
+import com.pathors.parley.meeting.MeetingDraft
 import com.pathors.parley.meeting.MeetingFailure
 import com.pathors.parley.meeting.MeetingService
-import com.pathors.parley.meeting.MeetingSession
 import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.meeting.TranscriptionIssue
 import com.pathors.parley.screenshot.DemoMode
 import com.pathors.parley.screenshot.rememberDemoMeeting
 import com.pathors.parley.ui.theme.ParleyTextStyles
+import com.pathors.parley.ui.theme.ParleyTheme
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 /**
  * Identifies the OS process this composition is running in.
@@ -132,148 +169,175 @@ private object ProcessId {
 }
 
 /**
- * The live meeting: permission gate, transcript, waveform, controls.
+ * The record screen: one layout before and during a meeting, after the
+ * desktop's meeting window and iOS's Record tab (#759).
+ *
+ * What the meeting *is* sits on top — its name (with Copy beside it), its day
+ * and its folder — then the transcript on a muted panel, and everything you
+ * *do* in one dock along the bottom, under the thumb: the clock and the
+ * microphone, the live waveform, and the actions. Before a meeting the dock
+ * holds a resting clock, a flat waveform and one Start recording; during one,
+ * ✕ (discard), Pause and End. Pressing Start changes what is in the dock, not
+ * where anything is. The name and folder can be set before the meeting starts
+ * and are saved with the recording ([MeetingDraft]).
+ *
+ * End, as on the desktop, ends on the recording's result page: once the upload
+ * settles the meeting is handed over ([EndedMeetings]) and [onEnded] opens it,
+ * with the filing suggestion on top. An upload that does not settle (offline,
+ * the quota, a refusal, too short) stays here with its status line.
  *
  * The screen owns none of the recording. It asks [MeetingService] to start,
- * observes the [MeetingSession] the service publishes, and asks it to stop —
- * which is what lets the user leave this screen (or the app) mid-meeting without
- * the capture noticing.
+ * observes the [com.pathors.parley.meeting.MeetingSession] the service
+ * publishes, and asks it to stop — which is what lets the user leave this
+ * screen (or the app) mid-meeting without the capture noticing.
  *
  * ## Nothing here ever starts the microphone by itself
  *
- * Two facts used to combine into an app that recorded a room nobody had pointed
- * it at. `rememberNavController` saves the back stack into the
- * `SavedStateRegistry`, so a process killed while a meeting was on screen is
- * restored straight back onto this destination; and the "start at most once"
- * latch was a plain `remember`, which resets to false in the new process where
- * `MeetingService.activeSession` is also null. The start effect then read that
- * as "nothing is recording and nobody has started one yet" and opened the mic.
- * The user's own account of it: *I opened Parley and it was recording.*
+ * Two facts once combined into an app that recorded a room nobody had pointed
+ * it at: `rememberNavController` saves the back stack, so a process killed
+ * while this screen was up is restored straight back onto it, and the start
+ * latch was a plain `remember` that reset in the new process. The user's own
+ * account of it: *I opened Parley and it was recording.*
  *
- * So the latch is a [rememberSaveable] carrying [ProcessId] rather than a
- * boolean, and a value from a dead process means *leave*, not *start*. Every
- * route onto this screen is the user pressing a start-meeting button, and
- * [shouldStart] is the whole guard between arriving and `MeetingService.start`.
+ * A meeting now starts only from a press — Start recording here, or a start
+ * request that arrived with the visit ([autoStart]: the lock-screen tile, the
+ * launcher shortcut, the onboarding's last step) — and a press is honoured
+ * only in the process that saw it. A visit restored into a new process is the
+ * screen before a meeting, never a start.
  *
  * There is no "has everyone agreed?" prompt in front of it. Getting the room's
  * permission is the person holding the phone's call, as it is with any other
  * recorder, and a dialog every single time taught nothing but a reflex tap.
+ *
+ * @param autoStart start a meeting on arrival, as if Start had been pressed.
+ * @param onDone leave the screen (Back over a meeting's outcome).
+ * @param onEnded open the result page of the recording that just landed.
  */
 @Composable
-fun MeetingScreen(onDone: () -> Unit) {
-    val context = LocalContext.current
-    val session by MeetingService.activeSession.collectAsState()
-
+fun MeetingScreen(
+    autoStart: Boolean,
+    onDone: () -> Unit,
+    onEnded: (recordingId: String) -> Unit,
+) {
     if (DemoMode.isActive) {
-        DemoMeetingScreen(onDone = onDone)
+        DemoMeetingScreen()
         return
     }
 
+    val context = LocalContext.current
+    val session by MeetingService.activeSession.collectAsState()
     val mic = rememberMicPermission()
 
-    // Start at most once per visit, and remember *which process* did it. A plain
-    // boolean cannot tell a restored back stack from a rotation; see the class
-    // docs for what that cost.
-    var startedIn by rememberSaveable { mutableStateOf<String?>(null) }
-    val restored = startedIn != null && startedIn != ProcessId.value
+    // Which process this visit began in. Saved, so a visit restored after
+    // process death reads as one, and is never a start.
+    val visit = rememberSaveable { ProcessId.value }
+    val restored = visit != ProcessId.value
+    var wantsStart by rememberSaveable { mutableStateOf(autoStart) }
+    // Between asking the service to start and it publishing the session: the
+    // meeting's layout, connecting, rather than the screen before a meeting.
+    var awaitingSession by remember { mutableStateOf(false) }
 
-    // The meeting this screen was showing did not survive the process. There is
-    // nothing to rejoin and nothing to resume, so leave — silently opening the
-    // microphone again is exactly the bug.
-    LaunchedEffect(restored) {
-        if (restored) onDone()
+    LaunchedEffect(session) { if (session != null) awaitingSession = false }
+
+    LaunchedEffect(wantsStart, mic.granted) {
+        if (!wantsStart) return@LaunchedEffect
+        when {
+            restored -> wantsStart = false
+            // Asked once per press; after a refusal the gate below takes over.
+            !mic.granted -> if (!mic.denied) mic.onRequest()
+            else -> {
+                wantsStart = false
+                // The last meeting's outcome (still on the phone, too short)
+                // gives way to the next one.
+                MeetingService.activeSession.value?.let { if (isSettled(it.state.value)) MeetingService.clear() }
+                if (MeetingService.activeSession.value == null) {
+                    awaitingSession = true
+                    MeetingService.start(context)
+                }
+            }
+        }
     }
 
-    // Start once the microphone is ours — see [shouldStart] for everything that
-    // must hold first.
-    LaunchedEffect(mic.granted, restored) {
-        var running = MeetingService.activeSession.value
-        // A meeting that ended on an earlier visit and was never dismissed (the
-        // screen now stays up after Stop, and Back leaves without Done): its
-        // outcome was already on screen. This visit is for a new recording, not
-        // for reading an old one's status again.
-        if (startedIn == null && running != null && isSettled(running.state.value)) {
-            MeetingService.clear()
-            running = null
-        }
-        if (shouldStart(mic.granted, restored, startedIn, running)) {
-            startedIn = ProcessId.value
-            MeetingService.start(context)
-        }
-    }
-
-    if (!mic.granted) {
+    if (wantsStart && !mic.granted && mic.denied) {
         PermissionGate(
-            denied = mic.denied,
+            denied = true,
             blocked = mic.blocked,
             onRequest = mic.onRequest,
             onOpenSettings = mic.onOpenSettings,
-            onCancel = onDone,
+            onCancel = {
+                wantsStart = false
+                // A draft's start that will not happen: its name, folder and
+                // context are not the next meeting's.
+                MeetingDraft.dropDraft()
+            },
         )
         return
     }
 
-    // An old meeting's outcome is about to be cleared by the effect above; do
-    // not flash it for the frame before that lands.
-    val active = session?.takeUnless { startedIn == null && isSettled(it.state.value) }
-    if (active == null) {
-        // Nothing is starting while we are on our way out, and a spinner would
-        // claim otherwise.
-        MeetingStartingIndicator(spinning = !restored)
-        return
+    val shown = session
+    val shownState by (shown?.state ?: NoMeeting.state).collectAsState()
+    // The screen stays up once a meeting has an outcome that is not a result
+    // page, so Back has to let the session go rather than leave it behind for
+    // the next visit to find.
+    BackHandler(enabled = shown != null && isSettled(shownState)) {
+        MeetingService.clear()
+        onDone()
     }
 
     MeetingContent(
-        session = active,
-        onStop = { MeetingService.requestStop(context) },
-        // Not `clear()`: disposal stopped deleting the audio when the failure
-        // paths learned to preserve it, so the only thing that still keeps the
-        // dialog's promise is an action that means exactly this.
-        onDiscard = {
-            MeetingService.requestDiscard(context)
-            onDone()
+        session = shown,
+        awaitingSession = awaitingSession,
+        actions = MeetingActions(
+            onStart = { wantsStart = true },
+            onStop = { MeetingService.requestStop(context) },
+            // Not `clear()`: disposal stopped deleting the audio when the
+            // failure paths learned to preserve it, so the only thing that
+            // still keeps the dialog's promise is an action that means exactly
+            // this. The screen stays, before the next meeting.
+            onDiscard = { MeetingService.requestDiscard(context) },
+            onTogglePause = {
+                if (shown?.state?.value == MeetingState.Paused) {
+                    MeetingService.requestResume(context)
+                } else {
+                    MeetingService.requestPause(context)
+                }
+            },
+        ),
+        onEnded = { meeting ->
+            EndedMeetings.hand(meeting)
+            // The result page has it now; this screen is the next meeting's.
+            MeetingService.clear()
+            onEnded(meeting.recordingId)
         },
-        onTogglePause = {
-            if (active.state.value == MeetingState.Paused) {
-                MeetingService.requestResume(context)
-            } else {
-                MeetingService.requestPause(context)
-            }
-        },
-        onDone = onDone,
     )
 }
 
 /**
- * Whether arriving on this screen should start a recording.
- *
- * This predicate is the whole guard in front of `MeetingService.start`, so the
- * answer is no unless every one of these holds: the microphone is ours; this
- * composition is not a back stack [restored] into a new process (see
- * [MeetingScreen] — telling that apart from a rotation is what stopped the app
- * recording on its own); this visit has not already started a meeting; and there
- * is no [running] meeting to adopt.
- *
- * That last one is why a meeting already in progress (the user came back through
- * the library's "Return to it") is adopted rather than started over.
- */
-private fun shouldStart(
-    granted: Boolean,
-    restored: Boolean,
-    startedIn: String?,
-    running: MeetingSession?,
-): Boolean = granted && !restored && startedIn == null && running == null
-
-/**
  * Store screenshots: scripted segments on a timer, no permission prompt, no
  * microphone — an emulator has no audio input, and a capture must never depend
- * on one.
+ * on one. `record-idle` is the screen before a meeting; every other scenario a
+ * meeting named and filed here, as iOS seeds its own.
  */
 @Composable
-private fun DemoMeetingScreen(onDone: () -> Unit) {
+private fun DemoMeetingScreen() {
     val context = LocalContext.current
     val navigation by DemoMode.navigation.collectAsState()
-    val demo = rememberDemoMeeting(navigation?.scenario ?: DemoMode.MeetingScenario.LIVE)
+    val scenario = navigation?.scenario ?: DemoMode.MeetingScenario.LIVE
+    // Keyed on the request, not only its scenario: a second draft started in
+    // the demo is a new request with the same scenario and other choices.
+    LaunchedEffect(navigation) {
+        when (scenario) {
+            DemoMode.MeetingScenario.IDLE -> MeetingDraft.clear()
+            DemoMode.MeetingScenario.DRAFT -> MeetingDraft.seed(navigation?.draftChoices ?: DemoMode.draftChoices())
+            else -> MeetingDraft.seed(DemoMode.liveChoices())
+        }
+    }
+    val inactive = MeetingActions(onStart = {}, onStop = {}, onDiscard = {}, onTogglePause = {})
+    if (scenario == DemoMode.MeetingScenario.IDLE) {
+        MeetingContent(session = null, awaitingSession = false, actions = inactive, onEnded = null)
+        return
+    }
+    val demo = rememberDemoMeeting(scenario)
     // One exception, for the Play foreground-service declaration video: if
     // RECORD_AUDIO happens to be granted already, run the real service in
     // notification-only mode so the ongoing notification can be filmed. A plain
@@ -286,24 +350,7 @@ private fun DemoMeetingScreen(onDone: () -> Unit) {
             onDispose { MeetingService.requestStop(context) }
         }
     }
-    // Discard leaves the demo screen exactly as Stop does — there is no session
-    // to throw away, and the affordance belongs in the screenshot.
-    MeetingContent(
-        session = demo,
-        onStop = onDone,
-        onDiscard = onDone,
-        onTogglePause = {},
-        onDone = onDone,
-        demoFiling = navigation?.scenario?.takeIf { it.isSettled },
-    )
-}
-
-/** Waiting for the service to publish the session this screen asked for. */
-@Composable
-private fun MeetingStartingIndicator(spinning: Boolean) {
-    Box(Modifier.fillMaxSize(), Alignment.Center) {
-        if (spinning) CircularProgressIndicator()
-    }
+    MeetingContent(session = demo, awaitingSession = false, actions = inactive, onEnded = null)
 }
 
 /**
@@ -403,245 +450,1054 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
-@Composable
-private fun MeetingContent(
-    session: LiveMeeting,
-    onStop: () -> Unit,
-    onDiscard: () -> Unit,
-    onTogglePause: () -> Unit,
-    onDone: () -> Unit,
-    demoFiling: DemoMode.MeetingScenario? = null,
-) {
-    val state by session.state.collectAsState()
-    val segments by session.segments.collectAsState()
-    val issue by session.issue.collectAsState()
-    val level by session.level.collectAsState()
-    val elapsed by session.elapsedMs.collectAsState()
-    val micSilenced by session.micSilenced.collectAsState()
-    val micRecovery by session.micRecovery.collectAsState()
-    val storageLow by session.storageLow.collectAsState()
-    val live = isLive(state)
-
-    val filing = rememberFiling(state, segments, demoFiling)
-    RecordingStartedHaptic(state)
-    val micBack = rememberMicBackNotice(micRecovery)
-    val close = {
-        MeetingService.clear()
-        onDone()
-    }
-    // The screen stays up once the meeting has an outcome (below), so Back has
-    // to be the same way out as Done: let the session go, not leave it behind
-    // for the next visit to find.
-    BackHandler(enabled = isSettled(state)) { close() }
-
-    if (live) {
-        LiveMeetingLayout(
-            state = state,
-            segments = segments,
-            elapsed = elapsed,
-            level = level,
-            notices = liveNotices(
-                micLine = micLine(micRecovery, micSilenced, micBack),
-                storageLow = storageLow,
-                issue = issue,
-            ),
-            actions = LiveMeetingActions(
-                onStop = onStop,
-                onDiscard = onDiscard,
-                onTogglePause = onTogglePause,
-            ),
-        )
-        return
-    }
-
-    // After Stop the screen stays: the transcript, the outcome and the filing
-    // suggestion are what the user reads next, and iOS keeps all three up until
-    // the next recording. It used to close itself 1.2 s after a clean stop,
-    // which was long enough to see that *something* had happened and too short
-    // to read what — "Synced, and shared to …" or "out of quota" among it.
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp),
-    ) {
-        Spacer(Modifier.height(16.dp))
-        MeetingHeader(elapsed = elapsed, state = state, segments = segments)
-        Spacer(Modifier.height(12.dp))
-        LiveWaveform(level = level, active = false)
-
-        interruptedFinish(state)?.let { InterruptedOutcome(it, onClose = close) }
-        (state as? MeetingState.Failed)?.let { FailedOutcome(it, onClose = close) }
-        (state as? MeetingState.Finished)?.let { MicRecoveryPrompt(it, segments, elapsed) }
-
-        Spacer(Modifier.height(16.dp))
-        Box(Modifier.weight(1f)) {
-            LiveTranscript(segments, state)
-        }
-
-        FilingFooter(
-            filing = filing,
-            showsDone = state is MeetingState.Finished && interruptedFinish(state) == null,
-            onDone = close,
-            openPicker = demoFiling == DemoMode.MeetingScenario.ADJUST,
-        )
-        Spacer(Modifier.height(16.dp))
-    }
-}
-
-/**
- * What the live controls do to the meeting: end it, throw it away, or pause and
- * resume the microphone. Grouped so [LiveMeetingLayout] takes them as one thing
- * rather than three loose lambdas.
- */
-private class LiveMeetingActions(
+/** What the screen's controls do: start a meeting, end it, throw it away, pause or resume it. */
+private class MeetingActions(
+    val onStart: () -> Unit,
     val onStop: () -> Unit,
     val onDiscard: () -> Unit,
     val onTogglePause: () -> Unit,
 )
 
+/** The flows a screen with no meeting reads: nothing said, nothing heard, the clock at rest. */
+private object NoMeeting {
+    val state: StateFlow<MeetingState> = MutableStateFlow(MeetingState.Idle)
+    val connecting: StateFlow<MeetingState> = MutableStateFlow(MeetingState.Connecting)
+    val segments: StateFlow<List<TranscriptSegment>> = MutableStateFlow(emptyList())
+    val issue: StateFlow<TranscriptionIssue?> = MutableStateFlow(null)
+    val level: StateFlow<Float> = MutableStateFlow(0f)
+    val elapsed: StateFlow<Long> = MutableStateFlow(0L)
+    val silenced: StateFlow<Boolean> = MutableStateFlow(false)
+    val recovery: StateFlow<MicRecoveryState> = MutableStateFlow(MicRecoveryState.Holding)
+}
+
 /**
- * The meeting while the microphone is (about to be) open: the live transcript
- * on top, and under it the controls, which the user can drag shorter to give
- * the transcript more room — see [LiveControlsPanel].
+ * The record screen's one layout, for whatever [session] is in (or none).
  *
- * Once the meeting stops the screen goes back to the layout in [MeetingContent]:
- * the outcome, the filing suggestion and the way out are the news then, not the
- * controls.
+ * @param onEnded the meeting landed and its result page should open; null in
+ *   the screenshot demo, which never leaves.
  */
 @Composable
-private fun LiveMeetingLayout(
-    state: MeetingState,
-    segments: List<TranscriptSegment>,
-    elapsed: Long,
-    level: Float,
-    notices: List<PanelNotice>,
-    actions: LiveMeetingActions,
+private fun MeetingContent(
+    session: LiveMeeting?,
+    awaitingSession: Boolean,
+    actions: MeetingActions,
+    onEnded: ((EndedMeeting) -> Unit)?,
 ) {
-    val context = LocalContext.current
-    val phase = when (state) {
-        MeetingState.Recording -> LivePhase.RECORDING
-        MeetingState.Paused -> LivePhase.PAUSED
-        else -> LivePhase.STARTING
+    val state by (session?.state ?: if (awaitingSession) NoMeeting.connecting else NoMeeting.state).collectAsState()
+    val segments by (session?.segments ?: NoMeeting.segments).collectAsState()
+    val issue by (session?.issue ?: NoMeeting.issue).collectAsState()
+    val level by (session?.level ?: NoMeeting.level).collectAsState()
+    val elapsed by (session?.elapsedMs ?: NoMeeting.elapsed).collectAsState()
+    val micSilenced by (session?.micSilenced ?: NoMeeting.silenced).collectAsState()
+    val micRecovery by (session?.micRecovery ?: NoMeeting.recovery).collectAsState()
+    val storageLow by (session?.storageLow ?: NoMeeting.silenced).collectAsState()
+    val inMeeting = showsMeeting(state)
+
+    RecordingStartedHaptic(state)
+    val micBack = rememberMicBackNotice(micRecovery)
+    val micLine = micLine(micRecovery, micSilenced, micBack)
+    val folders = rememberMeetingFolders(inMeeting)
+
+    // End → the result page, keyed on the upload settling rather than on the
+    // meeting ending: the page reads the recording from the cloud, so it
+    // cannot open before the upload lands. Until then End keeps its spinner
+    // and Start says "Wrapping up…".
+    val ended by rememberUpdatedState(onEnded)
+    LaunchedEffect(session, state) {
+        val finished = state as? MeetingState.Finished ?: return@LaunchedEffect
+        val id = finished.recordingId ?: return@LaunchedEffect
+        val shown = session ?: return@LaunchedEffect
+        val handOff = ended ?: return@LaunchedEffect
+        if (!endsOnResultPage(finished)) return@LaunchedEffect
+        handOff(EndedMeeting(id, finished, shown.segments.value, shown.elapsedMs.value))
     }
-    val transcript = {
-        TranscriptClipboard.liveTranscript(segments) {
-            speakerLabel(context, it.speaker)
-        }
-    }
+
     Column(Modifier.fillMaxSize()) {
+        if (inMeeting) {
+            WarningStrip(currentWarning(micLine, storageLow, issue))
+        }
+        // Before a meeting the heading is the next one's: name it and pick its
+        // folder now, and the recording starts under them. With the last
+        // meeting's transcript still up — an upload that did not settle, so
+        // no result page took it — the heading would read as that meeting's,
+        // so the page keeps only Copy for it. iOS `LiveView.idleScreen`.
+        if (inMeeting || segments.isEmpty()) {
+            MeetingHeading(segments = segments, dayMs = System.currentTimeMillis() - elapsed, folders = folders)
+        } else {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), horizontalArrangement = Arrangement.End) {
+                TranscriptCopy(segments)
+            }
+        }
         Box(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .clip(PANEL_SHAPE)
+                .background(MaterialTheme.colorScheme.surfaceContainer, PANEL_SHAPE),
         ) {
             LiveTranscript(segments, state)
         }
-        LiveControlsPanel(
-            readout = LiveReadout(
-                phase = phase,
-                statusText = when (phase) {
-                    LivePhase.RECORDING -> stringResource(R.string.meeting_recording_live)
-                    LivePhase.PAUSED -> stringResource(R.string.meeting_paused)
-                    LivePhase.STARTING -> statusLabel(state)
-                },
-                elapsedMs = elapsed,
+        // Above the dock, not in the transcript: it is about the recording
+        // that just ended, and it must not scroll away with the words.
+        (state as? MeetingState.Finished)?.takeUnless { endsOnResultPage(it) }?.let { finished ->
+            finished.recordingId?.let { id ->
+                MicRecoveryPrompt(
+                    recordingId = id,
+                    micRecoveries = finished.micRecoveries,
+                    audioRoute = finished.audioRoute,
+                    segments = segments,
+                    elapsedMs = elapsed,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
+        Dock(
+            readout = DockReadout(
+                state = state,
+                elapsed = elapsed,
                 level = level,
-                notices = notices,
+                issue = issue,
+                micAlarming = micLine?.alarming == true,
+                inputRoute = session?.inputRoute,
             ),
-            onStop = actions.onStop,
-            onDiscard = actions.onDiscard,
-            onTogglePause = actions.onTogglePause,
+            actions = actions,
+        )
+    }
+}
+
+/** What the dock shows about the meeting, gathered so [Dock] takes it as one thing. */
+private class DockReadout(
+    val state: MeetingState,
+    val elapsed: Long,
+    val level: Float,
+    val issue: TranscriptionIssue?,
+    val micAlarming: Boolean,
+    val inputRoute: String?,
+) {
+    val inMeeting: Boolean get() = showsMeeting(state)
+    val paused: Boolean get() = state == MeetingState.Paused
+
+    /** Chunks are reaching the file: recording, not paused, not fighting for the microphone. */
+    val hearing: Boolean get() = state == MeetingState.Recording && !micAlarming
+}
+
+private val PANEL_SHAPE = RoundedCornerShape(12.dp)
+private val BUTTON_SHAPE = RoundedCornerShape(9.dp)
+private val CHIP_SHAPE = RoundedCornerShape(6.dp)
+
+// ── heading ──────────────────────────────────────────────────────────────────
+
+/**
+ * The meeting's name, day and folder, as under the desktop's title bar. The
+ * name and the folder are the recording's: the session saves it under them.
+ */
+@Composable
+private fun MeetingHeading(segments: List<TranscriptSegment>, dayMs: Long, folders: MeetingFolders) {
+    val choices by MeetingDraft.choices.collectAsState()
+    val focus = LocalFocusManager.current
+    val nameLabel = stringResource(R.string.meeting_name_label)
+    Column(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(
+                value = choices.title,
+                onValueChange = MeetingDraft::setTitle,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.titleLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 44.dp)
+                    .semantics { contentDescription = nameLabel },
+                decorationBox = { field ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (choices.title.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.meeting_name_placeholder),
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.outline,
+                                maxLines = 1,
+                            )
+                        }
+                        field()
+                    }
+                },
+            )
+            TranscriptCopy(segments)
+        }
+        // One line: the day and the folder at the start and, for a meeting
+        // started from a draft, a link to the draft at the far end. The link
+        // is measured first and never shrinks; the folder chip gets what is
+        // left (a long folder name truncates) and the rest is empty space.
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Copying works mid-meeting on purpose: the reason to grab a line
-            // is usually that it was just said.
-            CopyTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
-            ShareTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
+            DateChip(dayMs)
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                FolderChip(choices.folder, folders, onOpen = { focus.clearFocus() })
+            }
+            choices.draft?.let { snapshot ->
+                DraftLink(snapshot, agenda = choices.agenda, onOpen = { focus.clearFocus() })
+            }
         }
     }
 }
 
 /**
- * Everything the live panel has to say about the recording's health, most
- * urgent first: the one microphone line ([micLine]), the storage warning, and a
- * transcription problem.
+ * At the far end of the chip row, for a meeting started from a meeting draft
+ * only: the draft, read-only in a sheet ([MeetingDraftSheet]) — its context and
+ * agenda are what the meeting was prepared with, and the reason to look is
+ * usually mid-meeting. The agenda there is the meeting's [agenda], ticked as
+ * the meeting goes. Not a chip: primary-ink text with the document icon, like
+ * the app's other text links, at the chips' type and icon size.
+ *
+ * The screenshot demo's `record-draft` opens the sheet on arrival
+ * ([DemoMode.Navigation.draftSheet]).
  */
 @Composable
-private fun liveNotices(
-    micLine: MicLine?,
-    storageLow: Boolean,
-    issue: TranscriptionIssue?,
-): List<PanelNotice> = buildList {
-    micLine?.let {
-        add(PanelNotice(micLineText(it), if (it.alarming) NoticeTone.ALARM else NoticeTone.INFO))
+private fun DraftLink(snapshot: DraftSnapshot, agenda: List<AgendaItem>, onOpen: () -> Unit) {
+    var open by rememberSaveable { mutableStateOf(false) }
+    val navigation by DemoMode.navigation.collectAsState()
+    LaunchedEffect(navigation?.serial) {
+        if (DemoMode.isActive && navigation?.draftSheet == true) open = true
     }
-    if (storageLow) {
-        add(PanelNotice(stringResource(R.string.meeting_storage_low), NoticeTone.ALARM))
+    val spoken = stringResource(R.string.meeting_view_draft)
+    Row(
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .widthIn(min = 48.dp)
+            .clickable(role = Role.Button) {
+                onOpen()
+                open = true
+            }
+            .clearAndSetSemantics { contentDescription = spoken }
+            .padding(horizontal = 4.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = LibraryIcons.Description,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = stringResource(R.string.meeting_draft_chip),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            softWrap = false,
+        )
     }
-    issue?.let {
-        add(PanelNotice(stringResource(transcriptionIssueRes(it)), transcriptionIssueTone(it)))
+    if (open) {
+        MeetingDraftSheet(
+            draft = snapshot.draft,
+            folder = snapshot.folderName,
+            agenda = agenda,
+            onToggleAgenda = MeetingDraft::toggleAgendaItem,
+            onDismiss = { open = false },
+        )
     }
 }
 
 /**
- * The filing suggestion for this meeting's recording: bound to the meeting
- * destination (so a rotation keeps the offer), told about the recording once
- * the upload has settled, and — in the screenshot demo — seeded instead of
- * asked, because the demo never touches the network.
+ * Copy, beside the name. Copying works mid-meeting on purpose: the reason to
+ * grab a line is usually that it was just said.
  */
 @Composable
-private fun rememberFiling(
-    state: MeetingState,
-    segments: List<TranscriptSegment>,
-    demoFiling: DemoMode.MeetingScenario?,
-): FilingSuggestionViewModel {
+private fun TranscriptCopy(segments: List<TranscriptSegment>) {
     val context = LocalContext.current
-    val filing: FilingSuggestionViewModel = viewModel(
-        factory = FilingSuggestionViewModel.factory(context.parleyContainer),
+    CopyTranscriptButton(
+        text = { TranscriptClipboard.liveTranscript(segments) { speakerLabel(context, it.speaker) } },
+        isEmpty = segments.isEmpty(),
     )
-    LaunchedEffect(demoFiling) {
-        if (demoFiling != null) {
-            filing.seedDemo(
-                recordingId = DemoMode.SETTLED_ID,
-                suggestion = DemoMode.filingSuggestion(),
-                currentTitle = DemoMode.settledTitle(),
-                folders = DemoMode.pickerFolders(),
+}
+
+/** 2026/10/30 — the meeting's day, in the desktop's numeric form, in the primary ink. */
+@Composable
+private fun DateChip(dayMs: Long) {
+    val stamp = remember(dayMs / DAY_MS) { SimpleDateFormat("yyyy/MM/dd", Locale.ROOT).format(Date(dayMs)) }
+    Row(
+        modifier = Modifier
+            .heightIn(min = 26.dp)
+            .clip(CHIP_SHAPE)
+            .background(MaterialTheme.colorScheme.surfaceContainer, CHIP_SHAPE)
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.DateRange,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(13.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = stamp,
+            style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+        )
+    }
+}
+
+private const val DAY_MS = 86_400_000L
+
+/**
+ * Where the recording will land: dashed with 放進資料夾 while nothing but the
+ * personal top level is set, solid with the place once there is one — picked
+ * here, or the app's default destination. Tapping it opens the same folder
+ * picker the filing card uses, whose confirm is a choice, not a move: there is
+ * no recording yet to move.
+ */
+@Composable
+private fun FolderChip(chosen: ChosenFolder?, folders: MeetingFolders, onOpen: () -> Unit) {
+    var choosing by rememberSaveable { mutableStateOf(false) }
+    val label = chosen?.label ?: folders.defaultLabel
+    val shown = label ?: stringResource(R.string.meeting_folder_add)
+    val isOrg = (chosen?.destination ?: folders.default).isOrg
+    val outline = MaterialTheme.colorScheme.outlineVariant
+    val hint = stringResource(R.string.meeting_folder_choose)
+    Row(
+        modifier = Modifier
+            .heightIn(min = 44.dp)
+            .clickable(role = Role.Button, onClickLabel = hint) {
+                onOpen()
+                choosing = true
+            }
+            .clearAndSetSemantics { contentDescription = shown },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .heightIn(min = 26.dp)
+                .widthIn(max = 220.dp)
+                .clip(CHIP_SHAPE)
+                .background(
+                    if (label == null) Color.Transparent else MaterialTheme.colorScheme.surfaceContainer,
+                    CHIP_SHAPE,
+                )
+                .dashedOutline(outline, dashed = label == null)
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = if (isOrg) LibraryIcons.Group else LibraryIcons.Folder,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = shown,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (label == null) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
-    LaunchedEffect(state) {
-        (state as? MeetingState.Finished)?.let { filing.consider(it, segments) }
+    if (choosing) {
+        MeetingFolderPicker(chosen, folders, onDismiss = { choosing = false })
     }
-    return filing
+}
+
+/** A 1 dp hairline round the chip, dashed while nothing is chosen. */
+private fun Modifier.dashedOutline(color: Color, dashed: Boolean): Modifier = drawBehind {
+    val stroke = 1.dp.toPx()
+    val dash = if (dashed) PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 2.dp.toPx())) else null
+    drawRoundRect(
+        color = color,
+        topLeft = Offset(stroke / 2, stroke / 2),
+        size = Size(size.width - stroke, size.height - stroke),
+        cornerRadius = CornerRadius(6.dp.toPx()),
+        style = Stroke(width = stroke, pathEffect = dash),
+    )
 }
 
 /**
- * Under the transcript once the meeting is over: the filing suggestion card
- * and Done — the way out, now that the screen no longer closes itself. Leaving
- * writes nothing; an unanswered offer simply goes with the screen, and the
- * desktop may ask about it later.
- *
- * @param openPicker the screenshot demo's `adjust` route: "Choose another…"
- *   opened with nobody tapping, as iOS's route does.
+ * The picker, for the meeting about to start or in progress. A folder made
+ * here is created on the spot — the one moment someone has said they want it
+ * — and an organization gets a shared copy, as the default destination does.
  */
 @Composable
-private fun FilingFooter(
-    filing: FilingSuggestionViewModel,
-    showsDone: Boolean,
-    onDone: () -> Unit,
-    openPicker: Boolean,
+private fun MeetingFolderPicker(chosen: ChosenFolder?, folders: MeetingFolders, onDismiss: () -> Unit) {
+    val container = rememberContainer()
+    val directory = folders.directory
+    val unfiled = stringResource(R.string.library_folder_unfiled)
+    FolderPickerSheet(
+        scopes = listOf(FolderScope(null, directory.personalFolders)) + directory.scopesFor(null).drop(1),
+        current = chosen?.destination ?: folders.default,
+        options = FolderPickerOptions(
+            title = stringResource(R.string.meeting_folder_choose),
+            confirmLabel = stringResource(R.string.folder_picker_choose),
+            orgHandoff = OrgHandoff.COPY,
+        ),
+        callbacks = FolderPickerCallbacks(
+            onConfirm = { destination ->
+                MeetingDraft.setFolder(ChosenFolder(destination, folders.labelOf(destination) ?: unfiled))
+            },
+            onCreate = if (DemoMode.isActive) {
+                null
+            } else {
+                { name -> container.cloud.createFolder(name).also { folders.created(it) } }
+            },
+            onDismiss = onDismiss,
+        ),
+    )
+}
+
+/**
+ * The folders and organizations the chip and its picker name, and the app's
+ * default destination. Best-effort: an empty directory still lets the user
+ * pick the top level or create a folder.
+ */
+private class MeetingFolders(
+    val directory: FolderDirectory,
+    val default: SaveDestination,
+    val created: (com.pathors.parley.cloud.CloudFolder) -> Unit,
 ) {
-    LaunchedEffect(openPicker) { if (openPicker) filing.card.openPicker() }
-    FilingSuggestionCard(card = filing.card)
-    if (showsDone) {
-        OutlinedButton(
-            onClick = onDone,
+    /** The chip's words for [destination]: the folder, or "Organization · Folder". */
+    fun labelOf(destination: SaveDestination): String? {
+        val orgId = destination.orgId
+        if (orgId == null) return directory.folderName(destination)
+        val org = directory.orgName(orgId).orEmpty()
+        val folder = directory.folderName(destination) ?: return org
+        return "$org · $folder"
+    }
+
+    /** The default destination's words, or null when it is the personal top level. */
+    val defaultLabel: String?
+        get() = if (!default.isOrg && default.folderId == null) null else labelOf(default)
+}
+
+@Composable
+private fun rememberMeetingFolders(inMeeting: Boolean): MeetingFolders {
+    val container = rememberContainer()
+    var directory by remember { mutableStateOf(FolderDirectory()) }
+    val default by container.saveLocation.destination.collectAsState(initial = SaveDestination.PERSONAL_ROOT)
+    // On arrival and again when a meeting starts: a folder made on the desktop
+    // in between is one the picker should offer.
+    LaunchedEffect(inMeeting) {
+        directory = if (DemoMode.isActive) {
+            FolderDirectory(personalFolders = DemoMode.pickerFolders())
+        } else {
+            runCatching { FolderDirectory.load(container.cloud) }.getOrDefault(directory)
+        }
+    }
+    return MeetingFolders(
+        directory = directory,
+        default = if (DemoMode.isActive) SaveDestination.PERSONAL_ROOT else default,
+        created = { folder -> directory = directory.withFolder(null, folder) },
+    )
+}
+
+// ── warning strip ────────────────────────────────────────────────────────────
+
+/**
+ * One warning at a time, under the top of the screen, in the desktop's amber
+ * strip and its order ([currentWarning]): the most urgent thing the meeting is
+ * not doing first.
+ */
+@Composable
+private fun WarningStrip(warning: MeetingWarning?) {
+    val amber = ParleyTheme.colors.warning
+    AnimatedVisibility(visible = warning != null, enter = fadeIn(), exit = fadeOut()) {
+        val shown = warning ?: return@AnimatedVisibility
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .defaultMinSize(minHeight = 48.dp),
+                .background(amber.copy(alpha = 0.12f))
+                .drawBehind {
+                    drawRect(
+                        color = amber.copy(alpha = 0.35f),
+                        topLeft = Offset(0f, size.height - 0.5.dp.toPx()),
+                        size = Size(size.width, 0.5.dp.toPx()),
+                    )
+                }
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .semantics(mergeDescendants = true) {},
+            verticalAlignment = Alignment.Top,
         ) {
-            Text(stringResource(R.string.filing_done))
+            Box(Modifier.padding(top = 2.dp).size(14.dp), contentAlignment = Alignment.Center) {
+                WarningGlyph(shown.tone, amber)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = warningText(shown),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
         }
+    }
+}
+
+@Composable
+private fun WarningGlyph(tone: NoticeTone, amber: Color) {
+    when (tone) {
+        NoticeTone.RECONNECTING -> CircularProgressIndicator(
+            modifier = Modifier.size(12.dp),
+            color = amber,
+            strokeWidth = 1.5.dp,
+        )
+        NoticeTone.TRANSCRIPT_STOPPED -> Icon(
+            imageVector = MeetingIcons.TranscriptStopped,
+            contentDescription = null,
+            tint = amber,
+            modifier = Modifier.size(14.dp),
+        )
+        NoticeTone.ALARM -> Icon(
+            imageVector = Icons.Default.Warning,
+            contentDescription = null,
+            tint = amber,
+            modifier = Modifier.size(14.dp),
+        )
+        NoticeTone.INFO -> Icon(
+            imageVector = OnboardingIcons.Mic,
+            contentDescription = null,
+            tint = amber,
+            modifier = Modifier.size(14.dp),
+        )
+    }
+}
+
+@Composable
+private fun warningText(warning: MeetingWarning): String = when (warning) {
+    is MeetingWarning.Mic -> micLineText(warning.line)
+    MeetingWarning.StorageLow -> stringResource(R.string.meeting_storage_low)
+    is MeetingWarning.Transcription -> stringResource(
+        if (warning.issue == TranscriptionIssue.RECONNECTING) {
+            R.string.meeting_warning_reconnecting
+        } else {
+            transcriptionIssueRes(warning.issue)
+        },
+    )
+}
+
+// ── the dock ─────────────────────────────────────────────────────────────────
+
+/**
+ * Everything the meeting is operated with, together at the bottom: the clock
+ * and the microphone on one line, the live waveform under them — *is it
+ * hearing me* — and the actions. Before a meeting the same three lines, at
+ * rest, with Start recording; between them the last meeting's status line.
+ * Discard sits apart from End on the left, so the two ways out are never side
+ * by side under a thumb.
+ */
+@Composable
+private fun Dock(readout: DockReadout, actions: MeetingActions) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            ClockPill(readout)
+            Spacer(Modifier.weight(1f).widthIn(min = 8.dp))
+            MicChip(readout)
+        }
+        LiveWaveform(level = readout.level, active = readout.hearing, height = 30.dp)
+        if (readout.inMeeting) {
+            MeetingButtons(readout.state, actions)
+        } else {
+            OutcomeLines(readout.state)
+            StartButton(busy = readout.state == MeetingState.Uploading, onStart = actions.onStart)
+        }
+    }
+}
+
+/**
+ * The recording clock: a pulsing red dot and the elapsed time on a grey
+ * capsule. Paused, the dot goes grey and still, and 已暫停 follows the time.
+ * Before a meeting, 0:00 behind a still grey dot. Red is the only colour a
+ * running meeting wears, so it is the only thing here that moves.
+ */
+@Composable
+private fun ClockPill(readout: DockReadout) {
+    // Paused — by the user, or by something holding the microphone — the dot
+    // goes grey and still.
+    val running = readout.hearing
+    val still = rememberAnimationsRemoved()
+    val pulse = if (running && !still) {
+        val transition = rememberInfiniteTransition(label = "recording-dot")
+        transition.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.3f,
+            animationSpec = infiniteRepeatable(tween(PULSE_MS), RepeatMode.Reverse),
+            label = "recording-dot-alpha",
+        ).value
+    } else {
+        1f
+    }
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+            .padding(horizontal = 12.dp, vertical = 5.dp)
+            .semantics(mergeDescendants = true) {},
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .alpha(pulse)
+                .clip(CircleShape)
+                .background(if (running) ParleyTheme.colors.recording else MaterialTheme.colorScheme.outline),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = formatClock(if (readout.inMeeting) readout.elapsed else 0L),
+            style = MaterialTheme.typography.titleSmall.copy(fontFeatureSettings = "tnum"),
+            fontWeight = FontWeight.Medium,
+            color = if (running) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        if (readout.paused) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = stringResource(R.string.meeting_paused),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+private const val PULSE_MS = 900
+
+/**
+ * The microphone, in the spirit of the desktop's `MicChip`: whether it hears
+ * anything (three bars that move with the level), whether the live transcript
+ * is in trouble (its mark in place of the bars), and — opened — which input is
+ * recording and how the meeting stands. The input is in the menu rather than
+ * on the chip: a phone's dock has no room for a device name.
+ */
+@Composable
+private fun MicChip(readout: DockReadout) {
+    var open by remember { mutableStateOf(false) }
+    val input = inputName(readout.inputRoute)
+    val chipLabel = stringResource(R.string.meeting_mic_chip, input)
+    val status = micStatus(readout)
+    Box {
+        Row(
+            modifier = Modifier
+                .heightIn(min = 44.dp)
+                .clickable(role = Role.Button) { open = true }
+                .semantics { contentDescription = listOfNotNull(chipLabel, status).joinToString("\n") },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .height(30.dp)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+                    .padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = OnboardingIcons.Mic,
+                    contentDescription = null,
+                    tint = if (readout.micAlarming) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(15.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                val issue = readout.issue
+                if (readout.inMeeting && issue != null) {
+                    HealthBadge(issue)
+                } else {
+                    ChipMeter(if (readout.hearing) readout.level else 0f)
+                }
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    imageVector = Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.outline,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        text = input,
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                },
+                onClick = {},
+                enabled = false,
+            )
+            if (status != null) {
+                DropdownMenuItem(
+                    text = { Text(text = status, style = MaterialTheme.typography.bodyMedium) },
+                    onClick = { open = false },
+                )
+            }
+        }
+    }
+}
+
+/** The input the meeting records from, by kind — Android names the route, not the device. */
+@Composable
+private fun inputName(route: String?): String = stringResource(
+    when (route) {
+        AudioRouteLabel.BUILT_IN -> R.string.meeting_input_builtin
+        AudioRouteLabel.BLUETOOTH_A2DP, AudioRouteLabel.BLUETOOTH_HFP -> R.string.meeting_input_bluetooth
+        AudioRouteLabel.WIRED -> R.string.meeting_input_wired
+        AudioRouteLabel.USB -> R.string.meeting_input_usb
+        else -> R.string.meeting_mic
+    },
+)
+
+/** The status line the menu carries: how the live transcript stands, or null before a meeting. */
+@Composable
+private fun micStatus(readout: DockReadout): String? {
+    if (!readout.inMeeting) return null
+    val issue = readout.issue
+    return when {
+        issue != null -> stringResource(transcriptionIssueRes(issue))
+        readout.state == MeetingState.Recording -> stringResource(R.string.meeting_transcribing_live)
+        else -> statusLabel(readout.state)
+    }
+}
+
+/** The live transcript's mark on the chip, in place of the bars: an amber spinner, or the bolt. */
+@Composable
+private fun HealthBadge(issue: TranscriptionIssue) {
+    if (issue.isTerminal) {
+        Icon(
+            imageVector = MeetingIcons.TranscriptStopped,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(13.dp),
+        )
+    } else {
+        CircularProgressIndicator(
+            modifier = Modifier.size(11.dp),
+            color = ParleyTheme.colors.warning,
+            strokeWidth = 1.5.dp,
+        )
+    }
+}
+
+/**
+ * Three tiny bars, after the desktop's mic-chip meter: they move with the
+ * microphone's level, and lie flat and grey when nothing is heard — paused,
+ * before a meeting, or a silent room.
+ */
+@Composable
+private fun ChipMeter(level: Float) {
+    val p = min(1.0, sqrt(level.toDouble()))
+    val active = p > 0.03
+    val color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+    Row(
+        modifier = Modifier.height(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        listOf(0.7, 1.0, 0.5).forEach { weight ->
+            val bar: Dp = (3 + (9 * min(1.0, p * weight * 1.6)).roundToInt()).dp
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(bar)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(color),
+            )
+        }
+    }
+}
+
+/** ✕, Pause or Resume, and End — the meeting's three actions. */
+@Composable
+private fun MeetingButtons(state: MeetingState, actions: MeetingActions) {
+    val view = LocalView.current
+    val focus = LocalFocusManager.current
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        DiscardButton(enabled = isLive(state), onDiscard = actions.onDiscard)
+        PauseButton(state, actions.onTogglePause)
+        Spacer(Modifier.weight(1f))
+        EndButton(
+            finishing = state == MeetingState.Finishing,
+            enabled = isLive(state),
+            onEnd = {
+                focus.clearFocus()
+                MeetingHaptics.recordingStopped(view)
+                actions.onStop()
+            },
+        )
+    }
+}
+
+/**
+ * ✕, the desktop title bar's way out, in the dock: throw the meeting away,
+ * after the desktop's own confirmation. Grey, not red — the red belongs in the
+ * confirmation and on End's square.
+ *
+ * The throwing-away goes through `MeetingService.requestDiscard`, the only
+ * path in the app that deletes a recording.
+ */
+@Composable
+private fun DiscardButton(enabled: Boolean, onDiscard: () -> Unit) {
+    val view = LocalView.current
+    val focus = LocalFocusManager.current
+    var confirming by rememberSaveable { mutableStateOf(false) }
+    val label = stringResource(R.string.meeting_cancel)
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clickable(enabled = enabled, role = Role.Button) {
+                focus.clearFocus()
+                confirming = true
+            }
+            .clearAndSetSemantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(42.dp)
+                .clip(BUTTON_SHAPE)
+                .background(MaterialTheme.colorScheme.surfaceVariant, BUTTON_SHAPE),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+    if (confirming) {
+        AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text(stringResource(R.string.meeting_cancel_title)) },
+            text = { ScrollingDialogText(stringResource(R.string.meeting_cancel_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirming = false
+                    MeetingHaptics.recordingDiscarded(view)
+                    onDiscard()
+                }) {
+                    Text(
+                        text = stringResource(R.string.meeting_cancel_confirm),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirming = false }) {
+                    Text(stringResource(R.string.meeting_cancel_keep))
+                }
+            },
+        )
+    }
+}
+
+/**
+ * Dialog body copy that stays readable at the largest font scale: an
+ * `AlertDialog` clips its text slot rather than scrolling it, and the discard
+ * dialog is one whose whole point is the paragraph.
+ */
+@Composable
+private fun ScrollingDialogText(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+    )
+}
+
+/** Pause in the dock's grey; Resume tinted the light primary, the next thing to press. */
+@Composable
+private fun PauseButton(state: MeetingState, onToggle: () -> Unit) {
+    val paused = state == MeetingState.Paused
+    // Inert while the microphone is still opening — there is nothing to pause
+    // yet — and once End has been pressed.
+    val enabled = state == MeetingState.Recording || paused
+    val ink = if (paused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    val label = stringResource(if (paused) R.string.meeting_resume else R.string.meeting_pause)
+    DockButton(
+        enabled = enabled,
+        fill = if (paused) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant,
+        spoken = label,
+        onClick = onToggle,
+        modifier = Modifier.alpha(if (state == MeetingState.Connecting) 0.5f else 1f),
+    ) {
+        Icon(
+            imageVector = if (paused) Icons.Default.PlayArrow else MeetingIcons.Pause,
+            contentDescription = null,
+            tint = ink,
+            modifier = Modifier.size(if (paused) 16.dp else 14.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = ink,
+            maxLines = 1,
+        )
+    }
+}
+
+/** 結束: a small filled red square and the word, in Pause's grey; a spinner while the last sentence drains. */
+@Composable
+private fun EndButton(finishing: Boolean, enabled: Boolean, onEnd: () -> Unit) {
+    val ink = MaterialTheme.colorScheme.onSurfaceVariant
+    val spoken = stringResource(if (finishing) R.string.meeting_finishing else R.string.meeting_end)
+    DockButton(
+        enabled = enabled,
+        fill = MaterialTheme.colorScheme.surfaceVariant,
+        spoken = spoken,
+        onClick = onEnd,
+    ) {
+        Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
+            if (finishing) {
+                CircularProgressIndicator(modifier = Modifier.size(12.dp), color = ink, strokeWidth = 1.5.dp)
+            } else {
+                Box(
+                    Modifier
+                        .size(10.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(ParleyTheme.colors.recording),
+                )
+            }
+        }
+        Spacer(Modifier.width(7.dp))
+        Text(
+            text = stringResource(R.string.meeting_end),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = ink,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * One of the dock's rounded buttons: 42 dp drawn, larger than the desktop's
+ * 32 px because on a phone these are the meeting's main controls under a
+ * thumb, inside a 44 dp target.
+ */
+@Composable
+private fun DockButton(
+    enabled: Boolean,
+    fill: Color,
+    spoken: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .heightIn(min = 44.dp)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .clearAndSetSemantics { contentDescription = spoken },
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .heightIn(min = 42.dp)
+                .clip(BUTTON_SHAPE)
+                .background(fill, BUTTON_SHAPE)
+                .padding(start = 14.dp, end = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) { content() }
+    }
+}
+
+/**
+ * Start recording, the dock's one action before a meeting: the desktop's
+ * light-primary button (its Resume) — blue ink on a faint blue wash. A solid
+ * blue bar was the loudest thing on a screen that is waiting, not asking.
+ * Inert, with a spinner, while the last meeting is still being saved.
+ */
+@Composable
+private fun StartButton(busy: Boolean, onStart: () -> Unit) {
+    val primary = MaterialTheme.colorScheme.primary
+    val label = stringResource(if (busy) R.string.meeting_finishing else R.string.meeting_start)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clickable(enabled = !busy, role = Role.Button, onClick = onStart)
+            .clearAndSetSemantics { contentDescription = label }
+            .alpha(if (busy) 0.6f else 1f),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 42.dp)
+                .clip(BUTTON_SHAPE)
+                .background(primary.copy(alpha = 0.12f), BUTTON_SHAPE),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (busy) {
+                CircularProgressIndicator(modifier = Modifier.size(14.dp), color = primary, strokeWidth = 1.5.dp)
+            } else {
+                Box(
+                    Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(primary),
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = primary,
+            )
+        }
+    }
+}
+
+/**
+ * The last meeting's status between meetings, when it did not end on its
+ * result page: uploading, waiting on the phone (offline, the quota, a
+ * refusal), too short to keep, cut short, or failed.
+ */
+@Composable
+private fun OutcomeLines(state: MeetingState) {
+    val lines: List<Pair<String, Color>> = when (state) {
+        MeetingState.Uploading -> listOf(statusLabel(state) to MaterialTheme.colorScheme.onSurfaceVariant)
+        is MeetingState.Finished -> if (state.interruptedBy != null) {
+            listOf(
+                stringResource(R.string.meeting_interrupted) to MaterialTheme.colorScheme.onSurface,
+                finishedOutcomeText(state) to MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            listOf(finishedOutcomeText(state) to MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        is MeetingState.Failed -> listOf(failureMessage(state.reason) to MaterialTheme.colorScheme.error)
+        else -> emptyList()
+    }
+    lines.forEach { (text, color) ->
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = color,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -688,74 +1544,51 @@ private fun rememberMicBackNotice(micRecovery: MicRecoveryState): Boolean {
     return micBack
 }
 
-/** The clock, the status line, and the copy/share actions. */
-@Composable
-private fun MeetingHeader(elapsed: Long, state: MeetingState, segments: List<TranscriptSegment>) {
-    val context = LocalContext.current
-    val transcript = {
-        TranscriptClipboard.liveTranscript(segments) {
-            speakerLabel(context, it.speaker)
-        }
-    }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = formatClock(elapsed),
-                style = MaterialTheme.typography.displaySmall,
-                fontWeight = FontWeight.Medium,
-            )
-            Text(
-                text = statusLabel(state),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        // Copying works mid-meeting on purpose: the reason to grab a line is
-        // usually that it was just said.
-        CopyTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
-        ShareTranscriptButton(text = transcript, isEmpty = segments.isEmpty())
-    }
-}
-
 /**
  * "The microphone was interrupted n times during this recording" — at the end
  * of a meeting whose capture had to win the microphone back five or more times
- * ([ProblemSignals.isMicRecoveryWorthAsking]). Asked here, while the person is
- * still looking at the meeting it happened in, because this is the failure
- * 1.13 shipped: the input rebuilt itself in a loop, the transcript came back
- * empty, and nobody told us for ten days.
+ * ([ProblemSignals.isMicRecoveryWorthAsking]). Asked while the person is still
+ * looking at the meeting it happened in: on its result page for a meeting that
+ * landed, on the record screen for one that did not. This is the failure 1.13
+ * shipped: the input rebuilt itself in a loop, the transcript came back empty,
+ * and nobody told us for ten days.
  *
  * Once per recording, through the app's frequency limits; leaving the screen
  * without answering counts as brushing it off.
  */
 @Composable
-private fun MicRecoveryPrompt(finished: MeetingState.Finished, segments: List<TranscriptSegment>, elapsedMs: Long) {
-    val id = finished.recordingId ?: return
-    if (!ProblemSignals.isMicRecoveryWorthAsking(finished.micRecoveries)) return
+internal fun MicRecoveryPrompt(
+    recordingId: String,
+    micRecoveries: Int,
+    audioRoute: String?,
+    segments: List<TranscriptSegment>,
+    elapsedMs: Long,
+    modifier: Modifier = Modifier,
+) {
+    if (!ProblemSignals.isMicRecoveryWorthAsking(micRecoveries)) return
     val feedback = rememberContainer().feedback
-    var showing by remember(id) { mutableStateOf(false) }
-    LaunchedEffect(id) {
-        showing = feedback.claimPrompt(FeedbackTrigger.MIC_RECOVERY, id)
+    var showing by remember(recordingId) { mutableStateOf(false) }
+    LaunchedEffect(recordingId) {
+        showing = feedback.claimPrompt(FeedbackTrigger.MIC_RECOVERY, recordingId)
     }
     val stillShowing by rememberUpdatedState(showing)
-    DisposableEffect(id) {
+    DisposableEffect(recordingId) {
         onDispose { if (stillShowing) feedback.promptIgnored(FeedbackTrigger.MIC_RECOVERY) }
     }
     if (!showing) return
-    Spacer(Modifier.height(12.dp))
     DiagnosticsPrompt(
-        text = pluralStringResource(R.plurals.feedback_mic_recovery, finished.micRecoveries, finished.micRecoveries),
+        text = pluralStringResource(R.plurals.feedback_mic_recovery, micRecoveries, micRecoveries),
         onSend = {
             val finals = segments.filter { it.isFinal && !it.isTail() }
             feedback.send(
                 FeedbackTrigger.MIC_RECOVERY,
                 RecordingContext(
-                    recordingId = id,
+                    recordingId = recordingId,
                     recordingDurationMs = elapsedMs,
                     transcriptSegments = finals.size,
                     lastSegmentEndMs = finals.maxOfOrNull { it.endMs } ?: 0L,
-                    audioRoute = finished.audioRoute,
-                    micRecoveries = finished.micRecoveries,
+                    audioRoute = audioRoute,
+                    micRecoveries = micRecoveries,
                 ),
             )
             showing = false
@@ -764,132 +1597,7 @@ private fun MicRecoveryPrompt(finished: MeetingState.Finished, segments: List<Tr
             feedback.promptIgnored(FeedbackTrigger.MIC_RECOVERY)
             showing = false
         },
-    )
-}
-
-/** A meeting the user did not end: say so, say where the audio went, and wait. */
-@Composable
-private fun InterruptedOutcome(finished: MeetingState.Finished, onClose: () -> Unit) {
-    Spacer(Modifier.height(12.dp))
-    Text(
-        text = stringResource(R.string.meeting_interrupted),
-        style = MaterialTheme.typography.bodyMedium,
-    )
-    Text(
-        text = finishedOutcomeText(finished),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    TextButton(onClick = onClose) {
-        Text(stringResource(R.string.action_close))
-    }
-}
-
-@Composable
-private fun FailedOutcome(failed: MeetingState.Failed, onClose: () -> Unit) {
-    Spacer(Modifier.height(12.dp))
-    Text(
-        text = failureMessage(failed.reason),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.error,
-    )
-    TextButton(onClick = onClose) {
-        Text(stringResource(R.string.action_close))
-    }
-}
-
-/**
- * The way out for a recording that should not have started.
- *
- * Stop means *keep this*: it finalizes the audio, uploads it and puts a row in
- * the library. Until this existed a mis-tap had no other exit at all — the
- * recording had to be stopped, uploaded, and then lived in the library forever,
- * because single-recording deletion did not exist either.
- *
- * An outlined capsule with a trash glyph, as iOS draws it since #381
- * (`LiveView.discardControl`). It used to be a line of grey text, which was
- * indistinguishable from the explanatory prose on the same screen and had a
- * tap target one line tall. Ink and a hairline say "tappable" without saying
- * "recommended": not red, because Stop above it is already the screen's one
- * red thing, and not blue, because blue here would be the app recommending
- * that you throw the meeting away. The red belongs in the confirmation, which
- * has it. 44dp tall at the least, whatever the text size.
- *
- * The throwing-away goes through [MeetingService.requestDiscard], which is the
- * only path in the app that deletes a recording. It used to ride on disposal
- * instead, and that stopped being safe the moment every other ending learned to
- * preserve the audio: the dialog would still promise nothing was saved while the
- * `.ogg` sat in the cache directory.
- */
-@Composable
-internal fun DiscardControl(onDiscard: () -> Unit, modifier: Modifier = Modifier) {
-    val view = LocalView.current
-    var confirming by rememberSaveable { mutableStateOf(false) }
-    val label = stringResource(R.string.meeting_discard)
-    // TalkBack has no separate hint slot, so the iOS label and hint are read
-    // as two sentences: what the button is, then what pressing it does.
-    val spoken = stringResource(R.string.meeting_discard_a11y)
-    val capsule = RoundedCornerShape(percent = 50)
-    Row(
-        modifier = modifier
-            .padding(top = 4.dp)
-            .heightIn(min = 44.dp)
-            .clip(capsule)
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, capsule)
-            .clickable(role = Role.Button) { confirming = true }
-            .clearAndSetSemantics { contentDescription = spoken }
-            .padding(horizontal = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.Delete,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-    }
-    if (confirming) {
-        AlertDialog(
-            onDismissRequest = { confirming = false },
-            title = { Text(stringResource(R.string.meeting_discard_title)) },
-            text = { ScrollingDialogText(stringResource(R.string.meeting_discard_body)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirming = false
-                    MeetingHaptics.recordingDiscarded(view)
-                    onDiscard()
-                }) {
-                    Text(
-                        text = stringResource(R.string.meeting_discard_confirm),
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirming = false }) {
-                    Text(stringResource(R.string.action_cancel))
-                }
-            },
-        )
-    }
-}
-
-/**
- * Dialog body copy that stays readable at the largest font scale: an
- * `AlertDialog` clips its text slot rather than scrolling it, and the discard
- * dialog is one whose whole point is the paragraph.
- */
-@Composable
-private fun ScrollingDialogText(text: String) {
-    Text(
-        text = text,
-        modifier = Modifier.verticalScroll(rememberScrollState()),
+        modifier = modifier,
     )
 }
 
@@ -969,6 +1677,13 @@ private fun failureMessage(reason: MeetingFailure): String = when (reason) {
     MeetingFailure.UNKNOWN -> stringResource(R.string.failure_unknown)
 }
 
+// ── the transcript ───────────────────────────────────────────────────────────
+
+/**
+ * The transcript, inside the meeting's muted panel. No tab strip and no label:
+ * while recording the phone shows the transcript and nothing else, so a lone
+ * 逐字稿 tab would only name what is plainly there.
+ */
 @Composable
 private fun LiveTranscript(segments: List<TranscriptSegment>, state: MeetingState) {
     val context = LocalContext.current
@@ -996,17 +1711,7 @@ private fun LiveTranscript(segments: List<TranscriptSegment>, state: MeetingStat
     }
 
     if (segments.isEmpty()) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) {
-            Text(
-                text = stringResource(emptyTranscriptRes(state)),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .widthIn(max = 320.dp)
-                    .padding(horizontal = 8.dp),
-            )
-        }
+        EmptyTranscript(state)
         return
     }
 
@@ -1015,7 +1720,7 @@ private fun LiveTranscript(segments: List<TranscriptSegment>, state: MeetingStat
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 8.dp),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(segments, key = { it.id }) { segment ->
@@ -1041,6 +1746,40 @@ private fun LiveTranscript(segments: List<TranscriptSegment>, state: MeetingStat
                 scope.launch { listState.animateScrollToItem(segments.lastIndex) }
             })
         }
+    }
+}
+
+/**
+ * The panel with nothing in it. Before a meeting, a quiet waveform mark and a
+ * sentence — there is nothing happening yet, so nothing for the signal colour
+ * to point at; during one, the desktop's "Listening…" until somebody speaks.
+ */
+@Composable
+private fun EmptyTranscript(state: MeetingState) {
+    val listening = showsMeeting(state)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 24.dp, end = 24.dp, top = if (listening) 48.dp else 72.dp, bottom = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (!listening) {
+            Icon(
+                imageVector = LibraryIcons.Waveform,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.size(28.dp),
+            )
+            Spacer(Modifier.height(18.dp))
+        }
+        Text(
+            text = stringResource(emptyTranscriptRes(state)),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 320.dp),
+        )
     }
 }
 
@@ -1147,9 +1886,9 @@ private val ArrowDown: ImageVector by lazy {
 }
 
 /**
- * The controls under the transcript can be dragged taller or shorter mid-
- * meeting. A reader who was on the newest line stays on it while the viewport
- * changes size; one who had scrolled back is left where they were.
+ * The panel changes height mid-meeting — a warning strip coming and going, the
+ * keyboard over the name. A reader who was on the newest line stays on it while
+ * the viewport changes size; one who had scrolled back is left where they were.
  */
 private suspend fun LazyListState.stayOnNewestAcrossResizes() {
     var lastHeight = 0
@@ -1171,18 +1910,13 @@ private suspend fun LazyListState.scrollToNewest() {
  * One turn of the live transcript: who, when, and what — the same three facts
  * in the same order as the detail screen and the clipboard. iOS `SegmentRow`.
  *
- * The speaker is plain text, not a coloured mark. There used to be a blue dot
- * on every line, which spent the one signal colour on something that was not
- * happening: blue here means *now*, so only [isCurrent] — the turn the provider
- * has not finalised, the only thing on screen that is still being said — gets
- * it, on its label.
+ * The speaker is plain text, not a coloured mark: blue here means *now*, so
+ * only [isCurrent] — the turn the provider has not finalised, the only thing on
+ * screen that is still being said — gets it, on its label.
  *
- * The words are selectable, the tentative tail included: a phrase is worth
- * grabbing the second it appears, and whether the provider has finalised it yet
- * is not something the person holding the phone can see. A long press anywhere
- * else on the turn — the label, the clock, the space around them — offers Copy
- * of the whole turn, header included, which selection cannot reach because the
- * speaker and the clock are separate texts.
+ * The words are selectable, the tentative tail included. A long press anywhere
+ * else on the turn offers Copy of the whole turn, header included, which
+ * selection cannot reach because the speaker and the clock are separate texts.
  */
 @Composable
 private fun TranscriptLine(segment: TranscriptSegment, speaker: String, isCurrent: Boolean) {
@@ -1258,11 +1992,12 @@ private fun TranscriptLine(segment: TranscriptSegment, speaker: String, isCurren
 }
 
 /**
- * Why there is no microphone yet, and what to do about it.
+ * Why there is no microphone yet, and what to do about it — shown once Start
+ * has been pressed and the permission refused.
  *
  * [blocked] is the case this screen used to have no answer for. Android 11+
  * treats a second refusal as final: the system dialog never appears again and
- * `permissionLauncher.launch()` returns a denial without showing anything, so a
+ * `permissionLauncher.launch()` returns a denial without showing anything, so an
  * "Allow microphone" button becomes a control that does *nothing at all* when
  * pressed. The only remaining route is the app's page in system Settings, so
  * that is what the button becomes.

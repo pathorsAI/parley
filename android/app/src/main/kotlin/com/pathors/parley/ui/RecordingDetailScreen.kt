@@ -638,6 +638,23 @@ private fun DetailToolbarActions(menu: DetailMenu, showsSearch: Boolean, onToggl
     DetailOverflowMenu(menu)
 }
 
+/**
+ * The `mic_recovery` prompt for the meeting that just ended and opened this
+ * page — under the filing card, where the record screen used to ask it.
+ */
+@Composable
+private fun EndedMeetingPrompt(viewModel: RecordingDetailViewModel) {
+    val meeting = viewModel.endedMeeting ?: return
+    MicRecoveryPrompt(
+        recordingId = meeting.recordingId,
+        micRecoveries = meeting.finished.micRecoveries,
+        audioRoute = meeting.finished.audioRoute,
+        segments = meeting.segments,
+        elapsedMs = meeting.elapsedMs,
+        modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+    )
+}
+
 /** Loading, failed, or the player over the recording's body. */
 @Composable
 private fun DetailContent(
@@ -662,6 +679,11 @@ private fun DetailContent(
         )
 
         else -> Column(modifier) {
+            // About the whole recording, not either page: on top, above the
+            // player and the switch, as the desktop's FilingRow heads its
+            // report — and the first thing End's result page says.
+            viewModel.filingCard?.let { FilingSuggestionCard(card = it, gutter = PAGE_GUTTER) }
+            EndedMeetingPrompt(viewModel)
             // An org recording's audio cannot be fetched from here (see
             // `downloadAudio`), so the bar is drawn only when the file is
             // already on this phone — the case where it can actually play.
@@ -680,9 +702,6 @@ private fun DetailContent(
                     markers = state.findings.map { it.atMs },
                 )
             }
-            // About the whole recording, not either page: above the switch,
-            // pinned with the player (docs/design/ios-recording-page.md, D6).
-            viewModel.filingCard?.let { FilingSuggestionCard(card = it, gutter = PAGE_GUTTER) }
             val retranscribe by viewModel.retranscribe.collectAsState()
             val prompts by viewModel.prompts.collectAsState()
             RetranscribeStatus(retranscribe, onStartNow = viewModel::startRetranscriptionNow)

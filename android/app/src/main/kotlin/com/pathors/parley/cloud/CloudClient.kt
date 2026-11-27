@@ -5,8 +5,10 @@ import com.pathors.parley.kit.BatchTranscriptResponse
 import com.pathors.parley.kit.BatchTranscriptionService
 import com.pathors.parley.kit.ChatCompletions
 import com.pathors.parley.kit.ChatGate
+import com.pathors.parley.kit.CloudMeetingDraft
 import com.pathors.parley.kit.CloudChat
 import com.pathors.parley.kit.HttpStatusFailure
+import com.pathors.parley.kit.MeetingDraftJson
 import com.pathors.parley.kit.CloudDictionaryEntry
 import com.pathors.parley.kit.DictionaryPullResponse
 import com.pathors.parley.kit.DictionaryPushResponse
@@ -19,6 +21,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.time.Instant
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -151,9 +154,11 @@ class CloudException(
  * — the OSS app only ever speaks to the cloud over this public API.
  *
  * Scope note: this is the phone's slice of the contract — identity, usage,
- * personal recordings, folders, and the organization calls the library needs
- * (list, read, delete, re-file, share into). Creating and managing
- * organizations stays on the desktop.
+ * personal recordings, folders, the organization calls the library needs
+ * (list, read, delete, re-file, share into), and the three onboarding needs to
+ * land a new account in a team (create one, list my invitations, accept one).
+ * Managing an organization — inviting, roles, renaming, deleting — stays on
+ * the desktop.
  *
  * @param tokenProvider the current bearer token, re-read per request so a
  *   sign-out mid-flight is honoured. A null token sends no `Authorization`
@@ -533,6 +538,55 @@ class CloudClient(
         }
     }
 
+    /**
+     * `POST /auth/organization/create` with `{ name, slug }` — the caller
+     * becomes the new organization's owner (better-auth's organization plugin;
+     * iOS `createOrg`, the desktop's `createOrg`). The name is trimmed and the
+     * slug derived from it by [OrgSlug]; the organization comes back as the
+     * plugin answers it, without a `role` (it is the owner's by construction).
+     */
+    suspend fun createOrg(name: String): CloudOrg {
+        val trimmed = name.trim()
+        val payload = buildJsonObject {
+            put(NAME, JsonPrimitive(trimmed))
+            put("slug", JsonPrimitive(OrgSlug.make(trimmed)))
+        }
+        val text = postJson(url("auth", "organization", "create"), payload)
+        return CloudJson.decodeFromString(CloudOrg.serializer(), text)
+    }
+
+    /**
+     * `GET /auth/organization/list-user-invitations` — the signed-in account's
+     * invitations that can still be accepted: pending and not expired at [now]
+     * ([CloudInvitation.isLive]). The server answers either a bare array or
+     * `{ invitations }`; both are read, and anything else reads as none, the
+     * way [myOrgs] treats an unexpected shape. A malformed row is dropped.
+     */
+    suspend fun myInvitations(now: Instant = Instant.now()): List<CloudInvitation> {
+        val text = getText(url("auth", "organization", "list-user-invitations"))
+        val array = when (val element = runCatching { CloudJson.parseToJsonElement(text) }.getOrNull()) {
+            is JsonArray -> element
+            is JsonObject -> element["invitations"] as? JsonArray
+            else -> null
+        } ?: return emptyList()
+        return array
+            .mapNotNull { item -> (item as? JsonObject)?.let { CloudInvitation.fromJson(it) } }
+            .filter { it.isLive(now) }
+    }
+
+    /**
+     * `POST /auth/organization/accept-invitation` with `{ invitationId }` — the
+     * account becomes a member of that organization. The response
+     * (`{ invitation, member }`) is not read; re-list with [myOrgs] for the
+     * organization as the library sees it.
+     */
+    suspend fun acceptInvitation(id: String) {
+        postJson(
+            url("auth", "organization", "accept-invitation"),
+            buildJsonObject { put("invitationId", JsonPrimitive(id)) },
+        )
+    }
+
     /** `GET /orgs/{orgId}/recordings` — the organization's shared library. */
     suspend fun orgRecordings(orgId: String): List<RecordingSummary> =
         CloudJson.decodeFromString(
@@ -704,6 +758,21 @@ class CloudClient(
         val text = execute(request) { response -> bodyText(response) }
         return CloudJson.decodeFromString(DictionaryPushResponse.serializer(), text)
     }
+
+    // ── meeting drafts (read-only) ───────────────────────────────────────────
+
+    /**
+     * `GET /v1/drafts` — the account's meeting drafts, as the desktop's draft
+     * sync (`src/lib/cloud/draftSync.ts`) pulls them with no cursor; iOS
+     * `listDrafts()`. Drafts are the user's own, not an organization's.
+     * Tombstones may be in the list; `MeetingDraftSchedule.live` leaves them
+     * out. Each row is read on its own ([MeetingDraftJson]), so one bad row
+     * costs that row; a body with no `drafts` array at all is an error. The
+     * phone never writes a draft back (#774).
+     */
+    suspend fun listDrafts(): List<CloudMeetingDraft> =
+        MeetingDraftJson.parseList(getText(url("v1", "drafts")))
+            ?: throw CloudException(status = 0, message = "drafts: the response had no drafts list")
 
     // ── chat (the one-shot LLM passes) ───────────────────────────────────────
 

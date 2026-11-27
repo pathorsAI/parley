@@ -8,10 +8,11 @@ import androidx.compose.ui.unit.dp
 
 /**
  * The glyphs the library needs and the core icon set lacks: folders and
- * organizations, and the row's meta line (clock, findings, audio, on-phone).
+ * organizations, where a recording came from (live, uploaded), and the
+ * row's on-phone mark.
  *
  * The app depends on the core Material icon set only, which has no folder, no
- * tray, no group, no clock and no lightbulb. Pulling in
+ * tray, no group, no waveform and no upload mark. Pulling in
  * `material-icons-extended` for a handful of paths would add thousands of
  * classes for R8 to strip, so these are the Material Symbols
  * paths (Apache 2.0, the same licence as the icon artifact) drawn by hand, at
@@ -67,38 +68,43 @@ internal object LibraryIcons {
         )
     }
 
+
+
+
     /**
-     * A lightbulb, outlined — findings, the same glyph iOS puts on the row and
-     * on the detail screen's findings section.
+     * Vertical bars of a level meter — a recording made live (iOS `waveform`,
+     * Material `graphic_eq`).
      */
-    val Lightbulb: ImageVector by lazy {
+    val Waveform: ImageVector by lazy {
         icon(
-            "Lightbulb",
-            "M9,21c0,0.55 0.45,1 1,1h4c0.55,0 1,-0.45 1,-1v-1L9,20v1zM12,2C8.14,2 5,5.14 5,9" +
-                "c0,2.38 1.19,4.47 3,5.74L8,17c0,0.55 0.45,1 1,1h6c0.55,0 1,-0.45 1,-1v-2.26" +
-                "c1.81,-1.27 3,-3.36 3,-5.74 0,-3.86 -3.14,-7 -7,-7zM14.85,13.1l-0.85,0.6L14,16h-4" +
-                "v-2.3l-0.85,-0.6C7.8,12.16 7,10.63 7,9c0,-2.76 2.24,-5 5,-5s5,2.24 5,5" +
-                "c0,1.63 -0.8,3.16 -2.15,4.1z",
+            "Waveform",
+            "M7,18h2V6H7v12zM11,22h2V2h-2v20zM3,14h2v-4H3v4zM15,18h2V6h-2v12zM19,10v4h2v-4h-2z",
         )
     }
 
-    /** A speaker with sound — the recording has audio (iOS `speaker.wave.2`). */
-    val Speaker: ImageVector by lazy {
+    /**
+     * A document with an arrow going up out of it — a recording that came in as
+     * an uploaded file, and the Library's Import button (iOS `arrow.up.doc`,
+     * Material `upload_file`). One glyph for both, so the button and what it
+     * makes look alike.
+     */
+    val UploadDoc: ImageVector by lazy {
         icon(
-            "Speaker",
-            "M3,9v6h4l5,5V4L7,9H3zM16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v8.05" +
-                "c1.48,-0.73 2.5,-2.25 2.5,-4.02zM14,3.23v2.06c2.89,0.86 5,3.54 5,6.71" +
-                "s-2.11,5.85 -5,6.71v2.06c4.01,-0.91 7,-4.49 7,-8.77s-2.99,-7.86 -7,-8.77z",
+            "UploadDoc",
+            "M14,2H6c-1.1,0 -1.99,0.9 -1.99,2L4,20c0,1.1 0.89,2 1.99,2H18c1.1,0 2,-0.9 2,-2V8l-6,-6z" +
+                "M18,20H6V4h7v5h5v11zM8,15.01l1.41,1.41L11,14.84V19h2v-4.16l1.59,1.59L16,15.01 12.01,11z",
         )
     }
 
-    /** A clock face — a duration (iOS `clock`). */
-    val Clock: ImageVector by lazy {
+    /**
+     * A page with lines of text — the record screen's "view the meeting
+     * draft" (Material `description`, outlined).
+     */
+    val Description: ImageVector by lazy {
         icon(
-            "Clock",
-            "M11.99,2C6.47,2 2,6.48 2,12s4.47,10 9.99,10C17.52,22 22,17.52 22,12S17.52,2 11.99,2z" +
-                "M12,20c-4.42,0 -8,-3.58 -8,-8s3.58,-8 8,-8 8,3.58 8,8 -3.58,8 -8,8z" +
-                "M12.5,7H11v6l5.25,3.15 0.75,-1.23 -4.5,-2.67z",
+            "Description",
+            "M8,16h8v2H8zM8,12h8v2H8zM14,2H6c-1.1,0 -1.99,0.9 -1.99,2L4,20c0,1.1 0.89,2 1.99,2H18" +
+                "c1.1,0 2,-0.9 2,-2V8l-6,-6zM18,20H6V4h7v5h5v11z",
         )
     }
 

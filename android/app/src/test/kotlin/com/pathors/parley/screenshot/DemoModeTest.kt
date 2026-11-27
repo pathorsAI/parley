@@ -1,5 +1,7 @@
 package com.pathors.parley.screenshot
 
+import com.pathors.parley.kit.MeetingDraftSchedule
+import com.pathors.parley.ui.LibraryRules
 import com.pathors.parley.ui.RecordingDetailViewModel
 import java.util.Locale
 import org.junit.Assert.assertEquals
@@ -26,7 +28,8 @@ class DemoModeTest {
     fun `library is populated in both languages`() {
         listOf(en, zh).forEach { locale ->
             val recordings = DemoMode.recordings(locale)
-            assertEquals(3, recordings.size)
+            // Enough for the overview's four recent rows and a See all with more.
+            assertEquals(5, recordings.size)
             recordings.forEach { recording ->
                 assertTrue(recording.title.isNotBlank())
                 assertTrue(recording.snippet.orEmpty().isNotBlank())
@@ -115,6 +118,32 @@ class DemoModeTest {
     }
 
     @Test
+    fun `the drafts fill both overview sections and a see-all, in both languages`() {
+        val now = 1_786_498_800_000L
+        val folderIds = DemoMode.folders(en).map { it.id }.toSet()
+        val english = DemoMode.drafts(en, now)
+        val chinese = DemoMode.drafts(zh, now)
+        assertEquals(6, english.size)
+        assertEquals(english.map { it.id }, chinese.map { it.id })
+        english.zip(chinese).forEach { (a, b) ->
+            assertTrue(a.title.isNotBlank())
+            assertNotEquals(a.title, b.title)
+            assertEquals(a.meetingContext.isBlank(), b.meetingContext.isBlank())
+            a.meetingFolderId?.let { assertTrue(it in folderIds) }
+        }
+        val split = MeetingDraftSchedule.split(english, now)
+        assertEquals(listOf(DemoMode.DRAFT_FULL_ID), split.startingSoon.map { it.id })
+        // More than the drafts section shows, so See all is there; the untimed one last.
+        assertTrue(split.later.size > LibraryRules.RECENT_COUNT)
+        assertEquals("demo-draft-meridian", split.later.last().id)
+        assertTrue(DemoMode.DRAFT_SHORT_ID in split.later.map { it.id })
+        val short = english.first { it.id == DemoMode.DRAFT_SHORT_ID }
+        assertTrue(short.meetingContext.isEmpty() && short.todos.isEmpty())
+        assertNotNull(short.meetingAt)
+        assertNotNull(short.meetingFolderId)
+    }
+
+    @Test
     fun `nothing points at a real person, company or address`() {
         val text = listOf(en, zh).flatMap { locale ->
             DemoMode.recordings(locale).flatMap { listOf(it.title, it.snippet.orEmpty()) } +
@@ -140,6 +169,23 @@ class DemoModeTest {
         }
     }
 
+    @Test
+    fun `the onboarding invitation is live and named in both languages`() {
+        val english = DemoMode.invitations(en)
+        val chinese = DemoMode.invitations(zh)
+        assertEquals(1, english.size)
+        assertEquals(english.map { it.id }, chinese.map { it.id })
+        english.zip(chinese).forEach { (a, b) ->
+            assertTrue(a.isLive())
+            assertTrue(a.organizationName.orEmpty().isNotBlank())
+            assertTrue(b.organizationName.orEmpty().isNotBlank())
+            assertNotEquals(a.organizationName, b.organizationName)
+        }
+        // A different org from the one the demo account is already in, so
+        // accepting it reads as joining something new.
+        assertFalse(english.any { it.organizationId == DemoMode.ORG_ID })
+    }
+
     /**
      * The library shows folder chips and a folder name on the cards, so the
      * fixtures must file some recordings and leave one at the root — every
@@ -147,6 +193,9 @@ class DemoModeTest {
      */
     @Test
     fun `the library has filed and unfiled recordings in live folders`() {
+        // One folder is left empty, for the empty card and its empty page.
+        assertTrue(DemoMode.recordings(en).none { it.folderId == DemoMode.EMPTY_FOLDER_ID })
+        assertTrue(DemoMode.folders(en).any { it.id == DemoMode.EMPTY_FOLDER_ID })
         val folderIds = DemoMode.folders(en).map { it.id }.toSet()
         val filed = DemoMode.recordings(en).mapNotNull { it.folderId }
         assertTrue(filed.isNotEmpty())
@@ -163,7 +212,7 @@ class DemoModeTest {
     fun `the picker folders are many, distinct, and include the library's`() {
         listOf(en, zh).forEach { locale ->
             val picker = DemoMode.pickerFolders(locale)
-            assertEquals(15, picker.size)
+            assertEquals(16, picker.size)
             assertEquals(picker.size, picker.map { it.id }.toSet().size)
             assertEquals(picker.size, picker.map { it.name }.toSet().size)
             assertTrue(picker.map { it.id }.containsAll(DemoMode.folders(locale).map { it.id }))
@@ -177,6 +226,10 @@ class DemoModeTest {
         assertTrue(shared.isNotEmpty())
         assertTrue(shared.mapNotNull { it.folderId }.all { it in orgFolderIds })
         assertTrue(DemoMode.orgRecordings("someone-else", en).isEmpty())
+        // Its own set, not the personal one shared in: switching scope has to
+        // change the page.
+        assertTrue(shared.none { org -> DemoMode.recordings(en).any { it.id == org.id } })
+        assertTrue(shared.all { DemoMode.meta(it.id, en) != null })
         assertEquals(DemoMode.ORG_ID, DemoMode.saveDestination().orgId)
         assertTrue(DemoMode.saveDestination().folderId in orgFolderIds)
     }

@@ -46,9 +46,15 @@ com.pathors.parley
   ui/
     ParleyRoot.kt        sign-in wall, NavHost, the SAF picker; the recording
                          route's `guided` argument; OpenFor
-    OnboardingScreen.kt  the sign-in page: headline, intro film, sign-in button
-    IntroStage.kt        the sign-in page's ~7 s film of the lap (IntroFilm)
-    SignInScreen.kt      Custom Tab hand-off
+    OnboardingScreen.kt  signed out: the wizard's welcome and account steps;
+                         LaunchScreen
+    OnboardingWizard.kt  the onboarding wizard: steps, header, footer, hero bars,
+                         the shared buttons and cards
+    OnboardingSteps.kt   welcome, account (Custom Tab sign-in), organization
+                         (OnboardingOrgModel), permissions, context, done
+    OnboardingMic.kt     the microphone check and MicCheckModel
+    OnboardingIcons.kt   the glyphs the wizard needs beyond the core icon set
+    IntroStage.kt        the welcome demo, a phone-sized run of the product (IntroFilm)
     HomeScreen.kt        library: scope switcher, folder chips, pending queue, row
                          menu (download / folder / share / move to org / delete),
                          the import notice, the "add" actions
@@ -342,21 +348,25 @@ The library mirrors iOS `LibraryView` (and the desktop History window):
   `POST /recordings/{id}/share` into the org (and folder) chosen. See
   `api-cloud.md`.
 
-## Getting started: the intro film, the checklist, the sample, the hand-off
+## Getting started: the onboarding wizard, the checklist, the sample, the hand-off
 
 A port of iOS onboarding v2 (#450; Android's first cut was the v1 checklist of
 #435), including the guide bar that walks the lap on the recording page.
 
-- **Sign-in page.** `OnboardingScreen` leads with the iOS headline and subline,
-  then `IntroStage`: a ~7 s film that plays once — a recording pill, the
-  sample's first three lines typing at 22 ms/char with their speakers, the
-  customer folder sliding in and the suggestion card dropping into it, the share
-  glyph lighting — with one caption per beat. The schedule is parleykit's
-  `LapMotion.introBeats` (unit-tested); the cast is `IntroFilm.of(manifest)`.
-  With "Remove animations" on it shows the final frame; TalkBack reads the three
-  points iOS gives VoiceOver. The stage has its final height from the first
-  frame, and the caption (`IntroCaption`) floats: under the stage when that is
-  on screen, else pinned just above the sign-in button (`stickyCaptionTop`).
+- **Onboarding wizard.** iOS `OnboardingView` / `OnboardingSteps`, the
+  desktop wizard's Cloud route: welcome → account → organization → permissions
+  → microphone check → context → done. Signed out, `OnboardingScreen` is the
+  welcome and the account step; a sign-in started there sets
+  `onboarding.afterSignIn`, and `ParleyRoot` lays the rest of the wizard over
+  the library from the signed-in confirmation on, resuming on
+  `onboarding.step`. Users signed in before the wizard existed never see it.
+  The flags live in `OnboardingFlags` (SharedPreferences `parley_onboarding_flags`,
+  the iOS keys). The welcome demo (`IntroStage`) is driven by one frame clock
+  against parleykit's `LapMotion.WelcomeSchedule`; with "Remove animations" on
+  it shows the final frame. The microphone check streams to the relay, tidies
+  the sentence with `MicIntro` and the hosted model, appends it to the speaker
+  background (`onboarding.userBackground`) and adds the names it heard to the
+  personal dictionary; testing again undoes the previous run first.
 - **Checklist.** Above the personal library, not while searching: record, put
   it in a folder, replay, share with your AI. Each item ticks only from the real
   event — a recording saved in the upload queue, a successful filing (or a
@@ -680,6 +690,16 @@ adb shell am start -a android.intent.action.VIEW -d "'parley://demo/library'"
 | `parley://demo/report` | The featured recording on its report face, every artifact done |
 | `parley://demo/report-analyzing` | The same mid-pipeline: action items and delivery generating, the brief queued |
 | `parley://demo/report-menu` | The report with the analysis menu open |
+| `parley://demo/welcome` | Onboarding 1/7: the signed-out welcome demo |
+| `parley://demo/onboarding-account` | Onboarding 2/7: Cloud or Local (signed out) |
+| `parley://demo/onboarding-signed-in` | Onboarding 2/7: signed in to Cloud |
+| `parley://demo/onboarding-org` | Onboarding 3/7: create an organization or go personal |
+| `parley://demo/onboarding-invited` | The same, with an invitation to join |
+| `parley://demo/onboarding-joined` | The same, already a member |
+| `parley://demo/onboarding-perms` | Onboarding 4/7: microphone (and, on 13+, notification) permission |
+| `parley://demo/onboarding-mic` | Onboarding 5/7: the microphone check — Start types a sentence over fake levels |
+| `parley://demo/onboarding-context` | Onboarding 6/7: the speaker background and terms |
+| `parley://demo/onboarding-done` | Onboarding 7/7: you're all set |
 | `parley://demo/off` | Leave demo mode |
 
 The fixtures include two personal folders, one organization ("Sales team",
@@ -700,6 +720,11 @@ scripted `DemoMeetingSession` rather than the microphone and the foreground
 service), and **no residue** (the flag is in memory, so `off` or a restart is
 the whole clean-up). `BuildConfig.DEBUG` gates activation, so a release build
 cannot be talked into serving fixtures.
+
+`android/scripts/preview.sh <route> [en|zh] [--no-build]` does all of it in one
+go — `./gradlew installDebug`, the per-app language (Android 13+), a fresh
+process and the deep link — the same way `ios/scripts/preview.sh` previews the
+iPhone app; `--list` prints every route.
 
 Fixture copy is written separately in English and Traditional Chinese and picked
 by the device locale, because the screenshot sets are captured per-locale —

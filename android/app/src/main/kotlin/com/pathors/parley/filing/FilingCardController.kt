@@ -63,8 +63,8 @@ class FilingCardCues(private val scope: CoroutineScope) {
 
 /**
  * Everything the filing card can do, bound to one [FilingSuggestionModel] and
- * the scopes it runs in. Shared by the meeting screen and the recording page,
- * which differ only in how the offer arrives (a pass run on the spot, or a
+ * the scopes it runs in. Used by the recording page (End's result page included),
+ * whose two ways in differ only in how the offer arrives (a pass run on the spot, or a
  * suggestion already pending on the recording) — the answers are the same.
  *
  * The card is a form with one commit. A chip tap, Return in the name field,

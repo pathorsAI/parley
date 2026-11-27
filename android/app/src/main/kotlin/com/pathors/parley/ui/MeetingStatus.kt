@@ -159,16 +159,67 @@ internal fun transcriptionIssueRes(issue: TranscriptionIssue): Int = when (issue
 }
 
 /**
- * Which sentence the empty transcript shows: iOS's "Hit record…" until the
- * microphone is actually open, and "the transcript appears here as people
- * speak" once it is and nobody has yet.
+ * Which sentence the empty transcript panel shows: iOS's "Hit record…" before
+ * a meeting (and after one that said nothing), and the desktop's "Listening…"
+ * from the moment the meeting starts until somebody speaks.
  */
 @StringRes
 internal fun emptyTranscriptRes(state: MeetingState): Int =
-    if (state is MeetingState.Idle || state is MeetingState.Connecting) {
-        R.string.meeting_idle_hint
-    } else {
-        R.string.meeting_transcript_empty
+    if (showsMeeting(state)) R.string.meeting_listening else R.string.meeting_idle_hint
+
+/**
+ * Whether the screen is the meeting's — the dock with the clock, Pause and End
+ * — rather than the one before a meeting. It stays up through
+ * [MeetingState.Finishing], the relay draining its last sentence, so End can
+ * turn into its spinner where it was pressed instead of the screen changing
+ * under the finger. iOS `LiveView.showsMeeting`.
+ */
+internal fun showsMeeting(state: MeetingState): Boolean =
+    isLive(state) || state == MeetingState.Finishing
+
+/**
+ * Whether a finished meeting ends on its result page, as the desktop's End
+ * does: the user ended it and the cloud has it (the page reads the recording
+ * from there). Anything else — still on the phone (offline, the quota, a
+ * refusal), too short to keep, or cut short by the microphone or the disk —
+ * stays on the record screen with its status line, which is the only place
+ * that says what happened.
+ */
+internal fun endsOnResultPage(state: MeetingState): Boolean =
+    state is MeetingState.Finished && state.recordingId != null &&
+        !state.pendingUpload && !state.dropped && state.interruptedBy == null
+
+/**
+ * The one warning strip under the top of the meeting screen. The desktop's
+ * `LiveBanners` show one at a time, most urgent first, and so does this: what
+ * Android can detect, in this order — a microphone that is gone, being fought
+ * for or silenced (the recording itself is at risk), the disk filling, the
+ * live transcript reconnecting or over (the recording is unaffected), and the
+ * passing "microphone is back".
+ */
+internal sealed interface MeetingWarning {
+    val tone: NoticeTone
+
+    data class Mic(val line: MicLine) : MeetingWarning {
+        override val tone: NoticeTone get() = if (line.alarming) NoticeTone.ALARM else NoticeTone.INFO
+    }
+
+    data object StorageLow : MeetingWarning {
+        override val tone: NoticeTone get() = NoticeTone.ALARM
+    }
+
+    data class Transcription(val issue: TranscriptionIssue) : MeetingWarning {
+        override val tone: NoticeTone get() = transcriptionIssueTone(issue)
+    }
+}
+
+internal fun currentWarning(mic: MicLine?, storageLow: Boolean, issue: TranscriptionIssue?): MeetingWarning? =
+    when {
+        mic != null && mic.alarming -> MeetingWarning.Mic(mic)
+        storageLow -> MeetingWarning.StorageLow
+        issue != null -> MeetingWarning.Transcription(issue)
+        mic != null -> MeetingWarning.Mic(mic)
+        else -> null
     }
 
 /**
