@@ -10,6 +10,7 @@ import com.pathors.parley.cloud.TranscriptSegmentDto
 import com.pathors.parley.cloud.msPrimitive
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.library.SaveLocationStore
+import com.pathors.parley.meeting.AgendaItem
 import com.pathors.parley.playback.AudioRetention
 import com.pathors.parley.playback.LocalAudioStore
 import com.pathors.parley.util.deleteQuietly
@@ -26,6 +27,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.addJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -73,6 +75,8 @@ data class EnqueueRequest(
      * was started from one. Saved into the recording's `meetingContext`.
      */
     val meetingContext: String = "",
+    /** The meeting's agenda as ticked, when it was started from a draft. Saved into the recording's `agenda`. */
+    val agenda: List<AgendaItem> = emptyList(),
 )
 
 /** What one [MeetingUploader.drain] pass achieved. */
@@ -243,6 +247,7 @@ class MeetingUploader(
             filedByUser = request.filedByUser,
             // Blank saves "" — only a draft's context is worth carrying.
             meetingContext = request.meetingContext.takeIf { it.isNotBlank() }.orEmpty(),
+            agenda = request.agenda,
         )
         queue.enqueue(pending, request.audio)
         onSaved()
@@ -725,8 +730,29 @@ class MeetingUploader(
                 // question is answered, and the flag is how every platform
                 // knows not to ask it. iOS `MeetingUploader.buildMeta`.
                 if (pending.namedByUser && pending.filedByUser) put("filingSuggested", true)
+                // Only a meeting with an agenda writes one — the desktop's
+                // `agendaField` — so every other meta is as before.
+                if (pending.agenda.isNotEmpty()) put("agenda", agendaJson(pending.agenda))
             }
         )
+
+        /**
+         * The desktop's `TodoItem[]`: `id`, `text`, `done`, and the optional
+         * fields only when set — an absent `doneBy` is what an unticked (or
+         * never-attributed) item looks like there.
+         */
+        private fun agendaJson(agenda: List<AgendaItem>): JsonArray = buildJsonArray {
+            agenda.forEach { item ->
+                addJsonObject {
+                    put("id", item.id)
+                    put("text", item.text)
+                    put("done", item.done)
+                    item.doneBy?.let { put("doneBy", it) }
+                    item.doneAtMs?.let { put("doneAtMs", it) }
+                    if (item.aiDismissed) put("aiDismissed", true)
+                }
+            }
+        }
 
         /**
          * The entry a repeated upload pushes when the cloud already has one:

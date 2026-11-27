@@ -60,6 +60,14 @@ data class MeetingChoices(
      * with the rest of these choices ([MeetingDraft.clear], [MeetingDraft.dropDraft]).
      */
     val draft: DraftSnapshot? = null,
+    /**
+     * The meeting's agenda, ticked as it goes: the draft's agenda (with the
+     * done state the draft had) when it was started from one, else empty.
+     * The record screen's draft sheet shows and ticks this, not the draft's
+     * — the phone never writes the draft. Saved into the recording's meta as
+     * `agenda`, as the desktop's meeting saves its `todos`.
+     */
+    val agenda: List<AgendaItem> = emptyList(),
 ) {
     /** The name the recording is saved under, or null for its clock name. */
     val typedTitle: String? get() = title.trim().takeIf { it.isNotEmpty() }
@@ -85,6 +93,9 @@ object MeetingDraft {
     fun setTitle(title: String) = _choices.update { it.copy(title = title) }
 
     fun setFolder(folder: ChosenFolder?) = _choices.update { it.copy(folder = folder) }
+
+    /** The user's tap on an agenda item — [MeetingAgenda.toggle]. */
+    fun toggleAgendaItem(id: String) = _choices.update { it.copy(agenda = MeetingAgenda.toggle(it.agenda, id)) }
 
     /** Saved under them (or kept on the phone under them): forget them. */
     fun clear() {

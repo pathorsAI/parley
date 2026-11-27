@@ -1043,6 +1043,8 @@ class MeetingSession(
                         filedByUser = chosen.filed,
                         // A draft's context, when it was started from one.
                         meetingContext = chosen.meetingContext,
+                        // The draft's agenda as ticked during the meeting.
+                        agenda = chosen.agenda,
                     )
                 )
             } catch (e: Throwable) {

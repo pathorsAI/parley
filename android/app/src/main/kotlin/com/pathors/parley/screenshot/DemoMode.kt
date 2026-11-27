@@ -28,6 +28,7 @@ import com.pathors.parley.meeting.EndedMeeting
 import com.pathors.parley.meeting.ImportFailure
 import com.pathors.parley.meeting.ImportState
 import com.pathors.parley.meeting.ImportTranscript
+import com.pathors.parley.meeting.MeetingAgenda
 import com.pathors.parley.meeting.MeetingChoices
 import com.pathors.parley.meeting.MeetingState
 import com.pathors.parley.onboarding.SampleRecordingStore
@@ -1321,6 +1322,7 @@ object DemoMode {
             meetingContext = draft.meetingContext,
             draftId = draft.id,
             draft = DraftSnapshot(draft, renewals),
+            agenda = MeetingAgenda.fromDraft(draft.todos),
         )
     }
 

@@ -320,8 +320,12 @@ as a history entry, so the key names are load-bearing.
   "meetingFloor": "",
   "audio": "audio.ogg",
   "analyzed": false,         // the findings/action-items pipeline has not run
-  "folderId": "…"            // on upload, written ONLY when set — absent means the personal root.
+  "folderId": "…",           // on upload, written ONLY when set — absent means the personal root.
                              // A re-file writes it always, null to un-file (RecordingMeta.withFolderId).
+  "agenda": [                // ONLY for a meeting started from a meeting draft with an agenda
+    { "id": "…", "text": "…", "done": true, "doneBy": "user" }
+                             // desktop TodoItem: doneBy / doneAtMs / aiDismissed only when set
+  ]
 }
 ```
 

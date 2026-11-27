@@ -2,6 +2,10 @@ package com.pathors.parley.upload
 
 import com.pathors.parley.cloud.CloudJson
 import com.pathors.parley.cloud.RecordingMeta
+import com.pathors.parley.meeting.AgendaItem
+import com.pathors.parley.meeting.MeetingAgenda
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -78,5 +82,49 @@ class MeetingUploaderChoicesTest {
         assertEquals("Renewal with Acme.", CloudJson.decodeFromString(PendingUpload.serializer(), written).meetingContext)
         val old = """{"id":"rec-1","title":"Meeting","startedAtMs":1,"durationMs":2.0}"""
         assertEquals("", CloudJson.decodeFromString(PendingUpload.serializer(), old).meetingContext)
+    }
+
+    private val ticked = listOf(
+        AgendaItem(id = "a", text = "Renewal terms", done = true, doneBy = MeetingAgenda.BY_USER),
+        AgendaItem(id = "b", text = "Seats"),
+        AgendaItem(id = "c", text = "Discount", aiDismissed = true),
+    )
+
+    @Test
+    fun `the meeting's agenda lands in the meta's agenda, optional fields only when set`() {
+        val meta = MeetingUploader.buildMeta(pending(named = true, filed = false).copy(agenda = ticked))
+        val items = (meta.raw["agenda"] as JsonArray).map { it as JsonObject }
+        assertEquals(3, items.size)
+        assertEquals(
+            mapOf(
+                "id" to JsonPrimitive("a"),
+                "text" to JsonPrimitive("Renewal terms"),
+                "done" to JsonPrimitive(true),
+                "doneBy" to JsonPrimitive("user"),
+            ),
+            items[0].toMap(),
+        )
+        assertEquals(
+            mapOf("id" to JsonPrimitive("b"), "text" to JsonPrimitive("Seats"), "done" to JsonPrimitive(false)),
+            items[1].toMap(),
+        )
+        assertEquals(JsonPrimitive(true), items[2]["aiDismissed"])
+        assertNull(items[2]["doneBy"])
+    }
+
+    @Test
+    fun `a meeting without an agenda writes no agenda key`() {
+        assertFalse(MeetingUploader.buildMeta(pending(named = false, filed = false)).raw.containsKey("agenda"))
+    }
+
+    @Test
+    fun `the agenda survives the manifest, and an old manifest reads as none`() {
+        val written = CloudJson.encodeToString(
+            PendingUpload.serializer(),
+            pending(named = true, filed = true).copy(agenda = ticked),
+        )
+        assertEquals(ticked, CloudJson.decodeFromString(PendingUpload.serializer(), written).agenda)
+        val old = """{"id":"rec-1","title":"Meeting","startedAtMs":1,"durationMs":2.0}"""
+        assertTrue(CloudJson.decodeFromString(PendingUpload.serializer(), old).agenda.isEmpty())
     }
 }

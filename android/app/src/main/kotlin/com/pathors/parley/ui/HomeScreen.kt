@@ -117,6 +117,7 @@ import com.pathors.parley.library.LibraryFolders
 import com.pathors.parley.library.SaveDestination
 import com.pathors.parley.meeting.ChosenFolder
 import com.pathors.parley.meeting.DraftSnapshot
+import com.pathors.parley.meeting.MeetingAgenda
 import com.pathors.parley.meeting.MeetingChoices
 import com.pathors.parley.meeting.MeetingService
 import com.pathors.parley.meeting.isInProgress
@@ -323,7 +324,8 @@ fun HomeScreen(
     // A draft's 開始, as the desktop's `startDraft` loads it into the prep
     // (`prepFromDraft`): its title, trimmed; its folder when that is one of
     // the personal folders (as the record screen's picker would offer it);
-    // and its context, which the recording's meta carries.
+    // its context, which the recording's meta carries; and its agenda, which
+    // the meeting ticks as it goes (the draft itself is never written).
     val startDraft: (CloudMeetingDraft) -> Unit = { draft ->
         val folder = draft.meetingFolderId?.let { id ->
             draftFolderName(id)?.let { name -> ChosenFolder(SaveDestination(folderId = id), name) }
@@ -335,6 +337,7 @@ fun HomeScreen(
                 meetingContext = draft.meetingContext,
                 draftId = draft.id,
                 draft = DraftSnapshot(draft, draftFolderName(draft.meetingFolderId)),
+                agenda = MeetingAgenda.fromDraft(draft.todos),
             ),
         )
     }

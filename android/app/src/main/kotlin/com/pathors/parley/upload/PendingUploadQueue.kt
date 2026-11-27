@@ -4,6 +4,7 @@ import android.content.Context
 import com.pathors.parley.cloud.CloudJson
 import com.pathors.parley.cloud.RecordingSource
 import com.pathors.parley.cloud.TranscriptSegmentDto
+import com.pathors.parley.meeting.AgendaItem
 import com.pathors.parley.util.deleteQuietly
 import java.io.File
 import kotlinx.serialization.Serializable
@@ -83,6 +84,12 @@ data class PendingUpload(
      * before it existed (decoded by default).
      */
     val meetingContext: String = "",
+    /**
+     * The meeting's agenda as it was ticked — a meeting draft's, when it was
+     * started from one — which the meta's `agenda` carries. Empty otherwise,
+     * and on every manifest written before it existed (decoded by default).
+     */
+    val agenda: List<AgendaItem> = emptyList(),
 )
 
 /**

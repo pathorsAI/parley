@@ -125,6 +125,7 @@ import com.pathors.parley.kit.TranscriptSegment
 import com.pathors.parley.library.FolderDirectory
 import com.pathors.parley.library.FolderScope
 import com.pathors.parley.library.SaveDestination
+import com.pathors.parley.meeting.AgendaItem
 import com.pathors.parley.meeting.ChosenFolder
 import com.pathors.parley.meeting.DraftSnapshot
 import com.pathors.parley.meeting.EndedMeeting
@@ -640,7 +641,7 @@ private fun MeetingHeading(segments: List<TranscriptSegment>, dayMs: Long, folde
                 FolderChip(choices.folder, folders, onOpen = { focus.clearFocus() })
             }
             choices.draft?.let { snapshot ->
-                DraftLink(snapshot, onOpen = { focus.clearFocus() })
+                DraftLink(snapshot, agenda = choices.agenda, onOpen = { focus.clearFocus() })
             }
         }
     }
@@ -650,14 +651,15 @@ private fun MeetingHeading(segments: List<TranscriptSegment>, dayMs: Long, folde
  * At the far end of the chip row, for a meeting started from a meeting draft
  * only: the draft, read-only in a sheet ([MeetingDraftSheet]) — its context and
  * agenda are what the meeting was prepared with, and the reason to look is
- * usually mid-meeting. Not a chip: primary-ink text with the document icon, like
+ * usually mid-meeting. The agenda there is the meeting's [agenda], ticked as
+ * the meeting goes. Not a chip: primary-ink text with the document icon, like
  * the app's other text links, at the chips' type and icon size.
  *
  * The screenshot demo's `record-draft` opens the sheet on arrival
  * ([DemoMode.Navigation.draftSheet]).
  */
 @Composable
-private fun DraftLink(snapshot: DraftSnapshot, onOpen: () -> Unit) {
+private fun DraftLink(snapshot: DraftSnapshot, agenda: List<AgendaItem>, onOpen: () -> Unit) {
     var open by rememberSaveable { mutableStateOf(false) }
     val navigation by DemoMode.navigation.collectAsState()
     LaunchedEffect(navigation?.serial) {
@@ -693,7 +695,13 @@ private fun DraftLink(snapshot: DraftSnapshot, onOpen: () -> Unit) {
         )
     }
     if (open) {
-        MeetingDraftSheet(draft = snapshot.draft, folder = snapshot.folderName, onDismiss = { open = false })
+        MeetingDraftSheet(
+            draft = snapshot.draft,
+            folder = snapshot.folderName,
+            agenda = agenda,
+            onToggleAgenda = MeetingDraft::toggleAgendaItem,
+            onDismiss = { open = false },
+        )
     }
 }
 

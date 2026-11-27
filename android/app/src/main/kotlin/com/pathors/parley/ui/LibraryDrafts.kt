@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -57,9 +58,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.pathors.parley.R
-import com.pathors.parley.kit.CloudDraftTodo
 import com.pathors.parley.kit.CloudMeetingDraft
 import com.pathors.parley.kit.MeetingDraftSchedule
+import com.pathors.parley.meeting.AgendaItem
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -505,6 +506,9 @@ internal object DraftTime {
  *
  * @param onStart 開始錄音; null leaves the button out — the record screen's
  *   sheet shows the draft of a meeting that has already started.
+ * @param meetingAgenda the running meeting's agenda, shown in place of the
+ *   draft's and ticked with [onToggleAgenda] — the record screen's sheet. Null
+ *   (the Library's page) shows the draft's agenda, display-only.
  */
 @Composable
 internal fun MeetingDraftPage(
@@ -512,10 +516,15 @@ internal fun MeetingDraftPage(
     folder: String?,
     onStart: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    meetingAgenda: List<AgendaItem>? = null,
+    onToggleAgenda: ((String) -> Unit)? = null,
 ) {
     val now = rememberDraftClock()
     val context = draft.meetingContext.trim()
-    val agenda = draft.todos.filter { it.text.isNotBlank() }
+    val agenda = (meetingAgenda?.map { AgendaRowModel(it.id, it.text, it.done) }
+        ?: draft.todos.map { AgendaRowModel(it.id, it.text, it.done) })
+        .filter { it.text.isNotBlank() }
+    val toggle = onToggleAgenda.takeIf { meetingAgenda != null }
     val secondary = MaterialTheme.colorScheme.onSurfaceVariant
     Column(
         verticalArrangement = Arrangement.spacedBy(24.dp),
@@ -592,7 +601,7 @@ internal fun MeetingDraftPage(
                     if (index > 0) {
                         HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                     }
-                    AgendaRow(item)
+                    AgendaRow(item, onToggle = toggle?.let { tick -> { tick(item.id) } })
                 }
             }
         }
@@ -609,31 +618,60 @@ internal fun MeetingDraftPage(
 
 /**
  * The record screen's "view the meeting draft": the draft the meeting was
- * started from, read-only in a modal sheet — the Library's draft page without
- * 開始錄音, since the meeting it would start is the one already going. As tall
- * as the draft needs; a long agenda scrolls inside the sheet.
+ * started from in a modal sheet — the Library's draft page without 開始錄音,
+ * since the meeting it would start is the one already going. The draft itself
+ * is read-only, but its agenda is the meeting's to-do list: [agenda] is the
+ * meeting's live state (not the draft's), and a tap ticks or unticks an item
+ * through [onToggleAgenda], as the desktop's meeting does. As tall as the
+ * draft needs; a long agenda scrolls inside the sheet.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun MeetingDraftSheet(
     draft: CloudMeetingDraft,
     folder: String?,
+    agenda: List<AgendaItem>,
+    onToggleAgenda: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        MeetingDraftPage(draft = draft, folder = folder, onStart = null)
+        MeetingDraftPage(
+            draft = draft,
+            folder = folder,
+            onStart = null,
+            meetingAgenda = agenda,
+            onToggleAgenda = onToggleAgenda,
+        )
     }
 }
 
-/** One agenda item with its read-only circle: filled when done, an empty ring when not. */
+/** What an agenda row draws: a draft's item, or the meeting's. */
+private data class AgendaRowModel(val id: String, val text: String, val done: Boolean)
+
+/**
+ * One agenda item with its circle: filled when done, an empty ring when not.
+ * With [onToggle] the whole row is a checkbox (at least 48dp tall) that ticks
+ * it; without, it only shows the state.
+ */
 @Composable
-private fun AgendaRow(item: CloudDraftTodo) {
+private fun AgendaRow(item: AgendaRowModel, onToggle: (() -> Unit)?) {
+    val interaction = if (onToggle != null) {
+        Modifier
+            .heightIn(min = 48.dp)
+            .toggleable(
+                value = item.done,
+                role = Role.Checkbox,
+                onValueChange = { onToggle() },
+            )
+    } else {
+        Modifier.semantics(mergeDescendants = true) { selected = item.done }
+    }
     Row(
         verticalAlignment = Alignment.Top,
         modifier = Modifier
             .fillMaxWidth()
-            .semantics(mergeDescendants = true) { selected = item.done }
+            .then(interaction)
             .padding(vertical = 10.dp),
     ) {
         Box(Modifier.size(20.dp), contentAlignment = Alignment.Center) {
