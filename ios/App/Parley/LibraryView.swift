@@ -173,6 +173,8 @@ struct LibraryView: View {
                     }
                 case .recordings(let folder):
                     fullList(inFolder: folder != nil)
+                case .drafts:
+                    allDrafts
                 case .draft(let id):
                     if let draft = drafts.first(where: { $0.id == id }) {
                         MeetingDraftDetailView(
@@ -376,7 +378,9 @@ struct LibraryView: View {
                     }
                     foldersSection
                     if scope == nil, hasDrafts(.later) {
-                        draftSection(.later)
+                        draftSection(.later, limit: Self.recentCount) {
+                            path.append(.drafts)
+                        }
                             .padding(.horizontal, 20)
                     }
                     recentSection
@@ -418,10 +422,29 @@ struct LibraryView: View {
     /// 即將開始的會議 (above the folders) or 會議草稿 (under them): the
     /// meetings the desktop prepared, each opening a read-only page. Nothing
     /// at all when the part has no drafts.
-    private func draftSection(_ part: OverviewDraftSections<NavigationLinkRow>.Part) -> some View {
-        OverviewDraftSections(drafts: drafts, part: part, folderName: personalFolderName) { draft, row in
+    /// 會議草稿 shows as many rows as 最近錄音 (`recentCount`); the rest are a
+    /// 查看全部 away.
+    private func draftSection(
+        _ part: OverviewDraftSections<NavigationLinkRow>.Part, limit: Int? = nil,
+        seeAll: (() -> Void)? = nil
+    ) -> some View {
+        OverviewDraftSections(
+            drafts: drafts, part: part, limit: limit, seeAll: seeAll, folderName: personalFolderName
+        ) { draft, row in
             NavigationLinkRow(id: draft.id, row: row)
         }
+    }
+
+    /// 會議草稿's 查看全部: every draft that is not starting soon, soonest first.
+    private var allDrafts: some View {
+        ScrollView {
+            draftSection(.later)
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+                .padding(.bottom, 32)
+        }
+        .navigationTitle(Text("Meeting drafts"))
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     /// Whether a draft section has anything, so an empty one leaves no gap.
@@ -1798,6 +1821,8 @@ private enum LibraryRoute: Hashable {
     case recording(OpenedRecording)
     /// A meeting draft's read-only page, by id.
     case draft(String)
+    /// Every 會議草稿, from the overview's 查看全部.
+    case drafts
 
     var isFullList: Bool {
         if case .recordings = self { return true }

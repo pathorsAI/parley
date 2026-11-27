@@ -25,6 +25,10 @@ struct OverviewDraftSections<Row: View>: View {
 
     let drafts: [CloudMeetingDraft]
     let part: Part
+    /// Rows shown at most; past it the heading offers 查看全部. nil = all.
+    var limit: Int? = nil
+    /// Opens every draft of this part (the overview's 查看全部).
+    var seeAll: (() -> Void)? = nil
     let folderName: (String?) -> String?
     /// Wraps a row in whatever opens it (a navigation link on the overview).
     @ViewBuilder var link: (CloudMeetingDraft, DraftRow) -> Row
@@ -61,8 +65,21 @@ struct OverviewDraftSections<Row: View>: View {
                     .accessibilityHidden(true)
             }
             .foregroundStyle(Color(.secondaryLabel))
-            .frame(minHeight: 24)
-            HairlineList(items: rows) { draft in
+            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+            .overlay(alignment: .trailing) {
+                // 最近錄音's 查看全部, only when there are more than are shown.
+                if let limit, rows.count > limit, let seeAll {
+                    Button(action: seeAll) {
+                        HStack(spacing: 3) {
+                            Text("See all")
+                            Image(systemName: "arrow.right").imageScale(.small)
+                        }
+                        .font(.parley.caption)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            HairlineList(items: limit.map { Array(rows.prefix($0)) } ?? rows) { draft in
                 link(
                     draft,
                     DraftRow(draft: draft, now: now, folder: folderName(draft.meetingFolderId)))

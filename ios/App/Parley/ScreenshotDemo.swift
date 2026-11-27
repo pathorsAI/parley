@@ -585,6 +585,16 @@
                     meetingAt: on(3, 9, 0), meetingEndAt: on(3, 10, 0),
                     meetingFolderId: "f-team", updatedAt: now - 3 * day),
                 CloudMeetingDraft(
+                    id: "demo-draft-halcyon",
+                    title: t("Halcyon Labs — security review", "晴光實驗室 — 資安審查"),
+                    meetingAt: on(4, 14, 0), meetingEndAt: on(4, 15, 0),
+                    meetingFolderId: "f-new", updatedAt: now - 2 * day),
+                CloudMeetingDraft(
+                    id: "demo-draft-quarterly",
+                    title: t("Quarterly planning", "季度規劃"),
+                    meetingAt: on(6, 13, 30), meetingEndAt: on(6, 15, 0),
+                    meetingFolderId: "f-team", updatedAt: now - 5 * day),
+                CloudMeetingDraft(
                     id: "demo-draft-meridian",
                     title: t("Meridian — contract questions", "子午線 — 合約問題"),
                     meetingContext: t(
