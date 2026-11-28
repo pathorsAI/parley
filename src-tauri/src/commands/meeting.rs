@@ -378,11 +378,15 @@ fn start_meeting_captures(
     // tap reads it to reject the counterpart's voice bleeding through the
     // speakers into the mic (pace/intonation must score "me" only).
     let far = std::sync::Arc::new(crate::audio::prosody::FarEndState::new());
+    // The same system audio is also the echo canceller's reference: what the
+    // speakers play, to subtract from the mic. Only separate tracks enable it.
+    let echo = std::sync::Arc::new(crate::audio::aec::EchoReference::new());
     let captures = MeetingCaptures {
         app,
         coord,
         gate,
         far,
+        echo,
     };
     if sessions.diarization && !sessions.separate_tracks {
         captures.start_mixed(mic, sys, sessions)
@@ -411,7 +415,8 @@ fn start_meeting_captures(
         return Vec::new();
     };
     // No system capture on this platform → no far-end reference to gate on.
-    let rx = spawn_mic_prosody_tap(app, rx, None, sessions.wiring.mic_muted.clone());
+    // Nor anything to cancel an echo of.
+    let rx = spawn_mic_prosody_tap(app, rx, None, None, sessions.wiring.mic_muted.clone());
     vec![run_metered_session(app, rx, sessions.session("me", true))]
 }
 
@@ -422,12 +427,16 @@ struct MeetingCaptures<'a> {
     coord: &'a MicCoordinator,
     gate: &'a std::sync::Arc<std::sync::atomic::AtomicBool>,
     far: std::sync::Arc<crate::audio::prosody::FarEndState>,
+    /// The echo canceller's far-end reference, fed by the system-audio tap.
+    /// Disabled (the mic passes through untouched) unless
+    /// [`start_separate`](Self::start_separate) got both captures up.
+    echo: std::sync::Arc<crate::audio::aec::EchoReference>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 impl MeetingCaptures<'_> {
-    /// The mic capture behind its prosody tap (which also applies the mute),
-    /// or `None` if it failed to start.
+    /// The mic capture behind its echo canceller and prosody tap (which also
+    /// applies the mute), or `None` if it failed to start.
     fn mic(
         &self,
         mic: Microphone,
@@ -435,14 +444,23 @@ impl MeetingCaptures<'_> {
     ) -> Option<UnboundedReceiver<Vec<i16>>> {
         spawn_capture(self.coord, MicUser::Meeting, mic, self.gate.clone(), "me")
             .ok()
-            .map(|rx| spawn_mic_prosody_tap(self.app, rx, Some(self.far.clone()), muted.clone()))
+            .map(|rx| {
+                let aec = crate::audio::aec::EchoCanceller::new(self.echo.clone());
+                spawn_mic_prosody_tap(
+                    self.app,
+                    rx,
+                    Some(self.far.clone()),
+                    Some(aec),
+                    muted.clone(),
+                )
+            })
     }
 
     /// The system-audio capture behind its far-end tap, or `None`.
     fn system<S: crate::audio::AudioSource>(&self, sys: S) -> Option<UnboundedReceiver<Vec<i16>>> {
         spawn_capture(self.coord, MicUser::Meeting, sys, self.gate.clone(), "them")
             .ok()
-            .map(|rx| spawn_farend_tap(rx, self.far.clone()))
+            .map(|rx| spawn_farend_tap(rx, self.far.clone(), self.echo.clone()))
     }
 
     /// Diarizing provider: mix both sides into one recorded session. The
@@ -509,6 +527,13 @@ impl MeetingCaptures<'_> {
     /// The recording still holds both sides: each capture is fanned out to its
     /// session and to the mixer, and the mix feeds a record-only sink. If one
     /// capture failed, the other is transcribed and recorded on its own.
+    ///
+    /// With both captures up, the mic goes through echo cancellation (see
+    /// `audio/aec.rs`) with the system audio as its reference: without
+    /// headphones the speakers' copy of the other side would otherwise be
+    /// transcribed a second time as "me". The canceller sits before the fan
+    /// out, so the "me" session and the recording both get the cleaned mic.
+    /// A mic-only meeting has no reference and leaves the mic alone.
     fn start_separate<S: crate::audio::AudioSource>(
         &self,
         mic: Microphone,
@@ -524,6 +549,10 @@ impl MeetingCaptures<'_> {
         );
         match (rx_me, rx_them) {
             (Some(a), Some(b)) => {
+                self.echo.enable();
+                log::info!(
+                    "meeting: echo cancellation enabled on the mic (system audio as reference)"
+                );
                 let (a_stt, a_mix) = fan_out(a);
                 let (b_stt, b_mix) = fan_out(b);
                 let (tx_mix, rx_mix) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
@@ -887,10 +916,26 @@ fn silence_if_muted(chunk: &mut [i16], muted: &std::sync::atomic::AtomicBool) {
 /// counterpart's shared acoustic state (from [`spawn_farend_tap`]) used to
 /// reject the far voice leaking through the SPEAKERS into the mic — without it,
 /// a speakers-only setup scores the other side's pace/intonation as the user's.
+///
+/// `aec` is the mic's echo canceller (separate-tracks meetings on desktop; a
+/// pass-through until its reference is enabled). Order of the chain:
+///
+/// 1. the voice-typing tee gets the RAW mic — dictation is not part of the
+///    meeting and must not depend on its system audio;
+/// 2. echo cancellation;
+/// 3. the mute (after AEC, so a muted chunk is exact zeros rather than AEC3's
+///    comfort noise, while AEC keeps adapting on the real mic meanwhile);
+/// 4. prosody, then everything downstream (mixer, recording, STT).
+///
+/// Prosody reads the cancelled mic on purpose: delivery coaching must score
+/// the user only, and the AEC output is the mic with the other side taken
+/// out. The pitch-matched bleed rejection stays on as a second line for what
+/// residual echo AEC3 leaves (and for the first seconds, before it converges).
 fn spawn_mic_prosody_tap(
     app: &AppHandle,
     mut rx: UnboundedReceiver<Vec<i16>>,
     far: Option<std::sync::Arc<crate::audio::prosody::FarEndState>>,
+    mut aec: Option<crate::audio::aec::EchoCanceller>,
     muted: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> UnboundedReceiver<Vec<i16>> {
     let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
@@ -901,16 +946,40 @@ fn spawn_mic_prosody_tap(
     tap.source_started();
     tauri::async_runtime::spawn(async move {
         let mut analyzer = crate::audio::prosody::ProsodyAnalyzer::new(app, "me", far);
-        while let Some(mut chunk) = rx.recv().await {
-            // Dictation gets the raw mic: muting the meeting must not mute a
-            // voice-typing session the user starts meanwhile. Everything of
-            // the meeting's own (coaching, mixer, recording, STT) sits after
-            // the mute.
-            tap.forward(&chunk);
+        let mut forward = |mut chunk: Vec<i16>| -> bool {
+            if chunk.is_empty() {
+                return true;
+            }
             silence_if_muted(&mut chunk, &muted);
             analyzer.push(&chunk);
-            if tx.send(chunk).is_err() {
+            tx.send(chunk).is_ok()
+        };
+        while let Some(chunk) = rx.recv().await {
+            // Dictation gets the raw mic: muting the meeting must not mute a
+            // voice-typing session the user starts meanwhile, and the
+            // meeting's echo canceller is no business of dictation's.
+            // Everything of the meeting's own (coaching, mixer, recording,
+            // STT) sits after the canceller and the mute.
+            tap.forward(&chunk);
+            let chunk = match aec.as_mut() {
+                Some(aec) => aec.process(chunk),
+                None => chunk,
+            };
+            if !forward(chunk) {
                 break;
+            }
+        }
+        // The capture ended: release the few ms the canceller still holds.
+        if let Some(aec) = aec.as_mut() {
+            let rest = aec.flush();
+            forward(rest);
+            let stats = aec.stats();
+            if stats.capture_frames > 0 {
+                log::info!(
+                    "[aec] meeting mic done: {} frames cancelled, {} reference frames",
+                    stats.capture_frames,
+                    stats.render_frames
+                );
             }
         }
         tap.source_ended();
@@ -920,18 +989,22 @@ fn spawn_mic_prosody_tap(
 
 /// Tee the system-audio ("them") PCM through a
 /// [`FarEndAnalyzer`](crate::audio::prosody::FarEndAnalyzer) that feeds the
-/// shared far-end state for speaker-bleed rejection, forwarding every chunk
-/// untouched downstream. Counterpart of [`spawn_mic_prosody_tap`].
+/// shared far-end state for speaker-bleed rejection, and the mic echo
+/// canceller's reference queue, forwarding every chunk untouched downstream.
+/// Counterpart of [`spawn_mic_prosody_tap`].
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn spawn_farend_tap(
     mut rx: UnboundedReceiver<Vec<i16>>,
     far: std::sync::Arc<crate::audio::prosody::FarEndState>,
+    echo: std::sync::Arc<crate::audio::aec::EchoReference>,
 ) -> UnboundedReceiver<Vec<i16>> {
     let (tx, out_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
     tauri::async_runtime::spawn(async move {
         let mut analyzer = crate::audio::prosody::FarEndAnalyzer::new(far);
         while let Some(chunk) = rx.recv().await {
             analyzer.push(&chunk);
+            // A no-op unless the meeting enabled echo cancellation.
+            echo.push(&chunk);
             if tx.send(chunk).is_err() {
                 break;
             }

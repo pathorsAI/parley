@@ -599,6 +599,20 @@ name = "bytemuck"
 version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a1f896587b6f2c069c73d2f0913e2d590c3990285cd2f0b6aa02b786b4c679c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
 
 [[package]]
 name = "byteorder"
@@ -896,6 +910,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpufeatures"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1064,6 +1087,7 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.117",
+ "unicode-xid",
 ]
 
 [[package]]
@@ -3442,6 +3466,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sonora",
  "symphonia",
  "tauri",
  "tauri-build",
@@ -4620,7 +4645,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
 dependencies = [
  "cfg-if",
- "cpufeatures",
+ "cpufeatures 0.2.17",
  "digest",
 ]
 
@@ -4631,7 +4656,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
- "cpufeatures",
+ "cpufeatures 0.2.17",
  "digest",
 ]
 
@@ -4745,6 +4770,82 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sonora"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d461e6c9ad112f8728919387a4bc5639fd28631f2070171efad38676e907edd8"
+dependencies = [
+ "sonora-aec3",
+ "sonora-agc2",
+ "sonora-common-audio",
+ "sonora-ns",
+ "sonora-simd",
+ "tracing",
+]
+
+[[package]]
+name = "sonora-aec3"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2809c3fda13f71deac22d0ddb6c02c493f254d3da2afe59a7e256a8f15bcffe"
+dependencies = [
+ "sonora-common-audio",
+ "sonora-fft",
+ "sonora-simd",
+]
+
+[[package]]
+name = "sonora-agc2"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "501b5dd3f8bdc8c983dc64a131cef22a429f3ff879d6f0007b8bfe46ec7b96aa"
+dependencies = [
+ "bytemuck",
+ "derive_more",
+ "sonora-common-audio",
+ "sonora-fft",
+ "sonora-simd",
+ "tracing",
+]
+
+[[package]]
+name = "sonora-common-audio"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c05dfa300c14dc8498751ce2c5b87aad2acf1892d4f9d66b92ae2f372a83410"
+dependencies = [
+ "derive_more",
+ "sonora-simd",
+]
+
+[[package]]
+name = "sonora-fft"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec3529f2cf748f1acc85d9403ffa08a3fe69dec6bf22383910b3bd21aca2fd26"
+dependencies = [
+ "sonora-simd",
+]
+
+[[package]]
+name = "sonora-ns"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31c0a62e78419a174dbf9c9c01943c1ecd8c298a68d15c4fb4906cb19f0428b9"
+dependencies = [
+ "sonora-fft",
+]
+
+[[package]]
+name = "sonora-simd"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f939d8e63a2a0baa7555294d7b09c5e3d382f28358755b920e13ad527658c8fa"
+dependencies = [
+ "cpufeatures 0.3.1",
 ]
 
 [[package]]
@@ -5025,6 +5126,17 @@ name = "syn"
 version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-ident",
+]
+
+[[package]]
+name = "syn"
+version = "3.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ae9ccbea3a7b0b09443036490c8f34a8b1b760fd345e5c0dae0aac718faea79"
 dependencies = [
  "proc-macro2",
  "quote",
